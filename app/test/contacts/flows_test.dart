@@ -75,6 +75,7 @@ void main() {
     }
     await open(t, f);
     await tap(t, '添加关系人');
+    await tap(t, '同意并继续');
     expect(find.textContaining('注销账号'), findsOneWidget);
     await t.enterText(find.byType(TextField), '家里人');
     await tap(t, '下一步');
@@ -100,6 +101,7 @@ void main() {
     expect(f.saved, {'nickname': '小姨', 'scene': 'family'});
     await tap(t, '小姨');
     await tap(t, '导入聊天片段');
+    await tap(t, '同意并继续');
     expect(find.textContaining('24 小时内删除'), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
     await tap(t, '我已了解，并有权分享这段内容');
@@ -130,6 +132,7 @@ void main() {
     await t.tap(find.byTooltip('刷新列表'));
     await t.pumpAndSettle();
     await tap(t, '编辑资料');
+    await tap(t, '同意并继续');
     f.member = false;
     f.forbidden = true;
     await tap(t, '保存关系人');

@@ -5,6 +5,7 @@ import '../../core/theme.dart';
 import 'forms.dart';
 import 'models.dart';
 import 'profile.dart';
+import 'purpose.dart';
 import 'repository.dart';
 import 'scene.dart';
 
@@ -30,6 +31,7 @@ class _WorkspaceState extends State<ContactsWorkspace>
   String? id, message;
   bool busy = false;
   var view = _View.list;
+  ContactPurpose? pending;
   List<Question> questions = [];
   Timer? expiry;
   bool needsRefresh = false;
@@ -72,6 +74,7 @@ class _WorkspaceState extends State<ContactsWorkspace>
     if (next.member && until != null) {
       expiry = Timer(until.difference(DateTime.now()), _refresh);
     }
+    final priorView = view;
     final c = current;
     if (c == null && view != _View.add) {
       id = null;
@@ -83,6 +86,25 @@ class _WorkspaceState extends State<ContactsWorkspace>
         !next.usable(c)) {
       view = _View.detail;
     }
+    if (view != priorView) pending = null;
+  }
+
+  // The input itself is never captured by an authorization callback. A missing
+  // grant replaces the form; accepting later opens a fresh form, not a replay.
+  Future<bool> _authorized(_View target) async {
+    final grants = await widget.repo.currentGrants();
+    if (!mounted) return false;
+    view = target;
+    pending = [
+      ContactPurpose.contacts,
+      if (target == _View.chat) ContactPurpose.chatImport,
+    ].where((p) => !grants.contains(p)).firstOrNull;
+    return pending == null;
+  }
+
+  Future<void> _enter(_View target) async {
+    if (!await _authorized(target)) return;
+    if (target == _View.add) questions = await widget.repo.questions();
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -95,7 +117,11 @@ class _WorkspaceState extends State<ContactsWorkspace>
       await action();
     } catch (e) {
       if (!mounted) return;
-      if (e is ApiFailure && (e.status == 403 || e.status == 404)) {
+      pending = null;
+      if (e is ConsentUnconfirmed) {
+        view = id == null ? _View.list : _View.detail;
+        message = '授权未能确认，请重新打开后再试。';
+      } else if (e is ApiFailure && (e.status == 403 || e.status == 404)) {
         view = _View.list;
         id = null;
         try {
@@ -136,6 +162,7 @@ class _WorkspaceState extends State<ContactsWorkspace>
   void _show(_View v) {
     setState(() {
       message = null;
+      pending = null;
       view = v;
     });
   }
@@ -224,7 +251,27 @@ class _WorkspaceState extends State<ContactsWorkspace>
   }
 
   List<Widget> _content(BuildContext context, Book b, Contact? c) => [
-    if (view == _View.list) ...[
+    if (pending case final purpose?) ...[
+      Text(
+        purpose == ContactPurpose.contacts ? '允许建立关系人手记？' : '允许使用聊天片段推断画像？',
+        style: Theme.of(context).textTheme.headlineSmall,
+      ),
+      const SizedBox(height: 12),
+      Text(
+        purpose == ContactPurpose.contacts
+            ? '称呼、交流场景和问答将用于建立关系人画像。$retention'
+            : '$chatRetention 不导入也可以继续使用已有手记。',
+      ),
+      const SizedBox(height: 16),
+      FilledButton(
+        onPressed: () => _run(() async {
+          await widget.repo.grant(purpose);
+          if (mounted) await _enter(view);
+        }),
+        child: const Text('同意并继续'),
+      ),
+      TextButton(onPressed: _back, child: const Text('暂不同意')),
+    ] else if (view == _View.list) ...[
       Text('常联系的人', style: Theme.of(context).textTheme.headlineMedium),
       const SizedBox(height: 8),
       Text(
@@ -236,12 +283,7 @@ class _WorkspaceState extends State<ContactsWorkspace>
       ),
       const SizedBox(height: 12),
       FilledButton.icon(
-        onPressed: b.canAdd
-            ? () => _run(() async {
-                questions = await widget.repo.questions();
-                if (mounted) view = _View.add;
-              })
-            : null,
+        onPressed: b.canAdd ? () => _run(() => _enter(_View.add)) : null,
         icon: const Icon(Icons.person_add_alt),
         label: const Text('添加关系人'),
       ),
@@ -272,6 +314,7 @@ class _WorkspaceState extends State<ContactsWorkspace>
             return;
           }
           _run(() async {
+            if (!await _authorized(view)) return;
             await widget.repo.save(input, id: view == _View.add ? null : c!.id);
             if (!mounted) return;
             view = _View.list;
@@ -285,18 +328,18 @@ class _WorkspaceState extends State<ContactsWorkspace>
         ProfileView(c),
         if (b.usable(c)) ...[
           OutlinedButton(
-            onPressed: () => _show(_View.edit),
+            onPressed: () => _run(() => _enter(_View.edit)),
             child: const Text('编辑资料'),
           ),
           OutlinedButton(
-            onPressed: () => _show(_View.chat),
+            onPressed: () => _run(() => _enter(_View.chat)),
             child: const Text('导入聊天片段'),
           ),
         ] else ...[
           const Text('只读 · 不能用于新练习、修改资料或接收反馈。'),
           if (b.canChoose(c))
             OutlinedButton(
-              onPressed: () => _show(_View.choose),
+              onPressed: () => _run(() => _enter(_View.choose)),
               child: const Text('改选为可用关系人'),
             ),
         ],
@@ -311,6 +354,7 @@ class _WorkspaceState extends State<ContactsWorkspace>
           onPressed: !b.canChoose(c)
               ? null
               : () => _run(() async {
+                  if (!await _authorized(_View.choose)) return;
                   await widget.repo.choose(c.id);
                   if (!mounted) return;
                   view = _View.detail;
@@ -343,6 +387,7 @@ class _WorkspaceState extends State<ContactsWorkspace>
               return;
             }
             _run(() async {
+              if (!await _authorized(_View.chat)) return;
               final result = await widget.repo.infer(
                 c.id,
                 newRequestId(),

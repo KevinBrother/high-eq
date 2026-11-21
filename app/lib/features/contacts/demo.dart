@@ -2,10 +2,20 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 import '../../core/transport.dart';
 import 'models.dart';
+import 'purpose.dart';
 import 'repository.dart';
 
 /// Volatile examples, not an inference service. Never retain chat or answers.
 class DemoContacts implements ContactsRepository {
+  final _grants = <ContactPurpose>{};
+  @override
+  Future<Set<ContactPurpose>> currentGrants() async =>
+      Set.unmodifiable(_grants);
+  @override
+  Future<void> grant(ContactPurpose purpose) async {
+    _grants.add(purpose);
+  }
+
   late final Future<Json> _examples = rootBundle
       .loadString('assets/contract_examples.json', cache: false)
       .then((v) => jsonDecode(v) as Json);

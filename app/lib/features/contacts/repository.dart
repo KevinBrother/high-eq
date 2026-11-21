@@ -2,8 +2,11 @@ import '../../core/endpoints.g.dart';
 import '../../core/session.dart';
 import '../../core/transport.dart';
 import 'models.dart';
+import 'purpose.dart';
 
 abstract interface class ContactsRepository {
+  Future<Set<ContactPurpose>> currentGrants();
+  Future<void> grant(ContactPurpose purpose);
   Future<Book> load();
   Future<List<Question>> questions();
   Future<void> save(Json input, {String? id});
@@ -16,6 +19,11 @@ class ApiContacts implements ContactsRepository {
   ApiContacts(this.api, this.scope);
   final MobileEndpoints api;
   final AccountScope scope;
+  late final _consents = ContactDecisions(api, scope);
+  @override
+  Future<Set<ContactPurpose>> currentGrants() => _consents.current();
+  @override
+  Future<void> grant(ContactPurpose purpose) => _consents.grant(purpose);
   @override
   Future<Book> load() async {
     final people = <Contact>[];

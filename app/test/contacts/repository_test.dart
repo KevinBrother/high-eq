@@ -8,6 +8,7 @@ import 'package:high_eq/core/providers.dart';
 import 'package:high_eq/core/endpoints.g.dart';
 import 'package:high_eq/core/session.dart';
 import 'package:high_eq/features/contacts/models.dart';
+import 'package:high_eq/features/contacts/purpose.dart';
 import 'package:high_eq/features/contacts/repository.dart';
 import 'package:high_eq/features/contacts/routes.dart';
 import 'package:high_eq/features/contacts/scene.dart';
@@ -87,6 +88,47 @@ void main() {
     await sessions.activate(tokens('B'));
     await expectLater(repo.questions(), throwsA(isA<SessionChanged>()));
     expect(calls.length, 9);
+  });
+  test('用途按分页和版本读取；拒绝错误回执，不把另一用途当成同意', () async {
+    final repo = ApiContacts(MobileEndpoints(api), a);
+    wire.handle = (op, req) async {
+      if (op == AppOp.setConsent) {
+        expect(req.url.path, endsWith('/consents/chat_import'));
+        expect(jsonDecode(req.body), {
+          'version': contactNoticeVersion,
+          'granted': true,
+        });
+        return response({
+          'purpose': 'contacts',
+          'version': contactNoticeVersion,
+          'granted': true,
+        });
+      }
+      expect(op, AppOp.listConsents);
+      if (req.url.queryParameters['cursor'] == null) {
+        return response({
+          'items': [
+            {'purpose': 'contacts', 'version': 'old', 'granted': true},
+          ],
+          'next_cursor': 'p2',
+        });
+      }
+      return response({
+        'items': [
+          {
+            'purpose': 'chat_import',
+            'version': contactNoticeVersion,
+            'granted': true,
+          },
+        ],
+        'next_cursor': null,
+      });
+    };
+    expect(await repo.currentGrants(), {ContactPurpose.chatImport});
+    await expectLater(
+      repo.grant(ContactPurpose.chatImport),
+      throwsA(isA<ConsentUnconfirmed>()),
+    );
   });
   test('退出/换号丢弃全局场景和关系人仓库', () async {
     final box = ProviderContainer(

@@ -110,6 +110,8 @@ void main() {
     await t.ensureVisible(find.text('改选为可用关系人'));
     await t.tap(find.text('改选为可用关系人'));
     await t.pumpAndSettle();
+    await t.tap(find.text('同意并继续'));
+    await t.pumpAndSettle();
     await t.tap(find.text('确认改选'));
     await t.pumpAndSettle();
     expect(find.text('编辑资料'), findsOneWidget);
