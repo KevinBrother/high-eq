@@ -128,6 +128,21 @@ class HomeShell extends StatelessWidget {
                     ),
                   ),
                 ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.tune),
+                  title: const Text('切换练习场景'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.pushNamed(context, '/scene'),
+                ),
+                if (section == Section.me)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.people_outline),
+                    title: const Text('关系人手记'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.pushNamed(context, '/contacts'),
+                  ),
               ],
             ),
           ),

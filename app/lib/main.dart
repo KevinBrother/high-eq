@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/providers.dart';
 import 'core/theme.dart';
 import 'features/home/shell.dart';
+import 'features/contacts/routes.dart';
 
 void main() => runApp(const ProviderScope(child: HighEqApp()));
 
@@ -31,6 +32,12 @@ class HighEqApp extends ConsumerWidget {
         ),
       ),
       onGenerateRoute: (settings) {
+        if (settings.name == '/contacts' || settings.name == '/scene') {
+          return MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => ContactRoute(sceneOnly: settings.name == '/scene'),
+          );
+        }
         final section =
             Section.values.where((s) => s.path == settings.name).firstOrNull ??
             Section.practice;

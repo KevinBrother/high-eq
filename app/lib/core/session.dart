@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:cryptography/cryptography.dart';
+import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier;
 
 abstract interface class SecretStore {
   Future<String?> read();
@@ -46,7 +47,9 @@ class Sessions {
   _directory; // Dedicated to this backend; never a shared directory.
   final _cipher = AesGcm.with256bits();
   Future<void> _tail = Future.value();
-  AccountScope? _active;
+  final _identity = ValueNotifier<AccountScope?>(null);
+  ValueListenable<AccountScope?> get identity => _identity;
+  AccountScope? get _active => _identity.value;
   SecretKey? _key;
   Tokens? _tokens;
   int _generation = 0;
@@ -68,7 +71,7 @@ class Sessions {
   }
 
   int _invalidate() {
-    _active = null;
+    _identity.value = null;
     _tokens = null;
     _key = null;
     return ++_generation;
@@ -101,9 +104,9 @@ class Sessions {
         }
       }
       _check(generation);
-      _active = AccountScope._(tokens.account);
       _key = key;
       _tokens = tokens;
+      _identity.value = AccountScope._(tokens.account);
     });
   }
 
@@ -116,7 +119,7 @@ class Sessions {
       _check(generation);
       _tokens = tokens;
       _key = key;
-      return _active = AccountScope._(tokens.account);
+      return _identity.value = AccountScope._(tokens.account);
     });
   }
 
