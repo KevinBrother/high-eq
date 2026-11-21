@@ -15,12 +15,14 @@ import (
 	"high-eq/server/internal/fieldcrypt"
 	"high-eq/server/internal/gateway"
 	"high-eq/server/internal/membership"
+	"high-eq/server/internal/payments"
 	"high-eq/server/internal/privacy"
 	"high-eq/server/migrations"
 )
 
 // Runtime is the composition root. Business cards add module inventory and both hooks here.
 type Runtime struct {
+	Payments             *payments.Service
 	Emotion              *emotion.Service
 	Assessments          *assessment.Service
 	catalog              *gateway.Catalog
@@ -76,11 +78,15 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	if e != nil {
 		return nil, e
 	}
-	hooks, e := privacy.NewRegistry([]string{"assessments", "membership", "accounts", "ai_calls", "emotion"}, s.Membership.Hooks(), assessment.Hooks(c.Fields), accounts.Hooks(c.Fields), gateway.Hooks(), emotion.Hooks(c.Fields))
+	hooks, e := privacy.NewRegistry([]string{"assessments", "payments", "membership", "accounts", "ai_calls", "emotion"}, payments.Hooks(), s.Membership.Hooks(), assessment.Hooks(c.Fields), accounts.Hooks(c.Fields), gateway.Hooks(), emotion.Hooks(c.Fields))
 	if e != nil {
 		return nil, e
 	}
 	s.Data = privacy.NewCoordinator(db, s.ledger, hooks)
+	s.Payments, e = payments.New(db, s.Data, c.authMaster, c.PaymentChannels)
+	if e != nil {
+		return nil, e
+	}
 	s.Accounts, e = accounts.New(db, s.Data, c.Fields, c.authMaster, sms, exchange)
 	if e != nil {
 		return nil, e

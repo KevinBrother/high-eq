@@ -15,6 +15,7 @@ import (
 	"high-eq/server/internal/assessment"
 	"high-eq/server/internal/emotion"
 	"high-eq/server/internal/membership"
+	"high-eq/server/internal/payments"
 )
 
 func problem(c *gin.Context, status int, code, msg string, retry bool) {
@@ -24,6 +25,7 @@ func problem(c *gin.Context, status int, code, msg string, retry bool) {
 // The operation gate keeps unimplemented generated methods unreachable.
 type appAPI struct {
 	app.ServerInterface
+	payments    *payments.Service
 	signals     *emotion.Service
 	assessments *assessment.Service
 	health      func(context.Context) error
@@ -50,6 +52,8 @@ var accountRoutes = map[string]bool{
 	"POST /v1/auth/sms": false, "POST /v1/auth/login": false, "POST /v1/auth/refresh": false,
 	"POST /v1/auth/logout": true, "POST /v1/auth/switch": false, "GET /v1/me": true, "PATCH /v1/me": false,
 	"POST /v1/me/bindings": false, "POST /v1/me/closure": false, "DELETE /v1/me/closure": true,
+	"POST /v1/purchases/token": false, "POST /v1/purchases": false, "POST /v1/purchases/restore": false,
+	"POST /v1/payment-notifications/apple": false, "POST /v1/payment-notifications/wechat": false, "POST /v1/payment-notifications/alipay": false,
 	"GET /v1/entitlements": false,
 	"GET /v1/me/consents":  false, "PUT /v1/me/consents/:purpose": false,
 }
@@ -83,7 +87,7 @@ func gate(auth *accounts.Service) func(*gin.Context) {
 		}
 	}
 }
-func newRouter(health func(context.Context) error, auth *accounts.Service, mountAdmin func(gin.IRouter), rights *membership.Service, surveys *assessment.Service, signals ...*emotion.Service) *gin.Engine {
+func newRouter(pay *payments.Service, health func(context.Context) error, auth *accounts.Service, mountAdmin func(gin.IRouter), rights *membership.Service, surveys *assessment.Service, signals ...*emotion.Service) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -103,7 +107,7 @@ func newRouter(health func(context.Context) error, auth *accounts.Service, mount
 	if len(signals) > 0 {
 		signalService = signals[0]
 	}
-	app.RegisterHandlersWithOptions(r, appAPI{signals: signalService, health: health, accounts: auth, assessments: surveys, membership: rights}, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(auth)}, ErrorHandler: invalid})
+	app.RegisterHandlersWithOptions(r, appAPI{payments: pay, signals: signalService, health: health, accounts: auth, assessments: surveys, membership: rights}, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(auth)}, ErrorHandler: invalid})
 	if mountAdmin != nil {
 		mountAdmin(r)
 	} else {

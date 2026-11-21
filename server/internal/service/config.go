@@ -9,9 +9,11 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"high-eq/server/internal/fieldcrypt"
+	"high-eq/server/internal/payments"
 )
 
 type Config struct {
+	PaymentChannels     payments.Channels
 	Listen, DatabaseURL string
 	InstrumentPath      string
 	Environment         string
@@ -32,6 +34,10 @@ func LoadConfig() (Config, error) {
 		return c, errors.New("development key provider disabled outside development; configure KMS first")
 	}
 	var e error
+	c.PaymentChannels, e = paymentChannels()
+	if e != nil {
+		return c, e
+	}
 	if c.Cache, e = redis.ParseURL(os.Getenv("REDIS_URL")); e != nil {
 		return c, errors.New("invalid REDIS_URL")
 	}
