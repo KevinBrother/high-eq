@@ -1,0 +1,882 @@
+openapi: 3.0.3
+info:
+  title: 情商训练 · 运营后台
+  version: 1.0.0
+  description: 管理端令牌与 App 隔离。所有写操作均审计，只留操作人、时间、动作、目标与结果。禁止记录密钥、提示词正文或任何用户内容。后台不提供用户/订单管理。 operator 可管理提示词与查看运营指标；super_admin 另可查看审计、变更/测试模型及路由。登录失败不记录密码。
+security:
+- AdminBearer: []
+paths:
+  /admin/v1/auth/login:
+    post:
+      operationId: adminLogin
+      summary: 验证管理员身份
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - login
+              - password
+              properties:
+                login:
+                  type: string
+                  description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+                password: {type: string, format: password}
+            example:
+              login: operator-demo
+              password: example-only
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminSession'}
+              example:
+                access_token: example-only
+                expires_at: '2026-11-21T09:00:00+08:00'
+                role: operator
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+      security: []
+      x-example-request: POST /admin/v1/auth/login
+  /admin/v1/auth/logout:
+    post:
+      operationId: adminLogout
+      summary: 撤销当前后台会话
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ack'}
+              example:
+                ok: true
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+      x-example-request: POST /admin/v1/auth/logout
+  /admin/v1/audit-logs:
+    get:
+      operationId: listAuditLogs
+      summary: 超级管理员按操作人及半开时间区间查询审计
+      parameters:
+      - in: query
+        name: cursor
+        schema: {type: string}
+        example: after-example
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100}
+        example: 20
+      - name: from
+        schema: {type: string, format: date-time}
+        example: '2026-11-20T09:00:00+08:00'
+        in: query
+        required: false
+      - name: until
+        schema: {type: string, format: date-time}
+        example: '2026-11-21T09:00:00+08:00'
+        in: query
+        required: false
+      - name: actor_id
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+        in: query
+        required: false
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - items
+                - next_cursor
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                      - id
+                      - actor_id
+                      - occurred_at
+                      - action
+                      - target
+                      - result
+                      properties:
+                        id: {type: string, format: uuid}
+                        actor_id: {type: string, format: uuid}
+                        occurred_at: {type: string, format: date-time}
+                        action:
+                          type: string
+                          description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+                        target:
+                          type: string
+                          description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+                        result: {type: string, enum: [ok, denied, failed]}
+                  next_cursor: {type: string, nullable: true}
+              example:
+                items:
+                - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  actor_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  occurred_at: '2026-11-21T09:00:00+08:00'
+                  action: updateModel
+                  target: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  result: ok
+                next_cursor: null
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+        '403': {$ref: '#/components/responses/E403'}
+      x-example-request: GET /admin/v1/audit-logs?cursor=after-example&limit=20&from=2026-11-20T09%3A00%3A00%2B08%3A00&until=2026-11-21T09%3A00%3A00%2B08%3A00&actor_id=85b72033-9f07-4bbc-8567-fc31f26508ab
+  /admin/v1/models:
+    get:
+      operationId: listModels
+      summary: 模型目录与掩码密钥
+      parameters:
+      - in: query
+        name: cursor
+        schema: {type: string}
+        example: after-example
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100}
+        example: 20
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - items
+                - next_cursor
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/Model'}
+                  next_cursor: {type: string, nullable: true}
+              example:
+                items:
+                - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  name: 国内主模型
+                  provider: demo
+                  endpoint: https://model.example.invalid/v1
+                  model_name: demo-chat
+                  input_cny_per_million: 1
+                  output_cny_per_million: 2
+                  admission_ref: admission-demo-v1
+                  enabled: false
+                  key_last_four: '1234'
+                next_cursor: null
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+      x-example-request: GET /admin/v1/models?cursor=after-example&limit=20
+    post:
+      operationId: createModel
+      summary: 登记模型
+      description: 仅 super_admin。按准入凭据核对实际端点、境内处理与存储、发送字段、留存和删除条款；无凭据、地址变化未复核或条款不明不得启用、选路或测试。密钥仅写入；所有读取只给末四位。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/NewModel'}
+            example:
+              name: 国内主模型
+              provider: demo
+              endpoint: https://model.example.invalid/v1
+              model_name: demo-chat
+              input_cny_per_million: 1
+              output_cny_per_million: 2
+              admission_ref: admission-demo-v1
+              enabled: false
+              api_key: example-only-1234
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Model'}
+              example:
+                id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                name: 国内主模型
+                provider: demo
+                endpoint: https://model.example.invalid/v1
+                model_name: demo-chat
+                input_cny_per_million: 1
+                output_cny_per_million: 2
+                admission_ref: admission-demo-v1
+                enabled: false
+                key_last_four: '1234'
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+        '403': {$ref: '#/components/responses/E403'}
+        '409': {$ref: '#/components/responses/E409'}
+      x-example-request: POST /admin/v1/models
+  /admin/v1/models/{id}:
+    patch:
+      operationId: updateModel
+      summary: 编辑、换密钥或停用模型
+      description: 仅 super_admin。按准入凭据核对实际端点、境内处理与存储、发送字段、留存和删除条款；无凭据、地址变化未复核或条款不明不得启用、选路或测试。密钥仅写入；所有读取只给末四位。 在用路由须先切换。
+      parameters:
+      - name: id
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+        in: path
+        required: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ModelPatch'}
+            example:
+              enabled: false
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Model'}
+              example:
+                id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                name: 国内主模型
+                provider: demo
+                endpoint: https://model.example.invalid/v1
+                model_name: demo-chat
+                input_cny_per_million: 1
+                output_cny_per_million: 2
+                admission_ref: admission-demo-v1
+                enabled: false
+                key_last_four: '1234'
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+        '403': {$ref: '#/components/responses/E403'}
+        '404': {$ref: '#/components/responses/E404'}
+        '409': {$ref: '#/components/responses/E409'}
+      x-example-request: PATCH /admin/v1/models/85b72033-9f07-4bbc-8567-fc31f26508ab
+  /admin/v1/models/{id}/test:
+    post:
+      operationId: testModel
+      summary: 以固定合成输入检查连通性
+      description: 仅 super_admin。按准入凭据核对实际端点、境内处理与存储、发送字段、留存和删除条款；无凭据、地址变化未复核或条款不明不得启用、选路或测试。密钥仅写入；所有读取只给末四位。 不接受用户文本或临时端点。
+      parameters:
+      - name: id
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+        in: path
+        required: true
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ack'}
+              example:
+                ok: true
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+        '403': {$ref: '#/components/responses/E403'}
+        '404': {$ref: '#/components/responses/E404'}
+        '409': {$ref: '#/components/responses/E409'}
+      x-example-request: POST /admin/v1/models/85b72033-9f07-4bbc-8567-fc31f26508ab/test
+  /admin/v1/routes:
+    get:
+      operationId: listRoutes
+      summary: 查询任务主备与灰度
+      parameters:
+      - in: query
+        name: cursor
+        schema: {type: string}
+        example: after-example
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100}
+        example: 20
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - items
+                - next_cursor
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/Route'}
+                  next_cursor: {type: string, nullable: true}
+              example:
+                items:
+                - task: role_play
+                  primary_model: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  fallback_model: 5211c6b2-149b-4483-b3b0-c15dbffc61fb
+                  canary_model: null
+                  canary_percent: 0
+                next_cursor: null
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+      x-example-request: GET /admin/v1/routes?cursor=after-example&limit=20
+  /admin/v1/routes/{task}:
+    put:
+      operationId: setRoute
+      summary: 更新任务路由并热加载
+      description: 仅 super_admin。按准入凭据核对实际端点、境内处理与存储、发送字段、留存和删除条款；无凭据、地址变化未复核或条款不明不得启用、选路或测试。密钥仅写入；所有读取只给末四位。 主备不同；非零灰度必须选择准入模型，按用户稳定分组。
+      parameters:
+      - name: task
+        schema: {$ref: '#/components/schemas/Task'}
+        example: role_play
+        in: path
+        required: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - primary_model
+              - fallback_model
+              - canary_model
+              - canary_percent
+              properties:
+                primary_model: {type: string, format: uuid}
+                fallback_model: {type: string, format: uuid}
+                canary_model: {type: string, format: uuid, nullable: true}
+                canary_percent: {type: integer, minimum: 0, maximum: 100}
+            example:
+              primary_model: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              fallback_model: 5211c6b2-149b-4483-b3b0-c15dbffc61fb
+              canary_model: null
+              canary_percent: 0
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Route'}
+              example:
+                task: role_play
+                primary_model: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                fallback_model: 5211c6b2-149b-4483-b3b0-c15dbffc61fb
+                canary_model: null
+                canary_percent: 0
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+        '403': {$ref: '#/components/responses/E403'}
+        '404': {$ref: '#/components/responses/E404'}
+        '409': {$ref: '#/components/responses/E409'}
+      x-example-request: PUT /admin/v1/routes/role_play
+  /admin/v1/prompt-versions:
+    get:
+      operationId: listPromptVersions
+      summary: 按任务查不可变版本，含模板正文，可选两个版本对比
+      parameters:
+      - in: query
+        name: cursor
+        schema: {type: string}
+        example: after-example
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100}
+        example: 20
+      - name: task
+        schema: {$ref: '#/components/schemas/Task'}
+        example: role_play
+        in: query
+        required: false
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - items
+                - next_cursor
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/PromptVersion'}
+                  next_cursor: {type: string, nullable: true}
+              example:
+                items:
+                - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  task: role_play
+                  version: 1
+                  template: 请围绕 {{scene}} 展开练习。
+                  created_at: '2026-11-21T09:00:00+08:00'
+                next_cursor: null
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+      x-example-request: GET /admin/v1/prompt-versions?cursor=after-example&limit=20&task=role_play
+    post:
+      operationId: createPromptVersion
+      summary: 保存编辑内容为新的草稿版本
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - task
+              - template
+              properties:
+                task: {$ref: '#/components/schemas/Task'}
+                template:
+                  type: string
+                  description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+            example:
+              task: role_play
+              template: 请围绕 {{scene}} 展开练习。
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PromptVersion'}
+              example:
+                id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                task: role_play
+                version: 1
+                template: 请围绕 {{scene}} 展开练习。
+                created_at: '2026-11-21T09:00:00+08:00'
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+        '403': {$ref: '#/components/responses/E403'}
+        '409': {$ref: '#/components/responses/E409'}
+      x-example-request: POST /admin/v1/prompt-versions
+  /admin/v1/prompt-releases:
+    get:
+      operationId: listPromptReleases
+      summary: 读取各任务/模型当前提示词分流
+      parameters:
+      - in: query
+        name: cursor
+        schema: {type: string}
+        example: after-example
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100}
+        example: 20
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - items
+                - next_cursor
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/PromptRelease'}
+                  next_cursor: {type: string, nullable: true}
+              example:
+                items:
+                - task: role_play
+                  model_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  primary_version_id: 5211c6b2-149b-4483-b3b0-c15dbffc61fb
+                  experiment_version_id: null
+                  experiment_percent: 0
+                next_cursor: null
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+      x-example-request: GET /admin/v1/prompt-releases?cursor=after-example&limit=20
+    put:
+      operationId: setPromptRelease
+      summary: 发布、配置 A/B 或一步切回历史版本
+      description: 先分模型再在模型内分提示词组；版本必须属于同一任务。实验占比非零须提供独立实验版本。回滚原子替换该任务/模型的发布指针，无需复制或编辑旧版本。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PromptRelease'}
+            example:
+              task: role_play
+              model_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              primary_version_id: 5211c6b2-149b-4483-b3b0-c15dbffc61fb
+              experiment_version_id: null
+              experiment_percent: 0
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PromptRelease'}
+              example:
+                task: role_play
+                model_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                primary_version_id: 5211c6b2-149b-4483-b3b0-c15dbffc61fb
+                experiment_version_id: null
+                experiment_percent: 0
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+        '403': {$ref: '#/components/responses/E403'}
+        '404': {$ref: '#/components/responses/E404'}
+        '409': {$ref: '#/components/responses/E409'}
+      x-example-request: PUT /admin/v1/prompt-releases
+  /admin/v1/metrics:
+    get:
+      operationId: getMetrics
+      summary: 按模型、任务和提示词版本聚合调用与评分
+      description: 只读关联键与数值；失败率为失败数/调用数。分布按成功评分去重，不含引文、用户 ID 或评分理由。
+      parameters:
+      - in: query
+        name: cursor
+        schema: {type: string}
+        example: after-example
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100}
+        example: 20
+      - name: from
+        schema: {type: string, format: date-time}
+        example: '2026-11-20T09:00:00+08:00'
+        in: query
+        required: false
+      - name: until
+        schema: {type: string, format: date-time}
+        example: '2026-11-21T09:00:00+08:00'
+        in: query
+        required: false
+      - name: task
+        schema: {$ref: '#/components/schemas/Task'}
+        example: scoring
+        in: query
+        required: false
+      - name: model_id
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+        in: query
+        required: false
+      - name: prompt_version_id
+        schema: {type: string, format: uuid}
+        example: 5211c6b2-149b-4483-b3b0-c15dbffc61fb
+        in: query
+        required: false
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - items
+                - next_cursor
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                      - task
+                      - model_id
+                      - prompt_version_id
+                      - calls
+                      - mean_latency_ms
+                      - failure_rate
+                      - cost_cny
+                      - score_distribution
+                      properties:
+                        task: {$ref: '#/components/schemas/Task'}
+                        model_id: {type: string, format: uuid}
+                        prompt_version_id: {type: string, format: uuid, nullable: true}
+                        calls: {type: integer, minimum: 0}
+                        mean_latency_ms: {type: number, minimum: 0}
+                        failure_rate: {type: number, minimum: 0, maximum: 1}
+                        cost_cny: {type: number, minimum: 0}
+                        score_distribution:
+                          type: array
+                          items:
+                            type: object
+                            additionalProperties: false
+                            required:
+                            - nvc_total
+                            - count
+                            properties:
+                              nvc_total: {type: integer, minimum: 0, maximum: 100}
+                              count: {type: integer, minimum: 0}
+                  next_cursor: {type: string, nullable: true}
+              example:
+                items:
+                - task: scoring
+                  model_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  prompt_version_id: 5211c6b2-149b-4483-b3b0-c15dbffc61fb
+                  calls: 8
+                  mean_latency_ms: 1200
+                  failure_rate: 0
+                  cost_cny: 0.016
+                  score_distribution:
+                  - nvc_total: 75
+                    count: 8
+                next_cursor: null
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+      x-example-request: GET /admin/v1/metrics?cursor=after-example&limit=20&from=2026-11-20T09%3A00%3A00%2B08%3A00&until=2026-11-21T09%3A00%3A00%2B08%3A00&task=scoring&model_id=85b72033-9f07-4bbc-8567-fc31f26508ab&prompt_version_id=5211c6b2-149b-4483-b3b0-c15dbffc61fb
+components:
+  securitySchemes:
+    AdminBearer: {type: http, scheme: bearer}
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+      - code
+      - message
+      - retryable
+      properties:
+        code: {type: string}
+        message: {type: string}
+        retryable: {type: boolean}
+        retry_at: {type: string, format: date-time}
+    Ack:
+      type: object
+      additionalProperties: false
+      required:
+      - ok
+      properties:
+        ok:
+          type: boolean
+          enum:
+          - true
+          description: 仅接受 true。
+    AdminSession:
+      type: object
+      additionalProperties: false
+      required:
+      - access_token
+      - expires_at
+      - role
+      properties:
+        access_token:
+          type: string
+          description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+        expires_at: {type: string, format: date-time}
+        role: {type: string, enum: [operator, super_admin]}
+    Model:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - provider
+      - endpoint
+      - model_name
+      - input_cny_per_million
+      - output_cny_per_million
+      - admission_ref
+      - enabled
+      - key_last_four
+      properties:
+        id: {type: string, format: uuid}
+        name:
+          type: string
+          description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+        provider:
+          type: string
+          description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+        endpoint: {type: string, format: uri}
+        model_name:
+          type: string
+          description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+        input_cny_per_million: {type: number, minimum: 0}
+        output_cny_per_million: {type: number, minimum: 0}
+        admission_ref: {type: string, nullable: true}
+        enabled: {type: boolean}
+        key_last_four: {type: string, maxLength: 4}
+    NewModel:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - provider
+      - endpoint
+      - model_name
+      - input_cny_per_million
+      - output_cny_per_million
+      - admission_ref
+      - enabled
+      - api_key
+      properties:
+        name:
+          type: string
+          description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+        provider:
+          type: string
+          description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+        endpoint: {type: string, format: uri}
+        model_name:
+          type: string
+          description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+        input_cny_per_million: {type: number, minimum: 0}
+        output_cny_per_million: {type: number, minimum: 0}
+        admission_ref: {type: string, nullable: true}
+        enabled: {type: boolean}
+        api_key: {type: string, format: password, writeOnly: true, minLength: 1}
+    ModelPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+        provider:
+          type: string
+          description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+        endpoint: {type: string, format: uri}
+        model_name:
+          type: string
+          description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+        input_cny_per_million: {type: number, minimum: 0}
+        output_cny_per_million: {type: number, minimum: 0}
+        admission_ref: {type: string, nullable: true}
+        enabled: {type: boolean}
+        api_key: {type: string, format: password, writeOnly: true, minLength: 1}
+      minProperties: 1
+    Task:
+      type: string
+      enum:
+      - role_play
+      - reply_suggestion
+      - scoring
+      - profile_inference
+      - review_analysis
+      - content_generation
+      - classification
+    Route:
+      type: object
+      additionalProperties: false
+      required:
+      - task
+      - primary_model
+      - fallback_model
+      - canary_model
+      - canary_percent
+      properties:
+        task: {$ref: '#/components/schemas/Task'}
+        primary_model: {type: string, format: uuid}
+        fallback_model: {type: string, format: uuid}
+        canary_model: {type: string, format: uuid, nullable: true}
+        canary_percent: {type: integer, minimum: 0, maximum: 100}
+    PromptVersion:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - task
+      - version
+      - template
+      - created_at
+      properties:
+        id: {type: string, format: uuid}
+        task: {$ref: '#/components/schemas/Task'}
+        version: {type: integer, minimum: 1}
+        template:
+          type: string
+          description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+        created_at: {type: string, format: date-time}
+    PromptRelease:
+      type: object
+      additionalProperties: false
+      required:
+      - task
+      - model_id
+      - primary_version_id
+      - experiment_version_id
+      - experiment_percent
+      properties:
+        task: {$ref: '#/components/schemas/Task'}
+        model_id: {type: string, format: uuid}
+        primary_version_id: {type: string, format: uuid}
+        experiment_version_id: {type: string, format: uuid, nullable: true}
+        experiment_percent: {type: integer, minimum: 0, maximum: 100}
+  responses:
+    E400:
+      description: 请检查输入
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example:
+            code: invalid_argument
+            message: 请检查输入
+            retryable: false
+    E401:
+      description: 请重新登录
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example:
+            code: unauthenticated
+            message: 请重新登录
+            retryable: false
+    E403:
+      description: 此操作需要对应权限
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example:
+            code: forbidden
+            message: 此操作需要对应权限
+            retryable: false
+    E404:
+      description: 未找到记录
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example:
+            code: not_found
+            message: 未找到记录
+            retryable: false
+    E409:
+      description: 请核对当前状态
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example:
+            code: conflict
+            message: 请核对当前状态
+            retryable: false
+    E500:
+      description: 请稍后再试
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example:
+            code: internal_error
+            message: 请稍后再试
+            retryable: true

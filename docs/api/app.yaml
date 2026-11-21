@@ -1,0 +1,3930 @@
+openapi: 3.0.3
+info:
+  title: 情商训练 · app
+  version: 1.0.0
+  description: 身份来自访问令牌；所有源 ID 都须验证账号归属。列表游标不透明，按时间及唯一键稳定排序。示例中的令牌、凭据、文本和交易均为虚构。
+security:
+- Bearer: []
+paths:
+  /v1/auth/sms:
+    post:
+      operationId: requestCode
+      tags:
+      - auth
+      summary: 请求验证码（60 秒一次，每日最多 10 次）
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RequestCodeInput'}
+            example:
+              phone: '+8613800000000'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ack'}
+              example:
+                ok: true
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '429':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+              example:
+                code: quota_exceeded
+                message: 验证码请求过于频繁，请稍后再试
+                retryable: true
+      x-example-request: POST /v1/auth/sms
+  /v1/auth/login:
+    post:
+      operationId: login
+      tags:
+      - auth
+      summary: 验证登录方式；首次注册要求年龄确认及同意版本
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LoginInput'}
+            example:
+              credential:
+                provider: phone
+                proof: example-only
+                phone: '+8613800000000'
+              age_confirmed: true
+              privacy_version: 2026-11
+              terms_version: 2026-11
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Tokens'}
+              example:
+                access_token: example-only
+                refresh_token: example-only
+                expires_at: '2026-11-21T09:00:00+08:00'
+                user_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '409': {$ref: '#/components/responses/E409'}
+      description: 已有账号凭已验证身份登录；首次注册另须 age_confirmed=true 及当前隐私政策/用户协议版本，不满足则拒绝注册。
+      x-example-request: POST /v1/auth/login
+  /v1/auth/refresh:
+    post:
+      operationId: refreshTokens
+      tags:
+      - auth
+      summary: 轮换访问与刷新令牌
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RefreshTokensInput'}
+            example:
+              refresh_token: example-only
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Tokens'}
+              example:
+                access_token: example-only
+                refresh_token: example-only
+                expires_at: '2026-11-21T09:00:00+08:00'
+                user_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: POST /v1/auth/refresh
+  /v1/auth/logout:
+    post:
+      operationId: logout
+      tags:
+      - auth
+      summary: 撤销当前刷新令牌
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LogoutInput'}
+            example:
+              refresh_token: example-only
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ack'}
+              example:
+                ok: true
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: POST /v1/auth/logout
+  /v1/me:
+    get:
+      operationId: getMe
+      tags:
+      - me
+      summary: 查阅个人账号
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Account'}
+              example:
+                user_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                timezone: Asia/Shanghai
+                bindings:
+                - phone
+                frozen_until: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: GET /v1/me
+    patch:
+      operationId: updateMe
+      tags:
+      - me
+      summary: 更正时区
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateMeInput'}
+            example:
+              timezone: Asia/Shanghai
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Account'}
+              example:
+                user_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                timezone: Asia/Shanghai
+                bindings:
+                - phone
+                frozen_until: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: PATCH /v1/me
+  /v1/me/bindings:
+    post:
+      operationId: bindIdentity
+      tags:
+      - me
+      summary: 重新验证后手动绑定，冲突不合并
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BindIdentityInput'}
+            example:
+              current_proof: example-only
+              credential:
+                provider: phone
+                proof: example-only
+                phone: '+8613800000000'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Account'}
+              example:
+                user_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                timezone: Asia/Shanghai
+                bindings:
+                - phone
+                frozen_until: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '409': {$ref: '#/components/responses/E409'}
+      description: 409 时保留当前令牌且不改任何归属。保留当前账号无需请求；要切换须经 /v1/auth/switch 重新验证原账号。
+      x-example-request: POST /v1/me/bindings
+  /v1/auth/switch:
+    post:
+      operationId: switchIdentity
+      tags:
+      - auth
+      summary: 冲突后验证原账号并切换，不转移数据或权益
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SwitchIdentityInput'}
+            example:
+              credential:
+                provider: phone
+                proof: example-only
+                phone: '+8613800000000'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Tokens'}
+              example:
+                access_token: example-only
+                refresh_token: example-only
+                expires_at: '2026-11-21T09:00:00+08:00'
+                user_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      description: 仅凭另一账号已重新验证的登录方式换发其令牌，客户端清除并隔离旧账号缓存。不会迁移数据、权益或购买归属。
+      x-example-request: POST /v1/auth/switch
+  /v1/me/closure:
+    post:
+      operationId: freezeAccount
+      tags:
+      - me
+      summary: 重新认证后冻结 15 天；先提示取消苹果订阅
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/FreezeAccountInput'}
+            example:
+              proof: example-only
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FreezeAccountResult'}
+              example:
+                frozen_until: '2026-11-21T09:00:00+08:00'
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: POST /v1/me/closure
+    delete:
+      operationId: cancelClosure
+      tags:
+      - me
+      summary: 冷静期内经登录撤销注销
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ack'}
+              example:
+                ok: true
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: DELETE /v1/me/closure
+  /v1/me/consents:
+    get:
+      operationId: listConsents
+      tags:
+      - me
+      summary: 授权记录
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ListConsentsResult'}
+              example:
+                items:
+                - purpose: terms
+                  version: 2026-11
+                  granted: true
+                  updated_at: '2026-11-21T09:00:00+08:00'
+                next_cursor: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      parameters:
+      - in: query
+        name: cursor
+        schema: {type: string}
+        example: after-example
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100}
+        example: 20
+      x-example-request: GET /v1/me/consents?cursor=after-example&limit=20
+  /v1/me/consents/{purpose}:
+    put:
+      operationId: setConsent
+      tags:
+      - me
+      summary: 按用途授权或立即撤回
+      parameters:
+      - in: path
+        name: purpose
+        required: true
+        schema:
+          type: string
+          enum:
+          - terms
+          - privacy
+          - assessment
+          - health
+          - voice
+          - audio_retention
+          - practice
+          - review
+          - contacts
+          - chat_import
+          - manual_mark
+        example: terms
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetConsentInput'}
+            example:
+              version: 2026-11
+              granted: true
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Consent'}
+              example:
+                purpose: terms
+                version: 2026-11
+                granted: true
+                updated_at: '2026-11-21T09:00:00+08:00'
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      description: 逐用途保存版本与授权/撤回时间；撤回相应采集用途立即拒绝后续窗口。客户端先清未发队列，不得恢复联网后补传。
+      x-example-request: PUT /v1/me/consents/terms
+  /v1/me/export:
+    get:
+      operationId: exportData
+      tags:
+      - me
+      summary: 流式生成当前账号 JSON 压缩包，不落盘
+      responses:
+        '200':
+          description: ZIP：manifest.json 及按模块分组的 JSON；不含录音、密钥或其他账号。
+          content:
+            application/zip:
+              schema: {type: string, format: binary}
+              x-example-files:
+                manifest.json:
+                  modules:
+                  - manual_marks
+                manual_marks.json: []
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: GET /v1/me/export
+  /v1/me/data/{kind}/{id}:
+    delete:
+      operationId: deleteSource
+      tags:
+      - me
+      summary: 删除源及副本，重算成长分
+      parameters:
+      - in: path
+        name: kind
+        required: true
+        schema:
+          type: string
+          enum:
+          - assessments
+          - sessions
+          - reviews
+          - replies
+          - contacts
+          - manual_marks
+          - signal_events
+        example: assessments
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ack'}
+              example:
+                ok: true
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+      description: id 是该类别的外部资源 ID：会话/复盘/回复为活动 ID，不是评分 ID；服务端验证归属并解析独立清理用的 source_id。窗口按 starts_at + channel 删除。
+      x-example-request: DELETE /v1/me/data/assessments/85b72033-9f07-4bbc-8567-fc31f26508ab
+  /v1/entitlements:
+    get:
+      operationId: getEntitlements
+      tags:
+      - entitlements
+      summary: 本人跨平台权益；无限额度返回 null
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Entitlements'}
+              example:
+                tier: free
+                expires_at: null
+                allowances:
+                - feature: practice
+                  remaining: 3
+                  resets_at: '2026-11-22T00:00:00+08:00'
+                - feature: reply
+                  remaining: 3
+                  resets_at: '2026-11-22T00:00:00+08:00'
+                - feature: review
+                  remaining: 3
+                  resets_at: '2026-11-22T00:00:00+08:00'
+                max_active_contacts: 1
+                auto_watch_alert_available: false
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      description: 三个 AI 功能独立按账号时区自然日重置，默认免费各 3 次，会员 remaining=null；auto_watch_alert_available 只在对应生产版本获放行后才可开启。 会员到期停止采集，默认最近使用的 1 个关系人仍可用，其余只读；用户可以改选。
+      x-example-request: GET /v1/entitlements
+  /v1/purchases/token:
+    post:
+      operationId: getPurchaseToken
+      tags:
+      - purchases
+      summary: 为当前用户取得稳定的苹果购买归属标识
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GetPurchaseTokenResult'}
+              example:
+                app_account_token: ed394359-d26a-428e-b350-584305a9db4b
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: POST /v1/purchases/token
+  /v1/purchases:
+    post:
+      operationId: createOrder
+      tags:
+      - purchases
+      summary: 安卓微信或支付宝下单
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateOrderInput'}
+            example:
+              request_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              platform: wechat
+              product: monthly
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CreateOrderResult'}
+              example:
+                order_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                payment_payload: example-only
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: POST /v1/purchases
+  /v1/purchases/restore:
+    post:
+      operationId: restorePurchase
+      tags:
+      - purchases
+      summary: 校验交易归属，非原主返回冲突，不覆盖账号
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RestorePurchaseInput'}
+            example:
+              signed_transaction: example-only
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Entitlements'}
+              example:
+                tier: free
+                expires_at: null
+                allowances:
+                - feature: practice
+                  remaining: null
+                  resets_at: '2026-11-21T09:00:00+08:00'
+                max_active_contacts: null
+                auto_watch_alert_available: false
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '409': {$ref: '#/components/responses/E409'}
+      description: 首次购买和恢复均可提交 Apple 签名交易；验证交易及 appAccountToken 归属，重复提交幂等，绝不按当前登录者改绑。
+      x-example-request: POST /v1/purchases/restore
+  /v1/payment-notifications/apple:
+    post:
+      operationId: receiveAppleNotification
+      tags:
+      - payment-notifications
+      summary: 平台回调：验签并按交易/通知 ID 幂等
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReceiveAppleNotificationInput'}
+            example:
+              signedPayload: example-only
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ack'}
+              example:
+                ok: true
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: POST /v1/payment-notifications/apple
+  /v1/payment-notifications/wechat:
+    post:
+      operationId: receiveWechatNotification
+      tags:
+      - payment-notifications
+      summary: 平台回调：验签并按交易/通知 ID 幂等
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReceiveWechatNotificationInput'}
+            example:
+              id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              event_type: TRANSACTION.SUCCESS
+              resource:
+                algorithm: AEAD_AES_256_GCM
+                ciphertext: example-only
+                nonce: example-only
+                associated_data: example-only
+      responses:
+        '200':
+          description: 已接收，空响应
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      parameters:
+      - name: Wechatpay-Timestamp
+        in: header
+        required: true
+        schema: {type: string}
+        example: example-only
+      - name: Wechatpay-Nonce
+        in: header
+        required: true
+        schema: {type: string}
+        example: example-only
+      - name: Wechatpay-Signature
+        in: header
+        required: true
+        schema: {type: string}
+        example: example-only
+      - name: Wechatpay-Serial
+        in: header
+        required: true
+        schema: {type: string}
+        example: example-only
+      description: 对原始请求字节验签后解密资源，核对商户、应用、金额及订单；平台附加字段不能在验签前丢弃。
+      x-example-request: POST /v1/payment-notifications/wechat
+  /v1/payment-notifications/alipay:
+    post:
+      operationId: receiveAlipayNotification
+      tags:
+      - payment-notifications
+      summary: 平台回调：验签并按交易/通知 ID 幂等
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: {$ref: '#/components/schemas/ReceiveAlipayNotificationInput'}
+            example:
+              notify_id: example-only
+              trade_no: example-only
+              out_trade_no: example-only
+              trade_status: TRADE_SUCCESS
+              sign: example-only
+              sign_type: RSA2
+      responses:
+        '200':
+          description: 验签成功
+          content:
+            text/plain:
+              schema: {type: string}
+              example: success
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      description: 对完整表单按渠道规则验签，核对应用、收款方、金额及订单；仅处理成功返回纯文本 success。
+      x-example-request: POST /v1/payment-notifications/alipay
+  /v1/assessments/instrument:
+    get:
+      operationId: getInstrument
+      tags:
+      - assessments
+      summary: 当前授权题库，返回 16 题及 1–7 选项
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GetInstrumentResult'}
+              example:
+                version: wleis-2026-11
+                items:
+                - id: 1
+                  dimension: SEA
+                  zh: 大多数时候，我都清楚自己为什么会有某种感受。
+                - id: 2
+                  dimension: SEA
+                  zh: 我很了解自己的情绪。
+                - id: 3
+                  dimension: SEA
+                  zh: 我真正明白自己的感受。
+                - id: 4
+                  dimension: SEA
+                  zh: 我总是知道自己是否开心。
+                - id: 5
+                  dimension: OEA
+                  zh: 我总能从朋友的行为中了解他们的情绪。
+                - id: 6
+                  dimension: OEA
+                  zh: 我很善于观察别人的情绪。
+                - id: 7
+                  dimension: OEA
+                  zh: 我对他人的感受和情绪很敏感。
+                - id: 8
+                  dimension: OEA
+                  zh: 我很了解身边人的情绪。
+                - id: 9
+                  dimension: UOE
+                  zh: 我总是为自己设定目标，然后尽最大努力去实现。
+                - id: 10
+                  dimension: UOE
+                  zh: 我总是告诉自己，我是一个有能力的人。
+                - id: 11
+                  dimension: UOE
+                  zh: 我是一个能自我激励的人。
+                - id: 12
+                  dimension: UOE
+                  zh: 我总是鼓励自己尽最大努力。
+                - id: 13
+                  dimension: ROE
+                  zh: 我能控制自己的脾气，理性地处理困难。
+                - id: 14
+                  dimension: ROE
+                  zh: 我很有能力控制自己的情绪。
+                - id: 15
+                  dimension: ROE
+                  zh: 当我非常生气时，我总能很快冷静下来。
+                - id: 16
+                  dimension: ROE
+                  zh: 我能很好地控制自己的情绪。
+                options:
+                - 非常不同意
+                - 不同意
+                - 有点不同意
+                - 说不清
+                - 有点同意
+                - 同意
+                - 非常同意
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: GET /v1/assessments/instrument
+  /v1/assessments:
+    post:
+      operationId: submitAssessment
+      tags:
+      - assessments
+      summary: 按题序提交 16 项，未满四周 409 并返回 retry_at
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SubmitAssessmentInput'}
+            example:
+              version: wleis-2026-11
+              answers:
+              - 5
+              - 6
+              - 5
+              - 6
+              - 5
+              - 6
+              - 5
+              - 6
+              - 5
+              - 6
+              - 5
+              - 6
+              - 5
+              - 6
+              - 5
+              - 6
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Assessment'}
+              example:
+                id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                completed_at: '2026-11-21T09:00:00+08:00'
+                next_eligible_at: '2026-12-19T09:00:00+08:00'
+                dimensions:
+                  SEA:
+                    mean: 5.5
+                    percent: 75
+                    display: 75
+                    level: L4
+                  OEA:
+                    mean: 5.5
+                    percent: 75
+                    display: 75
+                    level: L4
+                  UOE:
+                    mean: 5.5
+                    percent: 75
+                    display: 75
+                    level: L4
+                  ROE:
+                    mean: 5.5
+                    percent: 75
+                    display: 75
+                    level: L4
+                total:
+                  mean: 5.5
+                  percent: 75
+                  display: 75
+                  level: L4
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '403': {$ref: '#/components/responses/E403'}
+        '409':
+          description: 未满四周，retry_at 为下次可提交时间
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+              example:
+                code: conflict
+                message: 尚未到复测时间
+                retryable: false
+                retry_at: '2026-12-19T09:00:00+08:00'
+      x-example-request: POST /v1/assessments
+    get:
+      operationId: listAssessments
+      tags:
+      - assessments
+      summary: 本人历次测评
+      parameters:
+      - in: query
+        name: cursor
+        schema: {type: string}
+        example: after-example
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100}
+        example: 20
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ListAssessmentsResult'}
+              example:
+                items:
+                - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  completed_at: '2026-11-21T09:00:00+08:00'
+                  next_eligible_at: '2026-12-19T09:00:00+08:00'
+                  dimensions:
+                    SEA:
+                      mean: 5.5
+                      percent: 75
+                      display: 75
+                      level: L4
+                    OEA:
+                      mean: 5.5
+                      percent: 75
+                      display: 75
+                      level: L4
+                    UOE:
+                      mean: 5.5
+                      percent: 75
+                      display: 75
+                      level: L4
+                    ROE:
+                      mean: 5.5
+                      percent: 75
+                      display: 75
+                      level: L4
+                  total:
+                    mean: 5.5
+                    percent: 75
+                    display: 75
+                    level: L4
+                next_cursor: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: GET /v1/assessments?cursor=after-example&limit=20
+  /v1/contacts:
+    get:
+      operationId: listContacts
+      tags:
+      - contacts
+      summary: 到期后其他关系人只读
+      parameters:
+      - in: query
+        name: cursor
+        schema: {type: string}
+        example: after-example
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100}
+        example: 20
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ListContactsResult'}
+              example:
+                items:
+                - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  nickname: 同事 A
+                  scene: work
+                  editable: true
+                  profile:
+                    summary: 更倾向先听完再回应
+                    big_five:
+                    - label: 沟通练习
+                      confidence: 0.5
+                    conflict_style:
+                      label: 沟通练习
+                      confidence: 0.5
+                    attachment: null
+                next_cursor: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: GET /v1/contacts?cursor=after-example&limit=20
+    post:
+      operationId: createContact
+      tags:
+      - contacts
+      summary: 添加关系人（免费最多一个）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateContactInput'}
+            example:
+              nickname: 同事 A
+              scene: work
+              initial_context: 沟通练习
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Contact'}
+              example:
+                id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                nickname: 同事 A
+                scene: work
+                editable: true
+                profile:
+                  summary: 更倾向先听完再回应
+                  big_five:
+                  - label: 沟通练习
+                    confidence: 0.5
+                  conflict_style:
+                    label: 沟通练习
+                    confidence: 0.5
+                  attachment: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '403': {$ref: '#/components/responses/E403'}
+      x-example-request: POST /v1/contacts
+  /v1/contacts/{id}:
+    patch:
+      operationId: editContact
+      tags:
+      - contacts
+      summary: 更新关系人资料
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EditContactInput'}
+            example:
+              nickname: 同事 A
+              scene: work
+              initial_context: 沟通练习
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Contact'}
+              example:
+                id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                nickname: 同事 A
+                scene: work
+                editable: true
+                profile:
+                  summary: 更倾向先听完再回应
+                  big_five:
+                  - label: 沟通练习
+                    confidence: 0.5
+                  conflict_style:
+                    label: 沟通练习
+                    confidence: 0.5
+                  attachment: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '403': {$ref: '#/components/responses/E403'}
+        '404': {$ref: '#/components/responses/E404'}
+      x-example-request: PATCH /v1/contacts/85b72033-9f07-4bbc-8567-fc31f26508ab
+    delete:
+      operationId: deleteContact
+      tags:
+      - contacts
+      summary: 删除关系人与关联源及评分副本
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ack'}
+              example:
+                ok: true
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+      x-example-request: DELETE /v1/contacts/85b72033-9f07-4bbc-8567-fc31f26508ab
+  /v1/contacts/{id}/activate:
+    post:
+      operationId: chooseContact
+      tags:
+      - contacts
+      summary: 选为免费账号可用的一个关系人
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Contact'}
+              example:
+                id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                nickname: 同事 A
+                scene: work
+                editable: true
+                profile:
+                  summary: 更倾向先听完再回应
+                  big_five:
+                  - label: 沟通练习
+                    confidence: 0.5
+                  conflict_style:
+                    label: 沟通练习
+                    confidence: 0.5
+                  attachment: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+      x-example-request: POST /v1/contacts/85b72033-9f07-4bbc-8567-fc31f26508ab/activate
+  /v1/contacts/{id}/summary:
+    get:
+      operationId: getContactSummary
+      tags:
+      - contacts
+      summary: 按权限读取画像摘要
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Profile'}
+              example:
+                summary: 更倾向先听完再回应
+                big_five:
+                - label: 沟通练习
+                  confidence: 0.5
+                conflict_style:
+                  label: 沟通练习
+                  confidence: 0.5
+                attachment: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+      x-example-request: GET /v1/contacts/85b72033-9f07-4bbc-8567-fc31f26508ab/summary
+  /v1/me/profile:
+    get:
+      operationId: getProfile
+      tags:
+      - me
+      summary: 本人训练画像摘要（不含按对象或场景汇总的会员数据）
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - summary
+                properties:
+                  summary:
+                    type: string
+                    description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+              example:
+                summary: 练习前可以先描述事实
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: GET /v1/me/profile
+  /v1/profiles/feedback:
+    post:
+      operationId: sendProfileFeedback
+      tags:
+      - profiles
+      summary: 记录用户明确标注；对话节奏不作为本人证据
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SendProfileFeedbackInput'}
+            example:
+              source_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              subject: self
+              confirmed: true
+              contact_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              note: 沟通练习
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ack'}
+              example:
+                ok: true
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '403': {$ref: '#/components/responses/E403'}
+      description: ' 指定只读关系人不可用于新训练或画像反馈。'
+      x-example-request: POST /v1/profiles/feedback
+  /v1/contacts/{id}/infer:
+    post:
+      operationId: inferProfile
+      tags:
+      - contacts
+      summary: 按导入文本推断关系人画像，原文 24 小时内删除
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/InferProfileInput'}
+            example:
+              request_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              chat_text: 沟通练习
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - {$ref: '#/components/schemas/Profile'}
+                - {$ref: '#/components/schemas/Safety'}
+              examples:
+                success:
+                  value:
+                    summary: 更倾向先听完再回应
+                    big_five:
+                    - label: 沟通练习
+                      confidence: 0.5
+                    conflict_style:
+                      label: 沟通练习
+                      confidence: 0.5
+                    attachment: null
+                safety:
+                  value:
+                    safety: true
+                    message: 听起来你现在可能正经历很难受的事。这里不适合继续练习，建议你马上联系专业的人：全国心理援助热线 12356；如果有人身危险，请立即拨打 110 或 120。
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '403': {$ref: '#/components/responses/E403'}
+        '404': {$ref: '#/components/responses/E404'}
+        '503': {$ref: '#/components/responses/E503'}
+      x-example-request: POST /v1/contacts/85b72033-9f07-4bbc-8567-fc31f26508ab/infer
+  /v1/marks:
+    get:
+      operationId: listMarks
+      tags:
+      - marks
+      summary: 本人手动标记，无会员、额度或基线门槛
+      parameters:
+      - in: query
+        name: cursor
+        schema: {type: string}
+        example: after-example
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100}
+        example: 20
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ListMarksResult'}
+              example:
+                items:
+                - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  marked_at: '2026-11-21T09:00:00+08:00'
+                  contact_id: null
+                  scene: null
+                next_cursor: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: GET /v1/marks?cursor=after-example&limit=20
+    post:
+      operationId: createMark
+      tags:
+      - marks
+      summary: 手动标记：重复请求或不足 60 秒返回原记录，不延长窗口
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateMarkInput'}
+            example:
+              request_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              contact_id: null
+              scene: null
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Mark'}
+              example:
+                id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                marked_at: '2026-11-21T09:00:00+08:00'
+                contact_id: null
+                scene: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      description: 按账号与 request_id 幂等；按服务端受理时间，距上一条新建 <60 秒复用原 ID 且不延长窗口，满 60 秒可新建。与 AI 配额、基线和传感器权限无关。
+      x-example-request: POST /v1/marks
+  /v1/marks/{id}:
+    patch:
+      operationId: editMark
+      tags:
+      - marks
+      summary: 补充或清除对象、场景
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EditMarkInput'}
+            example:
+              contact_id: null
+              scene: null
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Mark'}
+              example:
+                id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                marked_at: '2026-11-21T09:00:00+08:00'
+                contact_id: null
+                scene: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+      x-example-request: PATCH /v1/marks/85b72033-9f07-4bbc-8567-fc31f26508ab
+    delete:
+      operationId: deleteMark
+      tags:
+      - marks
+      summary: 删除手动标记
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ack'}
+              example:
+                ok: true
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+      x-example-request: DELETE /v1/marks/85b72033-9f07-4bbc-8567-fc31f26508ab
+  /v1/emotion-summary:
+    get:
+      operationId: emotionSummary
+      tags:
+      - emotion-summary
+      summary: 会员查看按对象和场景分组的个人情绪画像（不将对话节奏视作本人情绪）
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EmotionSummaryResult'}
+              example:
+                groups:
+                - contact_id: null
+                  scene: null
+                  manual_count: 1
+                  confirmed_self_count: 1
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '403': {$ref: '#/components/responses/E403'}
+      x-example-request: GET /v1/emotion-summary
+  /v1/levels:
+    get:
+      operationId: listLevels
+      tags:
+      - levels
+      summary: 按场景、难度选择对练关卡
+      parameters:
+      - in: query
+        name: cursor
+        schema: {type: string}
+        example: after-example
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100}
+        example: 20
+      - in: query
+        name: scene
+        schema: {type: string, enum: [work, partner, family, friends, social]}
+        example: work
+      - in: query
+        name: difficulty
+        schema: {type: integer, minimum: 1, maximum: 3}
+        example: 1
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ListLevelsResult'}
+              example:
+                items:
+                - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  title: 沟通练习
+                  scene: work
+                  difficulty: 1
+                  mode: single_skill
+                  target_item: observation
+                next_cursor: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: GET /v1/levels?cursor=after-example&limit=20&scene=work&difficulty=1
+  /v1/sessions:
+    post:
+      operationId: createSession
+      tags:
+      - sessions
+      summary: 使用预设关卡或自定义场景；重练另建 ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateSessionInput'}
+            example:
+              request_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              level_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              contact_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Session'}
+              example:
+                session_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                status: pending
+                mode: single_skill
+                target_item: observation
+                messages: []
+                settlement:
+                  status: uncharged
+                  net_charge: 0
+                  charged_day: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '403': {$ref: '#/components/responses/E403'}
+        '404': {$ref: '#/components/responses/E404'}
+        '409': {$ref: '#/components/responses/E409'}
+      description: request_id 即新 session_id，重试复用；同一请求不同输入 409。重新练习另建 ID，服务端在活动创建时另行分配不可复用的评分源 ID。 指定只读关系人不可用于新训练或画像反馈。
+      x-example-request: POST /v1/sessions
+    get:
+      operationId: listSessions
+      tags:
+      - sessions
+      summary: 对练历史和重练记录
+      parameters:
+      - in: query
+        name: cursor
+        schema: {type: string}
+        example: after-example
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100}
+        example: 20
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ListSessionsResult'}
+              example:
+                items:
+                - session_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  status: pending
+                  mode: single_skill
+                  target_item: observation
+                  messages:
+                  - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                    client_message_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                    role: user
+                    seq: 1
+                    text: 沟通练习
+                  settlement:
+                    status: uncharged
+                    net_charge: 0
+                    charged_day: null
+                next_cursor: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: GET /v1/sessions?cursor=after-example&limit=20
+  /v1/sessions/{session_id}:
+    get:
+      operationId: getSession
+      tags:
+      - sessions
+      summary: 重连取历史、已保存回复与结算；断线不是主动退出
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Session'}
+              examples:
+                active:
+                  value:
+                    session_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                    status: active
+                    mode: single_skill
+                    target_item: observation
+                    messages:
+                    - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                      client_message_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                      role: user
+                      seq: 1
+                      text: 沟通练习
+                    settlement:
+                      status: uncharged
+                      net_charge: 0
+                      charged_day: null
+                completed:
+                  value:
+                    session_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                    status: complete
+                    mode: full_session
+                    target_item: null
+                    messages:
+                    - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                      client_message_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                      role: user
+                      seq: 1
+                      text: 沟通练习
+                    - id: 41b91ca7-1a2e-43ca-9139-685f3b0710f9
+                      client_message_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                      role: assistant
+                      seq: 2
+                      text: 我们可以先把交付时间对齐。
+                    settlement:
+                      status: charged
+                      net_charge: 1
+                      charged_day: '2026-11-21'
+                    result:
+                      mode: full_session
+                      score:
+                        score_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                        mode: express
+                        nvc:
+                          observation:
+                            score: 25
+                            reason: 沟通练习
+                          feeling:
+                            score: 25
+                            reason: 沟通练习
+                          need:
+                            score: 25
+                            reason: 沟通练习
+                          request:
+                            score: 25
+                            reason: 沟通练习
+                          total: 100
+                        emotion:
+                          read_others:
+                            level: 3
+                            reason: 沟通练习
+                          self_management:
+                            level: 3
+                            reason: 沟通练习
+                          relationship:
+                            level: 3
+                            reason: 沟通练习
+                        better_version: 我们能一起定个时间吗？
+                        why_better: 沟通练习
+                        target_turn: 1
+                      settlement:
+                        status: charged
+                        net_charge: 1
+                        charged_day: '2026-11-21'
+                refunded_after_scoring_failure:
+                  value:
+                    session_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                    status: failed
+                    mode: full_session
+                    target_item: null
+                    messages:
+                    - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                      client_message_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                      role: user
+                      seq: 1
+                      text: 沟通练习
+                    - id: 41b91ca7-1a2e-43ca-9139-685f3b0710f9
+                      client_message_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                      role: assistant
+                      seq: 2
+                      text: 我们可以先把交付时间对齐。
+                    settlement:
+                      status: refunded
+                      net_charge: 0
+                      charged_day: '2026-11-20'
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+      description: messages 按 seq 升序，仅包含已保存发言；断线用原会话恢复，重发沿用原 client_message_id。completed 时 result 原样返回，绝不重新评分。
+      x-example-request: GET /v1/sessions/85b72033-9f07-4bbc-8567-fc31f26508ab
+  /v1/sessions/{session_id}/exit:
+    post:
+      operationId: exitSession
+      tags:
+      - sessions
+      summary: 主动退出；迟到的首条回复不得再扣
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Settlement'}
+              example:
+                status: uncharged
+                net_charge: 0
+                charged_day: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+        '409': {$ref: '#/components/responses/E409'}
+      x-example-request: POST /v1/sessions/85b72033-9f07-4bbc-8567-fc31f26508ab/exit
+  /v1/sessions/{session_id}/messages:
+    post:
+      operationId: sendMessage
+      tags:
+      - sessions
+      summary: 同一 client_message_id 重试不新增轮次；仅逐句审核后发送
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SendMessageInput'}
+            example:
+              client_message_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              text: 沟通练习
+      responses:
+        '200':
+          description: fragment 为临时显示，不能结算；reply_saved 才可重连取回。safety/审核故障为不同终止事件，替换此前片段、净扣零。已输出片段不得拼接备用。in_progress 表示同一操作正在执行，请按会话取历史。
+          content:
+            text/event-stream:
+              schema: {type: string}
+              examples:
+                fragment:
+                  value: |+
+                    event: fragment
+                    data: {"client_message_id": "85b72033-9f07-4bbc-8567-fc31f26508ab", "text": "我们先把时间对齐。"}
+
+                reply_saved:
+                  value: |+
+                    event: reply_saved
+                    data: {"client_message_id": "85b72033-9f07-4bbc-8567-fc31f26508ab", "message_id": "85b72033-9f07-4bbc-8567-fc31f26508ab", "settlement": {"status": "charged", "net_charge": 1, "charged_day": "2026-11-21"}}
+
+                safety:
+                  value: |+
+                    event: safety
+                    data: {"safety": true, "message": "听起来你现在可能正经历很难受的事。这里不适合继续练习，建议你马上联系专业的人：全国心理援助热线 12356；如果有人身危险，请立即拨打 110 或 120。"}
+
+                moderation_unavailable:
+                  value: |+
+                    event: moderation_unavailable
+                    data: {"code": "moderation_unavailable", "retryable": true, "message": "服务暂不可用，可重试"}
+
+                in_progress:
+                  value: |+
+                    event: in_progress
+                    data: {"client_message_id": "85b72033-9f07-4bbc-8567-fc31f26508ab"}
+
+              x-event-schemas:
+                fragment:
+                  type: object
+                  additionalProperties: false
+                  required:
+                  - client_message_id
+                  - text
+                  properties:
+                    client_message_id: {type: string, format: uuid}
+                    text:
+                      type: string
+                      description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+                reply_saved:
+                  type: object
+                  additionalProperties: false
+                  required:
+                  - client_message_id
+                  - message_id
+                  - settlement
+                  properties:
+                    client_message_id: {type: string, format: uuid}
+                    message_id: {type: string, format: uuid}
+                    settlement: {$ref: '#/components/schemas/Settlement'}
+                safety: {$ref: '#/components/schemas/Safety'}
+                moderation_unavailable:
+                  type: object
+                  additionalProperties: false
+                  required:
+                  - code
+                  - message
+                  - retryable
+                  properties:
+                    code: {type: string, enum: [moderation_unavailable]}
+                    message:
+                      type: string
+                      description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+                    retryable:
+                      type: boolean
+                      enum:
+                      - true
+                      description: 仅接受 true。
+                in_progress:
+                  type: object
+                  additionalProperties: false
+                  required:
+                  - client_message_id
+                  properties:
+                    client_message_id: {type: string, format: uuid}
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+        '409': {$ref: '#/components/responses/E409'}
+        '429': {$ref: '#/components/responses/E429'}
+      description: 审核服务无结论（含首段前）发同名 SSE 终止事件。30 轮 / 3 万 token 封顶。仅首个完整回复保存后按 session_id 扣一次；失败/危机按原扣次日退。
+      x-example-request: POST /v1/sessions/85b72033-9f07-4bbc-8567-fc31f26508ab/messages
+  /v1/sessions/{session_id}/finish:
+    post:
+      operationId: finishSession
+      tags:
+      - sessions
+      summary: 整场一次评分，单项仅给目标进度，失败查询会话退款状态
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - {$ref: '#/components/schemas/FinishSessionResult'}
+                - {$ref: '#/components/schemas/Safety'}
+              examples:
+                success:
+                  value:
+                    mode: full_session
+                    score:
+                      score_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                      mode: express
+                      nvc:
+                        observation:
+                          score: 25
+                          reason: 沟通练习
+                        feeling:
+                          score: 25
+                          reason: 沟通练习
+                        need:
+                          score: 25
+                          reason: 沟通练习
+                        request:
+                          score: 25
+                          reason: 沟通练习
+                        total: 100
+                      emotion:
+                        read_others:
+                          level: 3
+                          reason: 沟通练习
+                        self_management:
+                          level: 3
+                          reason: 沟通练习
+                        relationship:
+                          level: 3
+                          reason: 沟通练习
+                      better_version: 我们能一起定个时间吗？
+                      why_better: 沟通练习
+                      target_turn: 1
+                    settlement:
+                      status: charged
+                      net_charge: 1
+                      charged_day: '2026-11-21'
+                safety:
+                  value:
+                    safety: true
+                    message: 听起来你现在可能正经历很难受的事。这里不适合继续练习，建议你马上联系专业的人：全国心理援助热线 12356；如果有人身危险，请立即拨打 110 或 120。
+                single_skill:
+                  value:
+                    mode: single_skill
+                    progress:
+                      target_item: observation
+                      score: 15
+                      reason: 有事实描述，但也有概括评价。
+                      next_action: retry_in_three_days
+                    settlement:
+                      status: charged
+                      charged_day: '2026-11-21'
+                      net_charge: 1
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+        '409': {$ref: '#/components/responses/E409'}
+        '503': {$ref: '#/components/responses/E503'}
+      description: 同一会话重复结束返回已有结果。评分最终失败净扣零；GET 会话查看 refunded 及原扣次日。危机返回固定求助对象，审核故障为可重试 503。
+      x-example-request: POST /v1/sessions/85b72033-9f07-4bbc-8567-fc31f26508ab/finish
+  /v1/replies:
+    post:
+      operationId: createReply
+      tags:
+      - replies
+      summary: 只返回整份已审核 JSON；相同 request_id 不重复生成或扣次
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateReplyInput'}
+            example:
+              request_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              chat_text: 沟通练习
+              goal: 沟通练习
+              contact_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - {$ref: '#/components/schemas/Reply'}
+                - {$ref: '#/components/schemas/Safety'}
+              examples:
+                success:
+                  value:
+                    id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                    possible_feeling: 对方可能担心进度。
+                    possible_need: 想知道什么时候能拿到初稿。
+                    suggestions:
+                    - style: 直接
+                      text: 初稿周三下午给你，可以吗？
+                      reason: 给出时间，也留出调整空间。
+                    - style: 先确认
+                      text: 你是担心来不及评审吗？我可以先发提纲。
+                      reason: 先确认顾虑，再给一个可行选择。
+                safety:
+                  value:
+                    safety: true
+                    message: 听起来你现在可能正经历很难受的事。这里不适合继续练习，建议你马上联系专业的人：全国心理援助热线 12356；如果有人身危险，请立即拨打 110 或 120。
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '409': {$ref: '#/components/responses/E409'}
+        '429': {$ref: '#/components/responses/E429'}
+        '503': {$ref: '#/components/responses/E503'}
+        '202':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - request_id
+                - status
+                properties:
+                  request_id: {type: string, format: uuid}
+                  status: {type: string, enum: [in_progress]}
+              example:
+                request_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                status: in_progress
+        '403': {$ref: '#/components/responses/E403'}
+      description: 同一 request_id 及相同内容返回已保存结果；仍在处理中返回 202，稍后用原请求重试；同键不同输入为 409。审核故障可用原 ID 重试。 指定只读关系人不可用于新训练或画像反馈。
+      x-example-request: POST /v1/replies
+  /v1/replies/{id}/feedback:
+    post:
+      operationId: rateReply
+      tags:
+      - replies
+      summary: 记录使用的建议及效果
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RateReplyInput'}
+            example:
+              index: 0
+              outcome: 沟通练习
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ack'}
+              example:
+                ok: true
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+        '403': {$ref: '#/components/responses/E403'}
+      description: ' 指定只读关系人不可用于新训练或画像反馈。'
+      x-example-request: POST /v1/replies/85b72033-9f07-4bbc-8567-fc31f26508ab/feedback
+  /v1/reviews:
+    post:
+      operationId: createReview
+      tags:
+      - reviews
+      summary: 只评分我当时怎么做；成功后扣一次，重试复用原结果
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReviewInput'}
+            example:
+              request_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              happened: 沟通练习
+              my_feeling: 沟通练习
+              their_possible_feeling: 沟通练习
+              my_action: 沟通练习
+              next_action: 沟通练习
+              contact_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              mark_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - {$ref: '#/components/schemas/Review'}
+                - {$ref: '#/components/schemas/Safety'}
+              examples:
+                success:
+                  value:
+                    id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                    submitted:
+                      request_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                      happened: 沟通练习
+                      my_feeling: 沟通练习
+                      their_possible_feeling: 沟通练习
+                      my_action: 沟通练习
+                      next_action: 沟通练习
+                      contact_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                      mark_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                    score:
+                      score_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                      mode: express
+                      nvc:
+                        observation:
+                          score: 25
+                          reason: 沟通练习
+                        feeling:
+                          score: 25
+                          reason: 沟通练习
+                        need:
+                          score: 25
+                          reason: 沟通练习
+                        request:
+                          score: 25
+                          reason: 沟通练习
+                        total: 100
+                      emotion:
+                        read_others:
+                          level: 3
+                          reason: 沟通练习
+                        self_management:
+                          level: 3
+                          reason: 沟通练习
+                        relationship:
+                          level: 3
+                          reason: 沟通练习
+                      better_version: 我们能一起定个时间吗？
+                      why_better: 沟通练习
+                      target_turn: 1
+                    repair_phrase: 沟通练习
+                safety:
+                  value:
+                    safety: true
+                    message: 听起来你现在可能正经历很难受的事。这里不适合继续练习，建议你马上联系专业的人：全国心理援助热线 12356；如果有人身危险，请立即拨打 110 或 120。
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '409': {$ref: '#/components/responses/E409'}
+        '429': {$ref: '#/components/responses/E429'}
+        '503': {$ref: '#/components/responses/E503'}
+        '202':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - request_id
+                - status
+                properties:
+                  request_id: {type: string, format: uuid}
+                  status: {type: string, enum: [in_progress]}
+              example:
+                request_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                status: in_progress
+        '403': {$ref: '#/components/responses/E403'}
+      description: 同一 request_id 及相同内容返回已保存结果；仍在处理中返回 202，稍后用原请求重试；同键不同输入为 409。审核故障可用原 ID 重试。 指定只读关系人不可用于新训练或画像反馈。
+      x-example-request: POST /v1/reviews
+    get:
+      operationId: listReviews
+      tags:
+      - reviews
+      summary: 踩坑本
+      parameters:
+      - in: query
+        name: cursor
+        schema: {type: string}
+        example: after-example
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100}
+        example: 20
+      - name: scene
+        schema: {type: string, enum: [work, partner, family, friends, social]}
+        example: work
+        in: query
+        required: false
+      - name: contact_id
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+        in: query
+        required: false
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ListReviewsResult'}
+              example:
+                items:
+                - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  submitted:
+                    request_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                    happened: 沟通练习
+                    my_feeling: 沟通练习
+                    their_possible_feeling: 沟通练习
+                    my_action: 沟通练习
+                    next_action: 沟通练习
+                    contact_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                    mark_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  score:
+                    score_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                    mode: express
+                    nvc:
+                      observation:
+                        score: 25
+                        reason: 沟通练习
+                      feeling:
+                        score: 25
+                        reason: 沟通练习
+                      need:
+                        score: 25
+                        reason: 沟通练习
+                      request:
+                        score: 25
+                        reason: 沟通练习
+                      total: 100
+                    emotion:
+                      read_others:
+                        level: 3
+                        reason: 沟通练习
+                      self_management:
+                        level: 3
+                        reason: 沟通练习
+                      relationship:
+                        level: 3
+                        reason: 沟通练习
+                    better_version: 我们能一起定个时间吗？
+                    why_better: 沟通练习
+                    target_turn: 1
+                  repair_phrase: 沟通练习
+                next_cursor: null
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: GET /v1/reviews?cursor=after-example&limit=20&scene=work&contact_id=85b72033-9f07-4bbc-8567-fc31f26508ab
+  /v1/reviews/{id}:
+    get:
+      operationId: getReview
+      tags:
+      - reviews
+      summary: 读取复盘和带引用的评分
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Review'}
+              example:
+                id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                submitted:
+                  request_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  happened: 沟通练习
+                  my_feeling: 沟通练习
+                  their_possible_feeling: 沟通练习
+                  my_action: 沟通练习
+                  next_action: 沟通练习
+                  contact_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  mark_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                score:
+                  score_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  mode: express
+                  nvc:
+                    observation:
+                      score: 25
+                      reason: 沟通练习
+                    feeling:
+                      score: 25
+                      reason: 沟通练习
+                    need:
+                      score: 25
+                      reason: 沟通练习
+                    request:
+                      score: 25
+                      reason: 沟通练习
+                    total: 100
+                  emotion:
+                    read_others:
+                      level: 3
+                      reason: 沟通练习
+                    self_management:
+                      level: 3
+                      reason: 沟通练习
+                    relationship:
+                      level: 3
+                      reason: 沟通练习
+                  better_version: 我们能一起定个时间吗？
+                  why_better: 沟通练习
+                  target_turn: 1
+                repair_phrase: 沟通练习
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+      x-example-request: GET /v1/reviews/85b72033-9f07-4bbc-8567-fc31f26508ab
+    delete:
+      operationId: deleteReview
+      tags:
+      - reviews
+      summary: 删除复盘、评分、日志及成长投影
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ack'}
+              example:
+                ok: true
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+      x-example-request: DELETE /v1/reviews/85b72033-9f07-4bbc-8567-fc31f26508ab
+  /v1/plans/today:
+    get:
+      operationId: getTodayPlan
+      tags:
+      - plans
+      summary: 今日计划与练习项
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GetTodayPlanResult'}
+              example:
+                day: '2026-11-21'
+                personalized: false
+                items:
+                - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  kind: exercise
+                  title: 沟通练习
+                  content_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  completed: false
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: GET /v1/plans/today
+  /v1/plans/items/{id}/complete:
+    post:
+      operationId: completePlanItem
+      tags:
+      - plans
+      summary: 完成任一计划项即打卡，重试不重复
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CompletePlanItemResult'}
+              example:
+                streak: 1
+                achievements:
+                - 3
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+      x-example-request: POST /v1/plans/items/85b72033-9f07-4bbc-8567-fc31f26508ab/complete
+  /v1/exercises/{id}:
+    get:
+      operationId: getExercise
+      tags:
+      - exercises
+      summary: 今日读人小练习
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GetExerciseResult'}
+              example:
+                id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                question: 沟通练习
+                choices:
+                - 沟通练习
+                - 沟通练习
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+      x-example-request: GET /v1/exercises/85b72033-9f07-4bbc-8567-fc31f26508ab
+  /v1/exercises/{id}/answers:
+    post:
+      operationId: answerExercise
+      tags:
+      - exercises
+      summary: 提交选择并查看解释
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AnswerExerciseInput'}
+            example:
+              choice_index: 1
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AnswerExerciseResult'}
+              example:
+                correct: true
+                explanation: 沟通练习
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+      x-example-request: POST /v1/exercises/85b72033-9f07-4bbc-8567-fc31f26508ab/answers
+  /v1/cards/{id}:
+    get:
+      operationId: getCard
+      tags:
+      - cards
+      summary: 知识卡片或场景速查
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GetCardResult'}
+              example:
+                id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                title: 沟通练习
+                body: 沟通练习
+                scene: work
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+        '404': {$ref: '#/components/responses/E404'}
+      x-example-request: GET /v1/cards/85b72033-9f07-4bbc-8567-fc31f26508ab
+  /v1/growth:
+    get:
+      operationId: getGrowth
+      tags:
+      - growth
+      summary: 雷达仅 WLEIS；无有效行为分时训练参考分为 null
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GetGrowthResult'}
+              example:
+                latest_assessment: null
+                wleis_percent: null
+                training_reference: null
+                valid_behavior_count: 1
+                streak: 1
+                achievements:
+                - 3
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+        '401': {$ref: '#/components/responses/E401'}
+      x-example-request: GET /v1/growth
+  /v1/contact-questions:
+    get:
+      operationId: getContactQuestions
+      summary: 关系人向导（5–8 个问题）
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                      - id
+                      - prompt
+                      properties:
+                        id: {type: string, format: uuid}
+                        prompt:
+                          type: string
+                          description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+                    minItems: 5
+                    maxItems: 8
+              example:
+                items:
+                - id: 85b72033-9f07-4bbc-8567-fc31f26508a0
+                  prompt: 意见不同时通常怎么回应？
+                - id: 85b72033-9f07-4bbc-8567-fc31f26508a1
+                  prompt: 喜欢当面谈还是稍后再谈？
+                - id: 85b72033-9f07-4bbc-8567-fc31f26508a2
+                  prompt: 会主动说出需要吗？
+                - id: 85b72033-9f07-4bbc-8567-fc31f26508a3
+                  prompt: 压力大时常有什么表现？
+                - id: 85b72033-9f07-4bbc-8567-fc31f26508a4
+                  prompt: 怎样提建议更容易接受？
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+      x-example-request: GET /v1/contact-questions
+  /v1/cards:
+    get:
+      operationId: listCards
+      summary: 按场景查知识卡片
+      parameters:
+      - in: query
+        name: cursor
+        schema: {type: string}
+        example: after-example
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100}
+        example: 20
+      - name: scene
+        schema: {type: string, enum: [work, partner, family, friends, social]}
+        example: work
+        in: query
+        required: false
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - items
+                - next_cursor
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/GetCardResult'}
+                  next_cursor: {type: string, nullable: true}
+              example:
+                items: []
+                next_cursor: null
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+      x-example-request: GET /v1/cards?cursor=after-example&limit=20&scene=work
+  /v1/health:
+    get:
+      operationId: checkHealth
+      summary: 服务健康检查，不返回依赖地址或诊断细节
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ack'}
+              example:
+                ok: true
+        '400': {$ref: '#/components/responses/E400'}
+        '500': {$ref: '#/components/responses/E500'}
+      security: []
+      x-example-request: GET /v1/health
+  /v1/signal-windows:
+    post:
+      operationId: uploadWindow
+      summary: 提交一个已授权渠道的 30 秒统计窗口
+      description: UTC 30 秒对齐；账号、starts_at、channel 幂等。同键不同值 409。缺失特征省略；有效秒不超过覆盖时长或该窗人声秒数，静音为 0。心率 bpm、HRV ms、步频步/分、语速字/分、音量 dB、音调 Hz。会员到期或相应用途同意撤回后拒收，不补传。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WindowUpload'}
+            examples:
+              health:
+                value:
+                  starts_at: '2026-11-21T09:00:00+08:00'
+                  duration_seconds: 30
+                  exercise: false
+                  channel: health
+                  source: watch_live
+                  heart_rate:
+                    mean: 72
+                    maximum: 78
+                    sample_count: 5
+                    valid_seconds: 24
+              voice:
+                value:
+                  starts_at: '2026-11-21T09:00:00+08:00'
+                  duration_seconds: 30
+                  exercise: false
+                  channel: voice
+                  voiced_seconds: 21
+                  speech_rate:
+                    mean: 180
+                    maximum: 205
+                    sample_count: 17
+                    valid_seconds: 17
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ack'}
+              example:
+                ok: true
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+        '403': {$ref: '#/components/responses/E403'}
+        '409': {$ref: '#/components/responses/E409'}
+      x-example-request: POST /v1/signal-windows
+    delete:
+      operationId: deleteWindow
+      summary: 删除自己指定渠道的窗口并重算基线
+      parameters:
+      - name: starts_at
+        schema: {type: string, format: date-time}
+        example: '2026-11-21T09:00:00+08:00'
+        in: query
+        required: true
+      - name: channel
+        schema: {type: string, enum: [health, voice]}
+        example: health
+        in: query
+        required: true
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ack'}
+              example:
+                ok: true
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+        '404': {$ref: '#/components/responses/E404'}
+      x-example-request: DELETE /v1/signal-windows?starts_at=2026-11-21T09%3A00%3A00%2B08%3A00&channel=health
+  /v1/signal-baselines:
+    get:
+      operationId: getBaselines
+      summary: 逐信号进度与阈值
+      description: 各信号分别按非运动有效时长或人声特征有效时长统计，1800 秒为一个有效日、7 日就绪。threshold 是与对应窗口均值比较的绝对上界（单位同上传接口），未就绪为 null。HRV 只按读数及采样日统计，永不参与或阻塞提醒。
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - heart_rate
+                - speech_rate
+                - volume
+                - pitch
+                - hrv
+                properties:
+                  heart_rate: {$ref: '#/components/schemas/DurationProgress'}
+                  speech_rate: {$ref: '#/components/schemas/DurationProgress'}
+                  volume: {$ref: '#/components/schemas/DurationProgress'}
+                  pitch: {$ref: '#/components/schemas/DurationProgress'}
+                  hrv:
+                    type: object
+                    additionalProperties: false
+                    required:
+                    - readings
+                    - sampling_days
+                    - ready_for_alert
+                    - reason
+                    properties:
+                      readings: {type: integer, minimum: 0}
+                      sampling_days: {type: integer, minimum: 0}
+                      ready_for_alert: {type: boolean, enum: [false]}
+                      reason:
+                        type: string
+                        description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+              example:
+                heart_rate:
+                  valid_days: 2
+                  today_valid_seconds: 210
+                  ready: false
+                  reason: 有效日不足 7 天
+                  baseline: null
+                  threshold: null
+                speech_rate:
+                  valid_days: 2
+                  today_valid_seconds: 210
+                  ready: false
+                  reason: 有效日不足 7 天
+                  baseline: null
+                  threshold: null
+                volume:
+                  valid_days: 2
+                  today_valid_seconds: 210
+                  ready: false
+                  reason: 有效日不足 7 天
+                  baseline: null
+                  threshold: null
+                pitch:
+                  valid_days: 2
+                  today_valid_seconds: 210
+                  ready: false
+                  reason: 有效日不足 7 天
+                  baseline: null
+                  threshold: null
+                hrv:
+                  readings: 0
+                  sampling_days: 0
+                  ready_for_alert: false
+                  reason: 仅展示趋势，暂无读数
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+        '403': {$ref: '#/components/responses/E403'}
+      x-example-request: GET /v1/signal-baselines
+  /v1/signal-events:
+    post:
+      operationId: reportSignalEvent
+      summary: 上传同窗分类事件（不等于用户确认）
+      description: 按 id 幂等，关联同账号 30 秒窗口；排除运动、冷却 10 分钟。仅已放行 Watch 实时异常心率＋语音异常可报本人候选；无实时异常心率时须语速与音量/音调两类异常，仅报对话节奏。历史心率与 HRV 不参与。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - id
+              - starts_at
+              - kind
+              properties:
+                id: {type: string, format: uuid}
+                starts_at: {type: string, format: date-time}
+                kind: {type: string, enum: [self_fluctuation, conversation_rhythm]}
+            example:
+              id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              starts_at: '2026-11-21T09:00:00+08:00'
+              kind: conversation_rhythm
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ack'}
+              example:
+                ok: true
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+        '403': {$ref: '#/components/responses/E403'}
+        '409': {$ref: '#/components/responses/E409'}
+      x-example-request: POST /v1/signal-events
+    get:
+      operationId: listSignalEvents
+      summary: 会员查看待核对与已标注事件
+      parameters:
+      - in: query
+        name: cursor
+        schema: {type: string}
+        example: after-example
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100}
+        example: 20
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - items
+                - next_cursor
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/SignalEvent'}
+                  next_cursor: {type: string, nullable: true}
+              example:
+                items:
+                - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  starts_at: '2026-11-21T09:00:00+08:00'
+                  kind: conversation_rhythm
+                  confirmation: pending
+                next_cursor: null
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+        '403': {$ref: '#/components/responses/E403'}
+      x-example-request: GET /v1/signal-events?cursor=after-example&limit=20
+  /v1/signal-events/{id}:
+    patch:
+      operationId: annotateSignalEvent
+      summary: 本人核对事件，补对象和场景
+      description: 仅本人候选接受确认；对话节奏可补场景，不接受本人确认。明确反馈才交 T25；“不是”只对该候选阈值上调 5%，至多初值的 1.5 倍；重复标注不重复调阈。
+      parameters:
+      - name: id
+        schema: {type: string, format: uuid}
+        example: 85b72033-9f07-4bbc-8567-fc31f26508ab
+        in: path
+        required: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                contact_id: {type: string, format: uuid, nullable: true}
+                scene: {type: string, nullable: true, pattern: ^(work|partner|family|friends|social)$}
+                confirmation: {type: string, enum: ['yes', 'no']}
+              minProperties: 1
+            example:
+              scene: work
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SignalEvent'}
+              example:
+                id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                starts_at: '2026-11-21T09:00:00+08:00'
+                kind: conversation_rhythm
+                confirmation: pending
+                scene: work
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+        '403': {$ref: '#/components/responses/E403'}
+        '404': {$ref: '#/components/responses/E404'}
+        '409': {$ref: '#/components/responses/E409'}
+      x-example-request: PATCH /v1/signal-events/85b72033-9f07-4bbc-8567-fc31f26508ab
+components:
+  securitySchemes:
+    Bearer: {type: http, scheme: bearer, bearerFormat: JWT}
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+      - code
+      - message
+      - retryable
+      properties:
+        code: {type: string}
+        message: {type: string}
+        retryable: {type: boolean}
+        retry_at: {type: string, format: date-time}
+    Ack:
+      type: object
+      additionalProperties: false
+      required:
+      - ok
+      properties:
+        ok:
+          type: boolean
+          enum:
+          - true
+          description: 仅接受 true。
+    Safety:
+      type: object
+      additionalProperties: false
+      required:
+      - safety
+      - message
+      properties:
+        safety:
+          type: boolean
+          enum:
+          - true
+          description: 仅接受 true。
+        message: {type: string, enum: [听起来你现在可能正经历很难受的事。这里不适合继续练习，建议你马上联系专业的人：全国心理援助热线 12356；如果有人身危险，请立即拨打 110 或 120。]}
+    Tokens:
+      type: object
+      additionalProperties: false
+      required:
+      - access_token
+      - refresh_token
+      - expires_at
+      - user_id
+      properties:
+        access_token: {type: string}
+        refresh_token: {type: string}
+        expires_at: {type: string, format: date-time}
+        user_id: {type: string, format: uuid}
+    Consent:
+      type: object
+      additionalProperties: false
+      required:
+      - purpose
+      - version
+      - granted
+      - updated_at
+      properties:
+        purpose:
+          type: string
+          enum:
+          - terms
+          - privacy
+          - assessment
+          - health
+          - voice
+          - audio_retention
+          - practice
+          - review
+          - contacts
+          - chat_import
+          - manual_mark
+        version: {type: string}
+        granted: {type: boolean}
+        updated_at: {type: string, format: date-time}
+    Account:
+      type: object
+      additionalProperties: false
+      required:
+      - user_id
+      - timezone
+      - bindings
+      - frozen_until
+      properties:
+        user_id: {type: string, format: uuid}
+        timezone: {type: string}
+        bindings:
+          type: array
+          items: {type: string, enum: [phone, apple, wechat]}
+          minItems: 0
+        frozen_until: {type: string, format: date-time, nullable: true}
+    Credential:
+      type: object
+      additionalProperties: false
+      required:
+      - provider
+      - proof
+      properties:
+        provider: {type: string, enum: [phone, apple, wechat]}
+        proof: {type: string}
+        phone: {type: string}
+    RequestCodeInput:
+      type: object
+      additionalProperties: false
+      required:
+      - phone
+      properties:
+        phone: {type: string}
+    LoginInput:
+      type: object
+      additionalProperties: false
+      required:
+      - credential
+      properties:
+        credential: {$ref: '#/components/schemas/Credential'}
+        age_confirmed:
+          type: boolean
+          enum:
+          - true
+          description: 仅接受 true。
+        privacy_version: {type: string}
+        terms_version: {type: string}
+    RefreshTokensInput:
+      type: object
+      additionalProperties: false
+      required:
+      - refresh_token
+      properties:
+        refresh_token: {type: string}
+    LogoutInput:
+      type: object
+      additionalProperties: false
+      required:
+      - refresh_token
+      properties:
+        refresh_token: {type: string}
+    UpdateMeInput:
+      type: object
+      additionalProperties: false
+      required:
+      - timezone
+      properties:
+        timezone: {type: string}
+    BindIdentityInput:
+      type: object
+      additionalProperties: false
+      required:
+      - current_proof
+      - credential
+      properties:
+        current_proof: {type: string}
+        credential: {$ref: '#/components/schemas/Credential'}
+    SwitchIdentityInput:
+      type: object
+      additionalProperties: false
+      required:
+      - credential
+      properties:
+        credential: {$ref: '#/components/schemas/Credential'}
+    FreezeAccountInput:
+      type: object
+      additionalProperties: false
+      required:
+      - proof
+      properties:
+        proof: {type: string}
+    FreezeAccountResult:
+      type: object
+      additionalProperties: false
+      required:
+      - frozen_until
+      properties:
+        frozen_until: {type: string, format: date-time}
+    ListConsentsResult:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - next_cursor
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Consent'}
+          minItems: 0
+        next_cursor: {type: string, nullable: true}
+    SetConsentInput:
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      - granted
+      properties:
+        version: {type: string}
+        granted: {type: boolean}
+    Allowance:
+      type: object
+      additionalProperties: false
+      required:
+      - feature
+      - remaining
+      - resets_at
+      properties:
+        feature: {type: string, enum: [practice, reply, review]}
+        remaining: {type: integer, minimum: 0, nullable: true}
+        resets_at: {type: string, format: date-time}
+    Entitlements:
+      type: object
+      additionalProperties: false
+      required:
+      - tier
+      - expires_at
+      - allowances
+      - max_active_contacts
+      - auto_watch_alert_available
+      properties:
+        tier: {type: string, enum: [free, member]}
+        expires_at: {type: string, format: date-time, nullable: true}
+        allowances:
+          type: array
+          items: {$ref: '#/components/schemas/Allowance'}
+          minItems: 0
+        max_active_contacts: {type: integer, minimum: 0, nullable: true}
+        auto_watch_alert_available: {type: boolean}
+    GetPurchaseTokenResult:
+      type: object
+      additionalProperties: false
+      required:
+      - app_account_token
+      properties:
+        app_account_token: {type: string, format: uuid}
+    CreateOrderInput:
+      type: object
+      additionalProperties: false
+      required:
+      - request_id
+      - platform
+      - product
+      properties:
+        request_id: {type: string, format: uuid}
+        platform: {type: string, enum: [wechat, alipay]}
+        product: {type: string, enum: [monthly, yearly]}
+    CreateOrderResult:
+      type: object
+      additionalProperties: false
+      required:
+      - order_id
+      - payment_payload
+      properties:
+        order_id: {type: string, format: uuid}
+        payment_payload: {type: string}
+    RestorePurchaseInput:
+      type: object
+      additionalProperties: false
+      required:
+      - signed_transaction
+      properties:
+        signed_transaction: {type: string}
+    ReceiveAppleNotificationInput:
+      type: object
+      additionalProperties: false
+      required:
+      - signedPayload
+      properties:
+        signedPayload: {type: string}
+    ReceiveWechatNotificationInput:
+      type: object
+      additionalProperties: true
+      required:
+      - id
+      - event_type
+      - resource
+      properties:
+        id: {type: string, format: uuid}
+        event_type: {type: string}
+        resource:
+          type: object
+          additionalProperties: true
+          required:
+          - algorithm
+          - ciphertext
+          - nonce
+          - associated_data
+          properties:
+            algorithm: {type: string}
+            ciphertext: {type: string}
+            nonce: {type: string}
+            associated_data: {type: string}
+    ReceiveAlipayNotificationInput:
+      type: object
+      additionalProperties: true
+      required:
+      - notify_id
+      - trade_no
+      - out_trade_no
+      - trade_status
+      - sign
+      - sign_type
+      properties:
+        notify_id: {type: string}
+        trade_no: {type: string}
+        out_trade_no: {type: string}
+        trade_status: {type: string}
+        sign: {type: string}
+        sign_type: {type: string}
+    Dimension:
+      type: object
+      additionalProperties: false
+      required:
+      - mean
+      - percent
+      - display
+      - level
+      properties:
+        mean: {type: number, minimum: 1, maximum: 7}
+        percent: {type: number, minimum: 0, maximum: 100}
+        display: {type: integer}
+        level: {type: string, enum: [L4, L1, L2, L3, L5]}
+    Assessment:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - completed_at
+      - next_eligible_at
+      - dimensions
+      - total
+      properties:
+        id: {type: string, format: uuid}
+        completed_at: {type: string, format: date-time}
+        next_eligible_at: {type: string, format: date-time}
+        dimensions:
+          type: object
+          additionalProperties: false
+          required:
+          - SEA
+          - OEA
+          - UOE
+          - ROE
+          properties:
+            SEA: {$ref: '#/components/schemas/Dimension'}
+            OEA: {$ref: '#/components/schemas/Dimension'}
+            UOE: {$ref: '#/components/schemas/Dimension'}
+            ROE: {$ref: '#/components/schemas/Dimension'}
+        total: {$ref: '#/components/schemas/Dimension'}
+    GetInstrumentResult:
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      - items
+      - options
+      properties:
+        version: {type: string}
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - id
+            - dimension
+            - zh
+            properties:
+              id: {type: integer}
+              dimension: {type: string, enum: [SEA, OEA, UOE, ROE]}
+              zh: {type: string}
+          minItems: 16
+          maxItems: 16
+        options:
+          type: array
+          items: {type: string, minLength: 1}
+          minItems: 7
+          maxItems: 7
+    SubmitAssessmentInput:
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      - answers
+      properties:
+        version: {type: string}
+        answers:
+          type: array
+          items: {type: integer, minimum: 1, maximum: 7}
+          minItems: 16
+          maxItems: 16
+    ListAssessmentsResult:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - next_cursor
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Assessment'}
+          minItems: 0
+        next_cursor: {type: string, nullable: true}
+    Profile:
+      type: object
+      additionalProperties: false
+      required:
+      - summary
+      - big_five
+      - conflict_style
+      - attachment
+      properties:
+        summary: {type: string}
+        big_five:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - label
+            - confidence
+            properties:
+              label: {type: string, minLength: 1}
+              confidence: {type: number, minimum: 0, maximum: 1}
+          minItems: 0
+        conflict_style:
+          type: object
+          additionalProperties: false
+          required:
+          - label
+          - confidence
+          properties:
+            label: {type: string, minLength: 1}
+            confidence: {type: number, minimum: 0, maximum: 1}
+        attachment:
+          type: object
+          additionalProperties: false
+          required:
+          - label
+          - confidence
+          properties:
+            label: {type: string, minLength: 1}
+            confidence: {type: number, minimum: 0, maximum: 1}
+          nullable: true
+    Contact:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - nickname
+      - scene
+      - editable
+      - profile
+      properties:
+        id: {type: string, format: uuid}
+        nickname: {type: string}
+        scene: {type: string, enum: [work, partner, family, friends, social]}
+        editable: {type: boolean}
+        profile: {$ref: '#/components/schemas/Profile'}
+    ListContactsResult:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - next_cursor
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Contact'}
+          minItems: 0
+        next_cursor: {type: string, nullable: true}
+    CreateContactInput:
+      type: object
+      additionalProperties: false
+      required:
+      - nickname
+      - scene
+      properties:
+        nickname: {type: string}
+        scene: {type: string, enum: [work, partner, family, friends, social]}
+        initial_context: {type: string, minLength: 1}
+        answers:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - question_id
+            - answer
+            properties:
+              question_id: {type: string, format: uuid}
+              answer:
+                type: string
+                description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+          maxItems: 8
+    EditContactInput:
+      type: object
+      additionalProperties: false
+      required:
+      - nickname
+      - scene
+      properties:
+        nickname: {type: string}
+        scene: {type: string, enum: [work, partner, family, friends, social]}
+        initial_context: {type: string, minLength: 1}
+    SendProfileFeedbackInput:
+      type: object
+      additionalProperties: false
+      required:
+      - source_id
+      - subject
+      - confirmed
+      properties:
+        source_id: {type: string, format: uuid}
+        subject: {type: string, enum: [self, contact, conversation]}
+        confirmed: {type: boolean}
+        contact_id: {type: string, format: uuid}
+        note: {type: string, minLength: 1}
+    InferProfileInput:
+      type: object
+      additionalProperties: false
+      required:
+      - request_id
+      - chat_text
+      properties:
+        request_id: {type: string, format: uuid}
+        chat_text: {type: string, minLength: 1}
+    Mark:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - marked_at
+      - contact_id
+      - scene
+      properties:
+        id: {type: string, format: uuid}
+        marked_at: {type: string, format: date-time}
+        contact_id: {type: string, format: uuid, nullable: true}
+        scene: {type: string, nullable: true, pattern: ^(work|partner|family|friends|social)$}
+    ListMarksResult:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - next_cursor
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Mark'}
+          minItems: 0
+        next_cursor: {type: string, nullable: true}
+    CreateMarkInput:
+      type: object
+      additionalProperties: false
+      required:
+      - request_id
+      properties:
+        request_id: {type: string, format: uuid}
+        contact_id: {type: string, format: uuid, nullable: true}
+        scene: {type: string, nullable: true, pattern: ^(work|partner|family|friends|social)$}
+    EditMarkInput:
+      type: object
+      additionalProperties: false
+      properties:
+        contact_id: {type: string, format: uuid, nullable: true}
+        scene: {type: string, nullable: true, pattern: ^(work|partner|family|friends|social)$}
+    EmotionSummaryResult:
+      type: object
+      additionalProperties: false
+      required:
+      - groups
+      properties:
+        groups:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - contact_id
+            - scene
+            - manual_count
+            - confirmed_self_count
+            properties:
+              contact_id: {type: string, format: uuid, nullable: true}
+              scene: {type: string, nullable: true, pattern: ^(work|partner|family|friends|social)$}
+              manual_count: {type: integer, minimum: 0}
+              confirmed_self_count: {type: integer, minimum: 0}
+          minItems: 0
+    Settlement:
+      type: object
+      additionalProperties: false
+      required:
+      - status
+      - net_charge
+      - charged_day
+      properties:
+        status: {type: string, enum: [uncharged, charged, refunded]}
+        net_charge: {type: integer, minimum: 0, maximum: 1}
+        charged_day: {type: string, format: date, nullable: true}
+      description: charged 的净扣为 1；refunded 为 0 并保留原扣次日；uncharged 为 0 且无扣次日。
+    Message:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - client_message_id
+      - role
+      - seq
+      - text
+      properties:
+        id: {type: string, format: uuid}
+        client_message_id: {type: string, format: uuid}
+        role: {type: string, enum: [user, assistant]}
+        seq: {type: integer, minimum: 1}
+        text: {type: string, minLength: 1}
+    Session:
+      type: object
+      additionalProperties: false
+      required:
+      - session_id
+      - status
+      - mode
+      - target_item
+      - messages
+      - settlement
+      properties:
+        session_id: {type: string, format: uuid}
+        status: {type: string, enum: [pending, active, complete, exited, safety, moderation_unavailable, failed]}
+        mode: {type: string, enum: [single_skill, full_session]}
+        target_item: {type: string, nullable: true, pattern: ^(observation|feeling|need|request)$}
+        messages:
+          type: array
+          items: {$ref: '#/components/schemas/Message'}
+          minItems: 0
+        settlement: {$ref: '#/components/schemas/Settlement'}
+        level_id: {type: string, format: uuid}
+        result: {$ref: '#/components/schemas/FinishSessionResult'}
+      description: 已完成会话带 result，供重连或重练对比分数；仅关卡会话带 level_id。messages 只含已保存记录。
+    Level:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - title
+      - scene
+      - difficulty
+      - mode
+      - target_item
+      properties:
+        id: {type: string, format: uuid}
+        title: {type: string, minLength: 1}
+        scene: {type: string, enum: [work, partner, family, friends, social]}
+        difficulty: {type: integer, minimum: 1, maximum: 3}
+        mode: {type: string, enum: [single_skill, full_session]}
+        target_item: {type: string, nullable: true, pattern: ^(observation|feeling|need|request)$}
+    ListLevelsResult:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - next_cursor
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Level'}
+          minItems: 0
+        next_cursor: {type: string, nullable: true}
+    CreateSessionInput:
+      oneOf:
+      - type: object
+        additionalProperties: false
+        required:
+        - request_id
+        - level_id
+        properties:
+          request_id: {type: string, format: uuid}
+          level_id: {type: string, format: uuid}
+          contact_id: {type: string, format: uuid}
+      - type: object
+        additionalProperties: false
+        required:
+        - request_id
+        - scenario
+        - scene
+        properties:
+          request_id: {type: string, format: uuid}
+          scenario: {type: string, minLength: 1}
+          scene: {type: string, enum: [work, partner, family, friends, social]}
+          contact_id: {type: string, format: uuid}
+    SendMessageInput:
+      type: object
+      additionalProperties: false
+      required:
+      - client_message_id
+      - text
+      properties:
+        client_message_id: {type: string, format: uuid}
+        text: {type: string, minLength: 1}
+    FullScore:
+      type: object
+      additionalProperties: false
+      required:
+      - score_id
+      - mode
+      - nvc
+      - emotion
+      - better_version
+      - why_better
+      properties:
+        score_id: {type: string, format: uuid}
+        mode: {type: string, enum: [express, respond]}
+        nvc:
+          type: object
+          additionalProperties: false
+          required:
+          - observation
+          - feeling
+          - need
+          - request
+          - total
+          properties:
+            observation:
+              type: object
+              additionalProperties: false
+              required:
+              - score
+              - reason
+              properties:
+                score: {type: integer, minimum: 0, maximum: 25, enum: [0, 5, 10, 15, 25]}
+                reason: {type: string, minLength: 1}
+            feeling:
+              type: object
+              additionalProperties: false
+              required:
+              - score
+              - reason
+              properties:
+                score: {type: integer, minimum: 0, maximum: 25, enum: [0, 5, 10, 15, 25]}
+                reason: {type: string, minLength: 1}
+            need:
+              type: object
+              additionalProperties: false
+              required:
+              - score
+              - reason
+              properties:
+                score: {type: integer, minimum: 0, maximum: 25, enum: [0, 5, 10, 15, 25]}
+                reason: {type: string, minLength: 1}
+            request:
+              type: object
+              additionalProperties: false
+              required:
+              - score
+              - reason
+              properties:
+                score: {type: integer, minimum: 0, maximum: 25, enum: [0, 5, 10, 15, 25]}
+                reason: {type: string, minLength: 1}
+            total: {type: integer, minimum: 0, maximum: 100}
+        emotion:
+          type: object
+          additionalProperties: false
+          required:
+          - read_others
+          - self_management
+          - relationship
+          properties:
+            read_others:
+              type: object
+              additionalProperties: false
+              required:
+              - level
+              - reason
+              properties:
+                level: {type: integer, minimum: 1, maximum: 5}
+                reason: {type: string, minLength: 1}
+            self_management:
+              type: object
+              additionalProperties: false
+              required:
+              - level
+              - reason
+              properties:
+                level: {type: integer, minimum: 1, maximum: 5}
+                reason: {type: string, minLength: 1}
+            relationship:
+              type: object
+              additionalProperties: false
+              required:
+              - level
+              - reason
+              properties:
+                level: {type: integer, minimum: 1, maximum: 5}
+                reason: {type: string, minLength: 1}
+        better_version: {type: string, maxLength: 80}
+        why_better: {type: string, minLength: 1}
+        target_turn: {type: integer, minimum: 1}
+      description: score_id 等于活动创建时已分配的不可复用 source_id。total 为四项之和，target_turn 从 1 起计用户发言。理由和引文仅留源明细，不进入事件或日志。
+    DrillResult:
+      type: object
+      additionalProperties: false
+      required:
+      - target_item
+      - score
+      - reason
+      - next_action
+      properties:
+        target_item: {type: string, enum: [observation, feeling, need, request]}
+        score: {type: integer, minimum: 0, maximum: 25}
+        reason: {type: string, minLength: 1}
+        next_action: {type: string, enum: [pass, retry_in_three_days, retry_now]}
+    FinishSessionResult:
+      oneOf:
+      - type: object
+        additionalProperties: false
+        required:
+        - mode
+        - score
+        - settlement
+        properties:
+          mode: {type: string, enum: [full_session]}
+          score: {$ref: '#/components/schemas/FullScore'}
+          settlement: {$ref: '#/components/schemas/Settlement'}
+      - type: object
+        additionalProperties: false
+        required:
+        - mode
+        - progress
+        - settlement
+        properties:
+          mode: {type: string, enum: [single_skill]}
+          progress: {$ref: '#/components/schemas/DrillResult'}
+          settlement: {$ref: '#/components/schemas/Settlement'}
+    ListSessionsResult:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - next_cursor
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Session'}
+          minItems: 0
+        next_cursor: {type: string, nullable: true}
+    Reply:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - possible_feeling
+      - possible_need
+      - suggestions
+      properties:
+        id: {type: string, format: uuid}
+        possible_feeling: {type: string, minLength: 1}
+        possible_need: {type: string, minLength: 1}
+        suggestions:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - style
+            - text
+            - reason
+            properties:
+              style: {type: string, minLength: 1}
+              text: {type: string, minLength: 1}
+              reason: {type: string, minLength: 1}
+          minItems: 2
+          maxItems: 3
+    CreateReplyInput:
+      type: object
+      additionalProperties: false
+      required:
+      - request_id
+      - chat_text
+      properties:
+        request_id: {type: string, format: uuid}
+        chat_text: {type: string, minLength: 1}
+        goal: {type: string, minLength: 1}
+        contact_id: {type: string, format: uuid}
+    RateReplyInput:
+      type: object
+      additionalProperties: false
+      required:
+      - index
+      - outcome
+      properties:
+        index: {type: integer, minimum: 0, maximum: 2}
+        outcome: {type: string, minLength: 1}
+    ReviewInput:
+      type: object
+      additionalProperties: false
+      required:
+      - request_id
+      - happened
+      - my_feeling
+      - their_possible_feeling
+      - my_action
+      - next_action
+      properties:
+        request_id: {type: string, format: uuid}
+        happened: {type: string, minLength: 1}
+        my_feeling: {type: string, minLength: 1}
+        their_possible_feeling: {type: string, minLength: 1}
+        my_action: {type: string, minLength: 1}
+        next_action: {type: string, minLength: 1}
+        contact_id: {type: string, format: uuid}
+        mark_id: {type: string, format: uuid}
+        scene: {type: string, enum: [work, partner, family, friends, social]}
+        occurred_at: {type: string, format: date-time}
+        signal_event_id: {type: string, format: uuid}
+    Review:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - submitted
+      - score
+      - repair_phrase
+      properties:
+        id: {type: string, format: uuid}
+        submitted: {$ref: '#/components/schemas/ReviewInput'}
+        score: {$ref: '#/components/schemas/FullScore'}
+        repair_phrase: {type: string, minLength: 1}
+    ListReviewsResult:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - next_cursor
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Review'}
+          minItems: 0
+        next_cursor: {type: string, nullable: true}
+    PlanItem:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - kind
+      - title
+      - content_id
+      - completed
+      properties:
+        id: {type: string, format: uuid}
+        kind: {type: string, enum: [exercise, level, card]}
+        title: {type: string, minLength: 1}
+        content_id: {type: string, format: uuid}
+        completed: {type: boolean}
+    GetTodayPlanResult:
+      type: object
+      additionalProperties: false
+      required:
+      - day
+      - personalized
+      - items
+      properties:
+        day: {type: string, format: date}
+        personalized: {type: boolean}
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/PlanItem'}
+          minItems: 0
+    CompletePlanItemResult:
+      type: object
+      additionalProperties: false
+      required:
+      - streak
+      - achievements
+      properties:
+        streak: {type: integer, minimum: 0}
+        achievements:
+          type: array
+          items: {type: integer}
+          minItems: 0
+    GetExerciseResult:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - question
+      - choices
+      properties:
+        id: {type: string, format: uuid}
+        question: {type: string, minLength: 1}
+        choices:
+          type: array
+          items: {type: string, minLength: 1}
+          minItems: 2
+    AnswerExerciseInput:
+      type: object
+      additionalProperties: false
+      required:
+      - choice_index
+      properties:
+        choice_index: {type: integer, minimum: 0}
+    AnswerExerciseResult:
+      type: object
+      additionalProperties: false
+      required:
+      - correct
+      - explanation
+      properties:
+        correct: {type: boolean}
+        explanation: {type: string, minLength: 1}
+    GetCardResult:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - title
+      - body
+      - scene
+      properties:
+        id: {type: string, format: uuid}
+        title: {type: string, minLength: 1}
+        body: {type: string, minLength: 1}
+        scene: {type: string, enum: [work, partner, family, friends, social]}
+    GetGrowthResult:
+      type: object
+      additionalProperties: false
+      required:
+      - latest_assessment
+      - wleis_percent
+      - training_reference
+      - valid_behavior_count
+      - streak
+      - achievements
+      properties:
+        latest_assessment: {type: string, format: uuid, nullable: true}
+        wleis_percent: {type: number, minimum: 0, maximum: 100, nullable: true}
+        training_reference: {type: number, minimum: 0, maximum: 100, nullable: true}
+        valid_behavior_count: {type: integer, minimum: 0}
+        streak: {type: integer, minimum: 0}
+        achievements:
+          type: array
+          items: {type: integer}
+          minItems: 0
+    WindowStat:
+      type: object
+      additionalProperties: false
+      required:
+      - mean
+      - maximum
+      - sample_count
+      - valid_seconds
+      properties:
+        mean: {type: number}
+        maximum: {type: number}
+        sample_count: {type: integer, minimum: 1}
+        valid_seconds: {type: integer, minimum: 0, maximum: 30}
+    HrvStat:
+      type: object
+      additionalProperties: false
+      required:
+      - mean
+      - maximum
+      - sample_count
+      properties:
+        mean: {type: number}
+        maximum: {type: number}
+        sample_count: {type: integer, minimum: 1}
+      description: 在同一 30 秒窗内聚合的离散 HRV 读数；不换算成有效秒数。
+    HealthWindow:
+      type: object
+      additionalProperties: false
+      required:
+      - channel
+      - starts_at
+      - duration_seconds
+      - exercise
+      - source
+      properties:
+        channel: {type: string, enum: [health]}
+        starts_at: {type: string, format: date-time}
+        duration_seconds: {type: integer, enum: [30]}
+        exercise: {type: boolean}
+        source: {type: string, enum: [watch_live, apple_history, health_connect, huawei_history]}
+        heart_rate: {$ref: '#/components/schemas/WindowStat'}
+        hrv: {$ref: '#/components/schemas/HrvStat'}
+        cadence: {$ref: '#/components/schemas/WindowStat'}
+      minProperties: 6
+    VoiceWindow:
+      type: object
+      additionalProperties: false
+      required:
+      - channel
+      - starts_at
+      - duration_seconds
+      - exercise
+      - voiced_seconds
+      properties:
+        channel: {type: string, enum: [voice]}
+        starts_at: {type: string, format: date-time}
+        duration_seconds: {type: integer, enum: [30]}
+        exercise: {type: boolean}
+        voiced_seconds: {type: integer, minimum: 0, maximum: 30}
+        speech_rate: {$ref: '#/components/schemas/WindowStat'}
+        volume: {$ref: '#/components/schemas/WindowStat'}
+        pitch: {$ref: '#/components/schemas/WindowStat'}
+      description: 零人声可不带任何特征；不能拿静音累计基线。
+    WindowUpload:
+      oneOf:
+      - {$ref: '#/components/schemas/HealthWindow'}
+      - {$ref: '#/components/schemas/VoiceWindow'}
+    DurationProgress:
+      type: object
+      additionalProperties: false
+      required:
+      - valid_days
+      - today_valid_seconds
+      - ready
+      - reason
+      - baseline
+      - threshold
+      properties:
+        valid_days: {type: integer, minimum: 0}
+        today_valid_seconds: {type: integer, minimum: 0}
+        ready: {type: boolean}
+        reason:
+          type: string
+          description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
+        baseline: {type: number, nullable: true}
+        threshold: {type: number, nullable: true}
+      description: valid_days 为累计有效日；today_valid_seconds 是账号时区今日的有效秒数，未就绪须给出原因。
+    SignalEvent:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - starts_at
+      - kind
+      - confirmation
+      properties:
+        id: {type: string, format: uuid}
+        starts_at: {type: string, format: date-time}
+        kind: {type: string, enum: [self_fluctuation, conversation_rhythm]}
+        contact_id: {type: string, format: uuid, nullable: true}
+        scene: {type: string, nullable: true, pattern: ^(work|partner|family|friends|social)$}
+        confirmation: {type: string, enum: [pending, 'yes', 'no']}
+  responses:
+    E400:
+      description: 请检查输入
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example:
+            code: invalid_argument
+            message: 请检查输入
+            retryable: false
+    E401:
+      description: 请重新登录
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example:
+            code: unauthenticated
+            message: 请重新登录
+            retryable: false
+    E403:
+      description: 此操作需要对应权限
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example:
+            code: forbidden
+            message: 此操作需要对应权限
+            retryable: false
+    E404:
+      description: 未找到记录
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example:
+            code: not_found
+            message: 未找到记录
+            retryable: false
+    E409:
+      description: 请核对当前状态
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example:
+            code: conflict
+            message: 请核对当前状态
+            retryable: false
+    E429:
+      description: 今日次数已用完
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example:
+            code: quota_exceeded
+            message: 今日次数已用完
+            retryable: false
+    E503:
+      description: 服务暂不可用，可重试
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example:
+            code: moderation_unavailable
+            message: 服务暂不可用，可重试
+            retryable: true
+    E500:
+      description: 请稍后再试
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example:
+            code: internal_error
+            message: 请稍后再试
+            retryable: true

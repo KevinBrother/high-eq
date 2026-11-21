@@ -25,3 +25,25 @@ jobs:
         run: go install -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@v4.19.1
       - name: Migrate, exercise constraints, roll back and reapply
         run: ./server/tests/migrations.sh
+
+  contracts:
+    name: OpenAPI examples and Gin code generation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Validate both specifications and wire examples
+        run: |
+          python3 -m venv "$RUNNER_TEMP/contract-venv"
+          "$RUNNER_TEMP/contract-venv/bin/pip" install -r scripts/contract-requirements.txt
+          "$RUNNER_TEMP/contract-venv/bin/python" scripts/check_contracts.py
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - name: Smoke-test both oapi-codegen consumers
+        run: |
+          go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.5.1
+          ./scripts/check_contract_codegen.sh

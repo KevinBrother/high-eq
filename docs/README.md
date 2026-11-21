@@ -15,3 +15,4 @@
 | [工程约定](CONVENTIONS.md) · [变更队列](CHANGES.md) | 技术栈、命名、接口与任务交接 |
 | [数据库模型](schema.md) | 迁移、表职责、生命周期与清理协议 |
 | [T01 交接](tasks/T01.md) · [T02 交接](tasks/T02.md) | 当前工程与数据层的交付及验证边界 |
+| [App OpenAPI](api/app.yaml) · [后台 OpenAPI](api/admin.yaml) · [内部事件目录](api/events.md) | 唯一对外契约、SSE 和内部数据交接；验证步骤见 [T03 交接](tasks/T03.md) |
