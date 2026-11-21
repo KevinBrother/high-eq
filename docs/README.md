@@ -13,3 +13,5 @@
 | [手表与数据接口](standards/watch.md) | 平台边界与真机验证入口 |
 | [隐私与授权](standards/privacy.md) | 同意流程、源数据和副本的保存、删除及导出 |
 | [工程约定](CONVENTIONS.md) · [变更队列](CHANGES.md) | 技术栈、命名、接口与任务交接 |
+| [数据库模型](schema.md) | 迁移、表职责、生命周期与清理协议 |
+| [T01 交接](tasks/T01.md) · [T02 交接](tasks/T02.md) | 当前工程与数据层的交付及验证边界 |
