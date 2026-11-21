@@ -55,3 +55,15 @@ jobs:
           xcrun simctl bootstatus "$UDID" -b
           flutter pub get --enforce-lockfile
           tool/ios_smoke.sh "$UDID"
+  t17-account-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with: {persist-credentials: false}
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with: {flutter-version: '3.38.10', cache: true}
+      - run: flutter pub get --enforce-lockfile
+        working-directory: app
+      - name: Exercise mobile auth and consent against an isolated T05 server
+        run: app/tool/t17/account_smoke.sh

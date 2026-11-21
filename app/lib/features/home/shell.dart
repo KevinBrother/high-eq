@@ -135,6 +135,29 @@ class HomeShell extends StatelessWidget {
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => Navigator.pushNamed(context, '/scene'),
                 ),
+                if (section == Section.practice ||
+                    section == Section.growth ||
+                    section == Section.me)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.radar),
+                    title: const Text('本次自评与续答'),
+                    onTap: () => Navigator.pushNamed(context, '/assessment'),
+                  ),
+                if (section == Section.me) ...[
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.workspace_premium_outlined),
+                    title: const Text('会员与今日额度'),
+                    onTap: () => Navigator.pushNamed(context, '/membership'),
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.logout),
+                    title: const Text('退出账号'),
+                    onTap: () => Navigator.pushNamed(context, '/logout'),
+                  ),
+                ],
                 if (section == Section.me)
                   ListTile(
                     contentPadding: EdgeInsets.zero,

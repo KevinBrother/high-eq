@@ -10,7 +10,14 @@ class ApiFailure implements Exception {
   final String code, message;
   final bool retryable;
   final int status;
-  const ApiFailure(this.status, this.code, this.message, this.retryable);
+  final DateTime? retryAt;
+  const ApiFailure(
+    this.status,
+    this.code,
+    this.message,
+    this.retryable, [
+    this.retryAt,
+  ]);
 }
 
 class AppApi {
@@ -78,6 +85,7 @@ class AppApi {
         error['code'] is String ? error['code'] : 'unavailable',
         error['message'] is String ? error['message'] : '暂时无法连接，请重试',
         error['retryable'] == true,
+        DateTime.tryParse(error['retry_at'] is String ? error['retry_at'] : ''),
       );
     }
     if (response.headers['content-type']?.split(';').first.trim() !=

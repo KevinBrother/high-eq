@@ -1,3 +1,4 @@
+import 'support/demo_login.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,10 +11,14 @@ void main() {
   testWidgets('从根导航切换场景，进入契约模拟手记并查看只读画像', (t) async {
     final box = ProviderContainer();
     addTearDown(box.dispose);
-    await box.read(apiProvider.future);
+    final api = await box.read(apiProvider.future);
+    await api.sessions.clear();
     await t.pumpWidget(
       UncontrolledProviderScope(container: box, child: const HighEqApp()),
     );
+    await t.pumpAndSettle();
+    await demoLogin(t);
+    await t.tap(find.text('暂不测评'));
     await t.pumpAndSettle();
     Future<void> tap(String label) async {
       final w = find.text(label).last;

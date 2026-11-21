@@ -42,3 +42,24 @@ android {
 flutter {
     source = "../.."
 }
+
+// Optional licensed SDK artifacts supplied by the release team. The default
+// contract build does not resolve or load any merchant SDK.
+val vendorBuild = providers.gradleProperty("t17VendorSdk").orNull == "true"
+android.sourceSets.getByName("main").apply {
+    java.srcDir(if (vendorBuild) "src/vendor/kotlin" else "src/contract/kotlin")
+
+}
+if (vendorBuild) {
+    android.defaultConfig.resValue("string", "wechat_app_id", providers.gradleProperty("wechatAppId").get())
+    dependencies {
+        implementation(files(providers.gradleProperty("wechatSdkAar").get()))
+        implementation(files(providers.gradleProperty("alipaySdkAar").get()))
+    }
+}
+if (vendorBuild) {
+    // Debug/profile have existing INTERNET overlays; keep them (already in main).
+    listOf("debug", "release", "profile").forEach {
+        android.sourceSets.maybeCreate(it).manifest.srcFile("src/vendor/AndroidManifest.xml")
+    }
+}
