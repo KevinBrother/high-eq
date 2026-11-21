@@ -51,7 +51,7 @@ jobs:
       - name: Test on iPhone Simulator
         working-directory: app
         run: |
-          UDID=$(xcrun simctl list devices available -j | python3 -c 'import sys,json;print(next(d["udid"] for group in json.load(sys.stdin)["devices"].values() for d in group if d["name"].startswith("iPhone")))')
+          UDID=$(xcrun simctl list devices available -j | python3 -c 'import sys,json;print(next(d["udid"] for d in json.load(sys.stdin)["devices"]["com.apple.CoreSimulator.SimRuntime.iOS-26-5"] if d["name"] == "iPhone 17 Pro"))')
           xcrun simctl bootstatus "$UDID" -b
           flutter pub get --enforce-lockfile
-          flutter test -d "$UDID" integration_test/smoke_test.dart
+          tool/ios_smoke.sh "$UDID"
