@@ -1,0 +1,33 @@
+name: Watch prototype
+
+on:
+  push:
+    paths:
+      - 'watch/prototype/**'
+      - '.github/workflows/watch-prototype.yml'
+  pull_request:
+    paths:
+      - 'watch/prototype/**'
+      - '.github/workflows/watch-prototype.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unsigned-build:
+    name: Protocol tests and unsigned companion build
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Record compiler and SDK versions
+        run: |
+          xcodebuild -version
+          xcrun swiftc --version
+          xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk watchos --show-sdk-version
+      - name: Verify protocol and embedded watch application (no signing or installation)
+        run: ./watch/prototype/verify.sh
