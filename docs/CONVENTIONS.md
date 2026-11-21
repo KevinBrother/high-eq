@@ -32,5 +32,5 @@
 
 ## 提交与交接
 
-- 默认在当前工作目录改动；按根目录 `AGENTS.md`，每张已验收的任务卡单独 commit，未明确要求不 push。需要 worktree 时按仓库规则建在项目根目录，使用 `feat/<name>` 或 `fix/<name>`；提交标题如 `feat(assessment): 增加四维计分`。
+- 默认在当前工作目录改动；按根目录 `AGENTS.md`，每张已验收的任务卡单独 commit 并 push；不得夹带未完成任务或密钥。需要 worktree 时按仓库规则建在项目根目录，使用 `feat/<name>` 或 `fix/<name>`；提交标题如 `feat(assessment): 增加四维计分`。
 - 交接固定四项：**范围和入口 / 验证命令及实际结果 / 未验证条件 / 下一任务及注意事项**。跨模块契约问题登记 [CHANGES](CHANGES.md) 并指定负责卡；真机、商户和审核证据不可由模拟替代。
