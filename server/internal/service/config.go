@@ -13,6 +13,7 @@ import (
 
 type Config struct {
 	Listen, DatabaseURL string
+	InstrumentPath      string
 	Environment         string
 	authMaster          []byte
 	Cache, Ledger       *redis.Options
@@ -25,6 +26,7 @@ func LoadConfig() (Config, error) {
 	if c.Listen == "" {
 		c.Listen = ":8080"
 	}
+	c.InstrumentPath = os.Getenv("WLEIS_CONFIG_PATH")
 	c.Environment = os.Getenv("APP_ENV")
 	if c.Environment != "development" {
 		return c, errors.New("development key provider disabled outside development; configure KMS first")

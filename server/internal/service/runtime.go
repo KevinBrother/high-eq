@@ -9,6 +9,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"high-eq/server/internal/accounts"
+	"high-eq/server/internal/assessment"
 	"high-eq/server/internal/events"
 	"high-eq/server/internal/fieldcrypt"
 	"high-eq/server/internal/gateway"
@@ -19,6 +20,7 @@ import (
 
 // Runtime is the composition root. Business cards add module inventory and both hooks here.
 type Runtime struct {
+	Assessments          *assessment.Service
 	db                   *pgxpool.Pool
 	cache, registryRedis *redis.Client
 	ledger               *privacy.Ledger
@@ -67,7 +69,11 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	if e != nil {
 		return nil, e
 	}
-	hooks, e := privacy.NewRegistry([]string{"membership", "accounts", "ai_calls"}, s.Membership.Hooks(), accounts.Hooks(c.Fields), gateway.Hooks())
+	bank, e := assessment.Load(c.InstrumentPath)
+	if e != nil {
+		return nil, e
+	}
+	hooks, e := privacy.NewRegistry([]string{"assessments", "membership", "accounts", "ai_calls"}, s.Membership.Hooks(), assessment.Hooks(c.Fields), accounts.Hooks(c.Fields), gateway.Hooks())
 	if e != nil {
 		return nil, e
 	}
@@ -83,6 +89,7 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 		return nil, e
 	}
 	s.Bus = events.New(s.Data, nil)
+	s.Assessments = assessment.New(bank, s.Accounts, c.Fields, s.Bus, s.db)
 	ok = true
 	return s, nil
 }

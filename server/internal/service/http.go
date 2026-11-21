@@ -13,6 +13,7 @@ import (
 	"high-eq/server/internal/accounts"
 	"high-eq/server/internal/adminops"
 	"high-eq/server/internal/api/app"
+	"high-eq/server/internal/assessment"
 	"high-eq/server/internal/membership"
 )
 
@@ -23,9 +24,10 @@ func problem(c *gin.Context, status int, code, msg string, retry bool) {
 // The operation gate keeps unimplemented generated methods unreachable.
 type appAPI struct {
 	app.ServerInterface
-	health     func(context.Context) error
-	accounts   *accounts.Service
-	membership *membership.Service
+	assessments *assessment.Service
+	health      func(context.Context) error
+	accounts    *accounts.Service
+	membership  *membership.Service
 }
 
 func (a appAPI) CheckHealth(c *gin.Context) {
@@ -41,6 +43,7 @@ func (a appAPI) CheckHealth(c *gin.Context) {
 // Only list implemented methods. GET and DELETE intentionally have different
 // frozen-account permissions from PATCH and POST on the same paths.
 var accountRoutes = map[string]bool{
+	"GET /v1/assessments/instrument": false, "GET /v1/assessments": false, "POST /v1/assessments": false,
 	"POST /v1/auth/sms": false, "POST /v1/auth/login": false, "POST /v1/auth/refresh": false,
 	"POST /v1/auth/logout": true, "POST /v1/auth/switch": false, "GET /v1/me": true, "PATCH /v1/me": false,
 	"POST /v1/me/bindings": false, "POST /v1/me/closure": false, "DELETE /v1/me/closure": true,
@@ -77,7 +80,7 @@ func gate(auth *accounts.Service) func(*gin.Context) {
 		}
 	}
 }
-func newRouter(health func(context.Context) error, auth *accounts.Service, adminDB *pgxpool.Pool, rights *membership.Service) *gin.Engine {
+func newRouter(health func(context.Context) error, auth *accounts.Service, adminDB *pgxpool.Pool, rights *membership.Service, surveys *assessment.Service) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -93,7 +96,7 @@ func newRouter(health func(context.Context) error, auth *accounts.Service, admin
 		c.Next()
 	})
 	invalid := func(c *gin.Context, _ error, _ int) { problem(c, 400, "invalid_argument", "请求参数无效", false) }
-	app.RegisterHandlersWithOptions(r, appAPI{health: health, accounts: auth, membership: rights}, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(auth)}, ErrorHandler: invalid})
+	app.RegisterHandlersWithOptions(r, appAPI{health: health, accounts: auth, assessments: surveys, membership: rights}, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(auth)}, ErrorHandler: invalid})
 	adminops.Register(r, adminDB)
 	r.NoRoute(func(c *gin.Context) { problem(c, 404, "not_found", "未找到此接口", false) })
 	return r

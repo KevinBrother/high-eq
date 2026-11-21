@@ -18,6 +18,8 @@ type Topic[T any] struct {
 	handlers []func(context.Context, pgx.Tx, T) error
 }
 
+func (t *Topic[T]) HasSubscribers() bool { return len(t.handlers) != 0 }
+
 func (t *Topic[T]) Subscribe(h func(context.Context, pgx.Tx, T) error) {
 	t.handlers = append(t.handlers, h)
 }
@@ -101,11 +103,15 @@ func (b *Bus) PublishScore(ctx context.Context, v Score) error {
 }
 func (b *Bus) PublishAssessment(ctx context.Context, v Assessment) error {
 	return b.guard.Access(ctx, v.UserID, func(tx pgx.Tx) error {
-		var id uuid.UUID
-		if e := tx.QueryRow(ctx, `select id from assessments where user_id=$1 and id=$2 for update`, v.UserID, v.AssessmentID).Scan(&id); e != nil {
+		if e := tx.QueryRow(ctx, `select completed_at from assessments where user_id=$1 and id=$2 for update`, v.UserID, v.AssessmentID).Scan(&v.OccurredAt); e != nil {
 			return e
 		}
-		return b.AssessmentCompleted.dispatch(ctx, tx, v)
+		if e := b.AssessmentCompleted.dispatch(ctx, tx, v); e != nil {
+			return e
+		}
+		// Acknowledge the outbox in the same transaction as subscriber writes.
+		_, e := tx.Exec(ctx, `update assessments set completion_pending=false where id=$1 and user_id=$2 and completion_pending`, v.AssessmentID, v.UserID)
+		return e
 	})
 }
 func (b *Bus) PublishDrill(ctx context.Context, v Drill) error {
