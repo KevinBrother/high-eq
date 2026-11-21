@@ -1,0 +1,422 @@
+[
+  {
+    "name": "live-heart-and-mixed-voice",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "heart_rate": 96,
+        "speech_rate": 160,
+        "volume": -19,
+        "pitch": 220
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "speech_rate": 150,
+        "volume": -20,
+        "pitch": 230
+      }
+    },
+    "want": "self_fluctuation"
+  },
+  {
+    "name": "silent-owner-excited-peer-normal-heart",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "heart_rate": 72,
+        "speech_rate": 160,
+        "volume": -19,
+        "pitch": 220
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "speech_rate": 150,
+        "volume": -20,
+        "pitch": 230
+      }
+    },
+    "want": "conversation_rhythm"
+  },
+  {
+    "name": "silent-owner-excited-peer-missing-heart",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "speech_rate": 160,
+        "pitch": 240
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "speech_rate": 150,
+        "volume": -20,
+        "pitch": 230
+      }
+    },
+    "want": "conversation_rhythm"
+  },
+  {
+    "name": "heart-only",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "heart_rate": 100
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "speech_rate": 150,
+        "volume": -20,
+        "pitch": 230
+      }
+    },
+    "want": "none"
+  },
+  {
+    "name": "volume-pitch-one-class",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "volume": -19,
+        "pitch": 240
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "speech_rate": 150,
+        "volume": -20,
+        "pitch": 230
+      }
+    },
+    "want": "none"
+  },
+  {
+    "name": "partial-ready-heart-and-volume",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "heart_rate": 96,
+        "speech_rate": 160,
+        "volume": -19,
+        "pitch": 220
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "volume": -20
+      }
+    },
+    "want": "self_fluctuation"
+  },
+  {
+    "name": "heart-not-ready",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "heart_rate": 96,
+        "speech_rate": 160,
+        "volume": -19,
+        "pitch": 220
+      },
+      "thresholds": {
+        "volume": -20,
+        "speech_rate": 150
+      }
+    },
+    "want": "conversation_rhythm"
+  },
+  {
+    "name": "cold-start",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "heart_rate": 96,
+        "speech_rate": 160,
+        "volume": -19,
+        "pitch": 220
+      },
+      "thresholds": {}
+    },
+    "want": "none"
+  },
+  {
+    "name": "external-workout",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "heart_rate": 96,
+        "speech_rate": 160,
+        "volume": -19,
+        "pitch": 220
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "speech_rate": 150,
+        "volume": -20,
+        "pitch": 230
+      },
+      "exercise": true
+    },
+    "want": "none"
+  },
+  {
+    "name": "two-minute-cadence-over",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "heart_rate": 96,
+        "speech_rate": 160,
+        "volume": -19,
+        "pitch": 220
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "speech_rate": 150,
+        "volume": -20,
+        "pitch": 230
+      },
+      "cadence_2m": 101
+    },
+    "want": "none"
+  },
+  {
+    "name": "exact-cadence-boundary",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "heart_rate": 96,
+        "speech_rate": 160,
+        "volume": -19,
+        "pitch": 220
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "speech_rate": 150,
+        "volume": -20,
+        "pitch": 230
+      },
+      "cadence_2m": 100
+    },
+    "want": "self_fluctuation"
+  },
+  {
+    "name": "cooldown-599",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "heart_rate": 96,
+        "speech_rate": 160,
+        "volume": -19,
+        "pitch": 220
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "speech_rate": 150,
+        "volume": -20,
+        "pitch": 230
+      },
+      "last_alert": "2026-11-21T11:50:01Z"
+    },
+    "want": "none"
+  },
+  {
+    "name": "cooldown-600",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "heart_rate": 96,
+        "speech_rate": 160,
+        "volume": -19,
+        "pitch": 220
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "speech_rate": 150,
+        "volume": -20,
+        "pitch": 230
+      },
+      "last_alert": "2026-11-21T11:50:00Z"
+    },
+    "want": "self_fluctuation"
+  },
+  {
+    "name": "android-history",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "health_connect",
+      "watch_released": true,
+      "means": {
+        "heart_rate": 96,
+        "speech_rate": 160,
+        "volume": -19,
+        "pitch": 220
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "speech_rate": 150,
+        "volume": -20,
+        "pitch": 230
+      }
+    },
+    "want": "conversation_rhythm"
+  },
+  {
+    "name": "unreleased-watch",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": false,
+      "means": {
+        "heart_rate": 96,
+        "speech_rate": 160,
+        "volume": -19,
+        "pitch": 220
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "speech_rate": 150,
+        "volume": -20,
+        "pitch": 230
+      }
+    },
+    "want": "conversation_rhythm"
+  },
+  {
+    "name": "different-heart-window",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T11:59:30Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "heart_rate": 96,
+        "speech_rate": 160,
+        "volume": -19,
+        "pitch": 220
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "speech_rate": 150,
+        "volume": -20,
+        "pitch": 230
+      }
+    },
+    "want": "conversation_rhythm"
+  },
+  {
+    "name": "no-voice",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "heart_rate": 110
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "speech_rate": 150,
+        "volume": -20,
+        "pitch": 230
+      }
+    },
+    "want": "none"
+  },
+  {
+    "name": "hrv-never-counts",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "heart_rate": 96,
+        "hrv": 5
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "speech_rate": 150,
+        "volume": -20,
+        "pitch": 230
+      }
+    },
+    "want": "none"
+  },
+  {
+    "name": "explicit-null-is-not-ready",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "heart_rate": 96,
+        "speech_rate": 160,
+        "volume": -19,
+        "pitch": 220
+      },
+      "thresholds": {
+        "heart_rate": null,
+        "speech_rate": 150,
+        "volume": null
+      }
+    },
+    "want": "none"
+  }
+]

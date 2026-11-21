@@ -55,6 +55,12 @@ func run() error {
 			case <-worker.Done():
 				return
 			case <-t.C:
+				if e := s.Emotion.PurgeDue(worker, time.Now()); e != nil && worker.Err() == nil {
+					slog.Error("cleanup unavailable", "module", "emotion", "result", "retry")
+				}
+				if e := s.Emotion.ReplayPending(worker); e != nil && worker.Err() == nil {
+					slog.Error("feedback pending", "module", "emotion", "result", "retry")
+				}
 				if e := s.Accounts.PurgeDue(worker); e != nil && worker.Err() == nil {
 					slog.Error("cleanup unavailable", "module", "accounts", "result", "retry")
 				}

@@ -13,6 +13,7 @@ import (
 	"high-eq/server/internal/adminops"
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/assessment"
+	"high-eq/server/internal/emotion"
 	"high-eq/server/internal/membership"
 )
 
@@ -23,6 +24,7 @@ func problem(c *gin.Context, status int, code, msg string, retry bool) {
 // The operation gate keeps unimplemented generated methods unreachable.
 type appAPI struct {
 	app.ServerInterface
+	signals     *emotion.Service
 	assessments *assessment.Service
 	health      func(context.Context) error
 	accounts    *accounts.Service
@@ -42,6 +44,8 @@ func (a appAPI) CheckHealth(c *gin.Context) {
 // Only list implemented methods. GET and DELETE intentionally have different
 // frozen-account permissions from PATCH and POST on the same paths.
 var accountRoutes = map[string]bool{
+	"POST /v1/signal-windows": false, "DELETE /v1/signal-windows": false, "GET /v1/signal-baselines": false,
+	"POST /v1/signal-events": false, "GET /v1/signal-events": false, "PATCH /v1/signal-events/:id": false,
 	"GET /v1/assessments/instrument": false, "GET /v1/assessments": false, "POST /v1/assessments": false,
 	"POST /v1/auth/sms": false, "POST /v1/auth/login": false, "POST /v1/auth/refresh": false,
 	"POST /v1/auth/logout": true, "POST /v1/auth/switch": false, "GET /v1/me": true, "PATCH /v1/me": false,
@@ -79,7 +83,7 @@ func gate(auth *accounts.Service) func(*gin.Context) {
 		}
 	}
 }
-func newRouter(health func(context.Context) error, auth *accounts.Service, mountAdmin func(gin.IRouter), rights *membership.Service, surveys *assessment.Service) *gin.Engine {
+func newRouter(health func(context.Context) error, auth *accounts.Service, mountAdmin func(gin.IRouter), rights *membership.Service, surveys *assessment.Service, signals ...*emotion.Service) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -95,7 +99,11 @@ func newRouter(health func(context.Context) error, auth *accounts.Service, mount
 		c.Next()
 	})
 	invalid := func(c *gin.Context, _ error, _ int) { problem(c, 400, "invalid_argument", "请求参数无效", false) }
-	app.RegisterHandlersWithOptions(r, appAPI{health: health, accounts: auth, assessments: surveys, membership: rights}, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(auth)}, ErrorHandler: invalid})
+	var signalService *emotion.Service
+	if len(signals) > 0 {
+		signalService = signals[0]
+	}
+	app.RegisterHandlersWithOptions(r, appAPI{signals: signalService, health: health, accounts: auth, assessments: surveys, membership: rights}, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(auth)}, ErrorHandler: invalid})
 	if mountAdmin != nil {
 		mountAdmin(r)
 	} else {

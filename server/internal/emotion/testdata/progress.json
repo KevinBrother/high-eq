@@ -1,0 +1,154 @@
+[
+  {
+    "name": "local-midnight-partial-features-motion-and-discrete-hrv",
+    "now": "2026-11-20T16:04:00Z",
+    "zone": "Asia/Shanghai",
+    "windows": [
+      {
+        "starts_at": "2026-11-20T15:59:30Z",
+        "duration_seconds": 30,
+        "exercise": false,
+        "channel": "health",
+        "source": "apple_history",
+        "hrv": {
+          "mean": 50,
+          "maximum": 53,
+          "sample_count": 3
+        }
+      },
+      {
+        "starts_at": "2026-11-20T16:00:00Z",
+        "duration_seconds": 30,
+        "exercise": false,
+        "channel": "health",
+        "source": "health_connect",
+        "heart_rate": {
+          "mean": 79,
+          "maximum": 79,
+          "sample_count": 3,
+          "valid_seconds": 24
+        },
+        "hrv": {
+          "mean": 50,
+          "maximum": 53,
+          "sample_count": 3
+        }
+      },
+      {
+        "starts_at": "2026-11-20T16:00:00Z",
+        "duration_seconds": 30,
+        "exercise": false,
+        "channel": "voice",
+        "voiced_seconds": 19,
+        "speech_rate": {
+          "mean": 150,
+          "maximum": 150,
+          "sample_count": 3,
+          "valid_seconds": 18
+        },
+        "volume": {
+          "mean": -45,
+          "maximum": -45,
+          "sample_count": 3,
+          "valid_seconds": 19
+        }
+      },
+      {
+        "starts_at": "2026-11-20T16:00:30Z",
+        "duration_seconds": 30,
+        "exercise": false,
+        "channel": "health",
+        "source": "watch_live",
+        "cadence": {
+          "mean": 101,
+          "maximum": 101,
+          "sample_count": 3,
+          "valid_seconds": 30
+        },
+        "heart_rate": {
+          "mean": 130,
+          "maximum": 130,
+          "sample_count": 3,
+          "valid_seconds": 28
+        }
+      },
+      {
+        "starts_at": "2026-11-20T16:00:30Z",
+        "duration_seconds": 30,
+        "exercise": false,
+        "channel": "voice",
+        "voiced_seconds": 30,
+        "speech_rate": {
+          "mean": 201,
+          "maximum": 201,
+          "sample_count": 3,
+          "valid_seconds": 30
+        }
+      },
+      {
+        "starts_at": "2026-11-20T16:01:00Z",
+        "duration_seconds": 30,
+        "exercise": false,
+        "channel": "voice",
+        "voiced_seconds": 30,
+        "pitch": {
+          "mean": 222,
+          "maximum": 222,
+          "sample_count": 3,
+          "valid_seconds": 30
+        }
+      },
+      {
+        "starts_at": "2026-11-20T16:03:00Z",
+        "duration_seconds": 30,
+        "exercise": false,
+        "channel": "voice",
+        "voiced_seconds": 0
+      }
+    ],
+    "want": {
+      "heart_rate": {
+        "today_valid_seconds": 24
+      },
+      "speech_rate": {
+        "today_valid_seconds": 18
+      },
+      "volume": {
+        "today_valid_seconds": 19
+      },
+      "pitch": {
+        "today_valid_seconds": 0
+      },
+      "hrv": {
+        "readings": 6,
+        "sampling_days": 2,
+        "ready_for_alert": false
+      }
+    }
+  },
+  {
+    "name": "all-missing",
+    "now": "2026-11-20T16:04:00Z",
+    "zone": "UTC",
+    "windows": [],
+    "want": {
+      "heart_rate": {
+        "today_valid_seconds": 0
+      },
+      "speech_rate": {
+        "today_valid_seconds": 0
+      },
+      "volume": {
+        "today_valid_seconds": 0
+      },
+      "pitch": {
+        "today_valid_seconds": 0
+      },
+      "hrv": {
+        "readings": 0,
+        "sampling_days": 0,
+        "ready_for_alert": false
+      }
+    }
+  }
+]

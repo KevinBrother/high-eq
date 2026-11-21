@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/redis/go-redis/v9"
 
 	"high-eq/server/internal/api/app"
@@ -109,6 +110,7 @@ func dayWindow(at time.Time, zone string) (string, time.Time, error) {
 type access struct {
 	tier
 	member bool
+	start  *time.Time
 	end    *time.Time
 	day    string
 	reset  time.Time
@@ -118,18 +120,20 @@ type access struct {
 func (s *Service) access(ctx context.Context, tx pgx.Tx, user uuid.UUID) (access, error) {
 	a := access{tier: s.policy.Free, at: s.now()}
 	var zone string
+	var period pgtype.Range[time.Time]
 	// Merge adjoining verified periods so expires_at is the end of continuous access, not the next billing boundary.
 	e := tx.QueryRow(ctx, `select timezone, (
-        select upper(r) from unnest((
+        select r from unnest((
             select range_agg(tstzrange(starts_at, ends_at, '[)'))
             from entitlements e join orders o on o.id=e.order_id
             where e.user_id=u.id and o.state='paid'
         )) r where r @> $2::timestamptz
-    ) from users u where id=$1 and closure_requested_at is null`, user, a.at).Scan(&zone, &a.end)
+    ) from users u where id=$1 and closure_requested_at is null`, user, a.at).Scan(&zone, &period)
 	if e != nil {
 		return a, e
 	}
-	if a.end != nil {
+	if period.Valid {
+		a.start, a.end = &period.Lower, &period.Upper
 		a.tier = s.policy.Member
 		a.member = true
 	}

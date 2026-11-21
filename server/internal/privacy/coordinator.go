@@ -99,6 +99,8 @@ type Deletion struct {
 }
 
 var removes = map[string]string{
+	"signal_windows": `delete from signal_windows where user_id=$1 and purge_id=$2`,
+
 	"account":       `delete from users where id=$1 and purge_id=$2`,
 	"assessments":   `delete from assessments where user_id=$1 and id=$2`,
 	"sessions":      `delete from activities where user_id=$1 and source_id=$2 and kind in ('practice','drill')`,
