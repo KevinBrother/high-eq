@@ -6,7 +6,7 @@ enum Section {
     '练习',
     '把想说的话，先练一遍。',
     '练习空间',
-    '对话练习将在这里开启。',
+    '选一关练表达，或先预演一场自己的对话。',
     Icons.chat_bubble_outline_rounded,
   ),
   live(
@@ -143,6 +143,14 @@ class HomeShell extends StatelessWidget {
                     leading: const Icon(Icons.radar),
                     title: const Text('本次自评与续答'),
                     onTap: () => Navigator.pushNamed(context, '/assessment'),
+                  ),
+                if (section == Section.practice)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.forum_outlined),
+                    title: const Text('对练与预演'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.pushNamed(context, '/training'),
                   ),
                 if (section == Section.me) ...[
                   ListTile(

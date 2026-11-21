@@ -6,6 +6,7 @@ import 'core/providers.dart';
 import 'core/session.dart';
 import 'core/theme.dart';
 import 'features/home/shell.dart';
+import 'features/practice/lobby.dart';
 import 'features/contacts/routes.dart';
 import 'features/onboarding/login.dart';
 import 'features/onboarding/assessment.dart';
@@ -55,6 +56,8 @@ class HighEqApp extends ConsumerWidget {
                   AssessmentBook(api!, scope),
                   startup: settings.name == '/',
                 );
+              case '/training':
+                return const PracticeRoute();
               case '/membership':
                 return MemberPage(MemberStore(api!, scope));
               case '/logout':
