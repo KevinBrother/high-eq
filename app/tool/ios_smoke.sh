@@ -2,7 +2,7 @@
 # Run from app/. Does not discover a Dart debug socket via simulator logs.
 set -euo pipefail
 udid=${1:?supply a booted iPhone simulator UDID}
-flutter build ios --config-only --simulator --debug --no-pub --target=tool/ios_smoke.dart
+flutter build ios --config-only --simulator --debug --no-pub --target=test/support/ios_smoke.dart
 xcodebuild -quiet -jobs 3 -workspace ios/Runner.xcworkspace -scheme Runner \
   -configuration Debug -destination "id=$udid" -derivedDataPath build/native-tests \
   ONLY_ACTIVE_ARCH=YES build
