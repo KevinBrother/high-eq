@@ -11,6 +11,7 @@ import (
 )
 
 var (
+	ErrObjectFormat = errors.New("invalid generated JSON object")
 	ErrRequest      = errors.New("invalid chat request")
 	ErrProvider     = errors.New("provider response unavailable or incomplete")
 	ErrConfig       = errors.New("configuration not admitted or unavailable")

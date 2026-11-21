@@ -26,5 +26,7 @@ jobs:
           cd server
           go vet ./...
           go test -race ./...
+      - name: Verify synthetic scoring corpus, seed and offline batch plan
+        run: python3 server/eval/verify_t12.py
       - name: Run real service, migrations and privacy protocol
         run: ./server/tests/runtime.sh

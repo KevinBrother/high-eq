@@ -145,6 +145,9 @@ func (a *generation) run(parent context.Context) (Result, error) {
 	case JSONObject:
 		var obj map[string]json.RawMessage
 		if json.Unmarshal([]byte(full), &obj) != nil || obj == nil {
+			if c.Task == Scoring {
+				return res, ErrObjectFormat // T12 owns the single schema retry, not model fallback.
+			}
 			return res, ErrProvider
 		}
 		if bytes.Equal(obj["safety_flag"], []byte("true")) {
