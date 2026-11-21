@@ -1,0 +1,913 @@
+{
+  "requestCode": {
+    "ok": true
+  },
+  "login": {
+    "access_token": "example-only",
+    "refresh_token": "example-only",
+    "expires_at": "2026-11-21T09:00:00+08:00",
+    "user_id": "85b72033-9f07-4bbc-8567-fc31f26508ab"
+  },
+  "refreshTokens": {
+    "access_token": "example-only",
+    "refresh_token": "example-only",
+    "expires_at": "2026-11-21T09:00:00+08:00",
+    "user_id": "85b72033-9f07-4bbc-8567-fc31f26508ab"
+  },
+  "logout": {
+    "ok": true
+  },
+  "getMe": {
+    "user_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "timezone": "Asia/Shanghai",
+    "bindings": [
+      "phone"
+    ],
+    "frozen_until": null
+  },
+  "updateMe": {
+    "user_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "timezone": "Asia/Shanghai",
+    "bindings": [
+      "phone"
+    ],
+    "frozen_until": null
+  },
+  "bindIdentity": {
+    "user_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "timezone": "Asia/Shanghai",
+    "bindings": [
+      "phone"
+    ],
+    "frozen_until": null
+  },
+  "switchIdentity": {
+    "access_token": "example-only",
+    "refresh_token": "example-only",
+    "expires_at": "2026-11-21T09:00:00+08:00",
+    "user_id": "85b72033-9f07-4bbc-8567-fc31f26508ab"
+  },
+  "freezeAccount": {
+    "frozen_until": "2026-11-21T09:00:00+08:00"
+  },
+  "cancelClosure": {
+    "ok": true
+  },
+  "listConsents": {
+    "items": [
+      {
+        "purpose": "terms",
+        "version": "2026-11",
+        "granted": true,
+        "updated_at": "2026-11-21T09:00:00+08:00"
+      }
+    ],
+    "next_cursor": null
+  },
+  "setConsent": {
+    "purpose": "terms",
+    "version": "2026-11",
+    "granted": true,
+    "updated_at": "2026-11-21T09:00:00+08:00"
+  },
+  "exportData": "UEsDBBQAAAAAAAAAIQD7noTzHQAAAB0AAAANAAAAbWFuaWZlc3QuanNvbnsibW9kdWxlcyI6IFsibWFudWFsX21hcmtzIl19UEsDBBQAAAAAAAAAIQApu0wNAgAAAAIAAAARAAAAbWFudWFsX21hcmtzLmpzb25bXVBLAQIUAxQAAAAAAAAAIQD7noTzHQAAAB0AAAANAAAAAAAAAAAAAACAAQAAAABtYW5pZmVzdC5qc29uUEsBAhQDFAAAAAAAAAAhACm7TA0CAAAAAgAAABEAAAAAAAAAAAAAAIABSAAAAG1hbnVhbF9tYXJrcy5qc29uUEsFBgAAAAACAAIAegAAAHkAAAAAAA==",
+  "deleteSource": {
+    "ok": true
+  },
+  "getEntitlements": {
+    "tier": "free",
+    "expires_at": null,
+    "allowances": [
+      {
+        "feature": "practice",
+        "remaining": 3,
+        "resets_at": "2026-11-22T00:00:00+08:00"
+      },
+      {
+        "feature": "reply",
+        "remaining": 3,
+        "resets_at": "2026-11-22T00:00:00+08:00"
+      },
+      {
+        "feature": "review",
+        "remaining": 3,
+        "resets_at": "2026-11-22T00:00:00+08:00"
+      }
+    ],
+    "max_active_contacts": 1,
+    "auto_watch_alert_available": false
+  },
+  "getPurchaseToken": {
+    "app_account_token": "ed394359-d26a-428e-b350-584305a9db4b"
+  },
+  "createOrder": {
+    "order_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "payment_payload": "example-only"
+  },
+  "restorePurchase": {
+    "tier": "free",
+    "expires_at": null,
+    "allowances": [
+      {
+        "feature": "practice",
+        "remaining": null,
+        "resets_at": "2026-11-21T09:00:00+08:00"
+      }
+    ],
+    "max_active_contacts": null,
+    "auto_watch_alert_available": false
+  },
+  "getInstrument": {
+    "version": "wleis-2026-11",
+    "items": [
+      {
+        "id": 1,
+        "dimension": "SEA",
+        "zh": "大多数时候，我都清楚自己为什么会有某种感受。"
+      },
+      {
+        "id": 2,
+        "dimension": "SEA",
+        "zh": "我很了解自己的情绪。"
+      },
+      {
+        "id": 3,
+        "dimension": "SEA",
+        "zh": "我真正明白自己的感受。"
+      },
+      {
+        "id": 4,
+        "dimension": "SEA",
+        "zh": "我总是知道自己是否开心。"
+      },
+      {
+        "id": 5,
+        "dimension": "OEA",
+        "zh": "我总能从朋友的行为中了解他们的情绪。"
+      },
+      {
+        "id": 6,
+        "dimension": "OEA",
+        "zh": "我很善于观察别人的情绪。"
+      },
+      {
+        "id": 7,
+        "dimension": "OEA",
+        "zh": "我对他人的感受和情绪很敏感。"
+      },
+      {
+        "id": 8,
+        "dimension": "OEA",
+        "zh": "我很了解身边人的情绪。"
+      },
+      {
+        "id": 9,
+        "dimension": "UOE",
+        "zh": "我总是为自己设定目标，然后尽最大努力去实现。"
+      },
+      {
+        "id": 10,
+        "dimension": "UOE",
+        "zh": "我总是告诉自己，我是一个有能力的人。"
+      },
+      {
+        "id": 11,
+        "dimension": "UOE",
+        "zh": "我是一个能自我激励的人。"
+      },
+      {
+        "id": 12,
+        "dimension": "UOE",
+        "zh": "我总是鼓励自己尽最大努力。"
+      },
+      {
+        "id": 13,
+        "dimension": "ROE",
+        "zh": "我能控制自己的脾气，理性地处理困难。"
+      },
+      {
+        "id": 14,
+        "dimension": "ROE",
+        "zh": "我很有能力控制自己的情绪。"
+      },
+      {
+        "id": 15,
+        "dimension": "ROE",
+        "zh": "当我非常生气时，我总能很快冷静下来。"
+      },
+      {
+        "id": 16,
+        "dimension": "ROE",
+        "zh": "我能很好地控制自己的情绪。"
+      }
+    ],
+    "options": [
+      "非常不同意",
+      "不同意",
+      "有点不同意",
+      "说不清",
+      "有点同意",
+      "同意",
+      "非常同意"
+    ]
+  },
+  "submitAssessment": {
+    "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "completed_at": "2026-11-21T09:00:00+08:00",
+    "next_eligible_at": "2026-12-19T09:00:00+08:00",
+    "dimensions": {
+      "SEA": {
+        "mean": 5.5,
+        "percent": 75,
+        "display": 75,
+        "level": "L4"
+      },
+      "OEA": {
+        "mean": 5.5,
+        "percent": 75,
+        "display": 75,
+        "level": "L4"
+      },
+      "UOE": {
+        "mean": 5.5,
+        "percent": 75,
+        "display": 75,
+        "level": "L4"
+      },
+      "ROE": {
+        "mean": 5.5,
+        "percent": 75,
+        "display": 75,
+        "level": "L4"
+      }
+    },
+    "total": {
+      "mean": 5.5,
+      "percent": 75,
+      "display": 75,
+      "level": "L4"
+    }
+  },
+  "listAssessments": {
+    "items": [
+      {
+        "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+        "completed_at": "2026-11-21T09:00:00+08:00",
+        "next_eligible_at": "2026-12-19T09:00:00+08:00",
+        "dimensions": {
+          "SEA": {
+            "mean": 5.5,
+            "percent": 75,
+            "display": 75,
+            "level": "L4"
+          },
+          "OEA": {
+            "mean": 5.5,
+            "percent": 75,
+            "display": 75,
+            "level": "L4"
+          },
+          "UOE": {
+            "mean": 5.5,
+            "percent": 75,
+            "display": 75,
+            "level": "L4"
+          },
+          "ROE": {
+            "mean": 5.5,
+            "percent": 75,
+            "display": 75,
+            "level": "L4"
+          }
+        },
+        "total": {
+          "mean": 5.5,
+          "percent": 75,
+          "display": 75,
+          "level": "L4"
+        }
+      }
+    ],
+    "next_cursor": null
+  },
+  "listContacts": {
+    "items": [
+      {
+        "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+        "nickname": "同事 A",
+        "scene": "work",
+        "editable": true,
+        "profile": {
+          "summary": "更倾向先听完再回应",
+          "big_five": [
+            {
+              "label": "沟通练习",
+              "confidence": 0.5
+            }
+          ],
+          "conflict_style": {
+            "label": "沟通练习",
+            "confidence": 0.5
+          },
+          "attachment": null
+        }
+      }
+    ],
+    "next_cursor": null
+  },
+  "createContact": {
+    "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "nickname": "同事 A",
+    "scene": "work",
+    "editable": true,
+    "profile": {
+      "summary": "更倾向先听完再回应",
+      "big_five": [
+        {
+          "label": "沟通练习",
+          "confidence": 0.5
+        }
+      ],
+      "conflict_style": {
+        "label": "沟通练习",
+        "confidence": 0.5
+      },
+      "attachment": null
+    }
+  },
+  "editContact": {
+    "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "nickname": "同事 A",
+    "scene": "work",
+    "editable": true,
+    "profile": {
+      "summary": "更倾向先听完再回应",
+      "big_five": [
+        {
+          "label": "沟通练习",
+          "confidence": 0.5
+        }
+      ],
+      "conflict_style": {
+        "label": "沟通练习",
+        "confidence": 0.5
+      },
+      "attachment": null
+    }
+  },
+  "deleteContact": {
+    "ok": true
+  },
+  "chooseContact": {
+    "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "nickname": "同事 A",
+    "scene": "work",
+    "editable": true,
+    "profile": {
+      "summary": "更倾向先听完再回应",
+      "big_five": [
+        {
+          "label": "沟通练习",
+          "confidence": 0.5
+        }
+      ],
+      "conflict_style": {
+        "label": "沟通练习",
+        "confidence": 0.5
+      },
+      "attachment": null
+    }
+  },
+  "getContactSummary": {
+    "summary": "更倾向先听完再回应",
+    "big_five": [
+      {
+        "label": "沟通练习",
+        "confidence": 0.5
+      }
+    ],
+    "conflict_style": {
+      "label": "沟通练习",
+      "confidence": 0.5
+    },
+    "attachment": null
+  },
+  "getProfile": {
+    "summary": "练习前可以先描述事实"
+  },
+  "sendProfileFeedback": {
+    "ok": true
+  },
+  "inferProfile": {
+    "summary": "更倾向先听完再回应",
+    "big_five": [
+      {
+        "label": "沟通练习",
+        "confidence": 0.5
+      }
+    ],
+    "conflict_style": {
+      "label": "沟通练习",
+      "confidence": 0.5
+    },
+    "attachment": null
+  },
+  "listMarks": {
+    "items": [
+      {
+        "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+        "marked_at": "2026-11-21T09:00:00+08:00",
+        "contact_id": null,
+        "scene": null
+      }
+    ],
+    "next_cursor": null
+  },
+  "createMark": {
+    "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "marked_at": "2026-11-21T09:00:00+08:00",
+    "contact_id": null,
+    "scene": null
+  },
+  "editMark": {
+    "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "marked_at": "2026-11-21T09:00:00+08:00",
+    "contact_id": null,
+    "scene": null
+  },
+  "deleteMark": {
+    "ok": true
+  },
+  "emotionSummary": {
+    "groups": [
+      {
+        "contact_id": null,
+        "scene": null,
+        "manual_count": 1,
+        "confirmed_self_count": 1
+      }
+    ]
+  },
+  "listLevels": {
+    "items": [
+      {
+        "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+        "title": "沟通练习",
+        "scene": "work",
+        "difficulty": 1,
+        "mode": "single_skill",
+        "target_item": "observation"
+      }
+    ],
+    "next_cursor": null
+  },
+  "createSession": {
+    "session_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "status": "pending",
+    "mode": "single_skill",
+    "target_item": "observation",
+    "messages": [],
+    "settlement": {
+      "status": "uncharged",
+      "net_charge": 0,
+      "charged_day": null
+    }
+  },
+  "listSessions": {
+    "items": [
+      {
+        "session_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+        "status": "pending",
+        "mode": "single_skill",
+        "target_item": "observation",
+        "messages": [
+          {
+            "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+            "client_message_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+            "role": "user",
+            "seq": 1,
+            "text": "沟通练习"
+          }
+        ],
+        "settlement": {
+          "status": "uncharged",
+          "net_charge": 0,
+          "charged_day": null
+        }
+      }
+    ],
+    "next_cursor": null
+  },
+  "getSession": {
+    "session_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "status": "active",
+    "mode": "single_skill",
+    "target_item": "observation",
+    "messages": [
+      {
+        "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+        "client_message_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+        "role": "user",
+        "seq": 1,
+        "text": "沟通练习"
+      }
+    ],
+    "settlement": {
+      "status": "uncharged",
+      "net_charge": 0,
+      "charged_day": null
+    }
+  },
+  "exitSession": {
+    "status": "uncharged",
+    "net_charge": 0,
+    "charged_day": null
+  },
+  "sendMessage": [
+    "event: fragment\ndata: {\"client_message_id\": \"85b72033-9f07-4bbc-8567-fc31f26508ab\", \"text\": \"我们先把时间对齐。\"}\n\n",
+    "event: reply_saved\ndata: {\"client_message_id\": \"85b72033-9f07-4bbc-8567-fc31f26508ab\", \"message_id\": \"85b72033-9f07-4bbc-8567-fc31f26508ab\", \"settlement\": {\"status\": \"charged\", \"net_charge\": 1, \"charged_day\": \"2026-11-21\"}}\n\n"
+  ],
+  "finishSession": {
+    "mode": "full_session",
+    "score": {
+      "score_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+      "mode": "express",
+      "nvc": {
+        "observation": {
+          "score": 25,
+          "reason": "沟通练习"
+        },
+        "feeling": {
+          "score": 25,
+          "reason": "沟通练习"
+        },
+        "need": {
+          "score": 25,
+          "reason": "沟通练习"
+        },
+        "request": {
+          "score": 25,
+          "reason": "沟通练习"
+        },
+        "total": 100
+      },
+      "emotion": {
+        "read_others": {
+          "level": 3,
+          "reason": "沟通练习"
+        },
+        "self_management": {
+          "level": 3,
+          "reason": "沟通练习"
+        },
+        "relationship": {
+          "level": 3,
+          "reason": "沟通练习"
+        }
+      },
+      "better_version": "我们能一起定个时间吗？",
+      "why_better": "沟通练习",
+      "target_turn": 1
+    },
+    "settlement": {
+      "status": "charged",
+      "net_charge": 1,
+      "charged_day": "2026-11-21"
+    }
+  },
+  "createReply": {
+    "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "possible_feeling": "对方可能担心进度。",
+    "possible_need": "想知道什么时候能拿到初稿。",
+    "suggestions": [
+      {
+        "style": "直接",
+        "text": "初稿周三下午给你，可以吗？",
+        "reason": "给出时间，也留出调整空间。"
+      },
+      {
+        "style": "先确认",
+        "text": "你是担心来不及评审吗？我可以先发提纲。",
+        "reason": "先确认顾虑，再给一个可行选择。"
+      }
+    ]
+  },
+  "rateReply": {
+    "ok": true
+  },
+  "createReview": {
+    "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "submitted": {
+      "request_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+      "happened": "沟通练习",
+      "my_feeling": "沟通练习",
+      "their_possible_feeling": "沟通练习",
+      "my_action": "沟通练习",
+      "next_action": "沟通练习",
+      "contact_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+      "mark_id": "85b72033-9f07-4bbc-8567-fc31f26508ab"
+    },
+    "score": {
+      "score_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+      "mode": "express",
+      "nvc": {
+        "observation": {
+          "score": 25,
+          "reason": "沟通练习"
+        },
+        "feeling": {
+          "score": 25,
+          "reason": "沟通练习"
+        },
+        "need": {
+          "score": 25,
+          "reason": "沟通练习"
+        },
+        "request": {
+          "score": 25,
+          "reason": "沟通练习"
+        },
+        "total": 100
+      },
+      "emotion": {
+        "read_others": {
+          "level": 3,
+          "reason": "沟通练习"
+        },
+        "self_management": {
+          "level": 3,
+          "reason": "沟通练习"
+        },
+        "relationship": {
+          "level": 3,
+          "reason": "沟通练习"
+        }
+      },
+      "better_version": "我们能一起定个时间吗？",
+      "why_better": "沟通练习",
+      "target_turn": 1
+    },
+    "repair_phrase": "沟通练习"
+  },
+  "listReviews": {
+    "items": [
+      {
+        "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+        "submitted": {
+          "request_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+          "happened": "沟通练习",
+          "my_feeling": "沟通练习",
+          "their_possible_feeling": "沟通练习",
+          "my_action": "沟通练习",
+          "next_action": "沟通练习",
+          "contact_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+          "mark_id": "85b72033-9f07-4bbc-8567-fc31f26508ab"
+        },
+        "score": {
+          "score_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+          "mode": "express",
+          "nvc": {
+            "observation": {
+              "score": 25,
+              "reason": "沟通练习"
+            },
+            "feeling": {
+              "score": 25,
+              "reason": "沟通练习"
+            },
+            "need": {
+              "score": 25,
+              "reason": "沟通练习"
+            },
+            "request": {
+              "score": 25,
+              "reason": "沟通练习"
+            },
+            "total": 100
+          },
+          "emotion": {
+            "read_others": {
+              "level": 3,
+              "reason": "沟通练习"
+            },
+            "self_management": {
+              "level": 3,
+              "reason": "沟通练习"
+            },
+            "relationship": {
+              "level": 3,
+              "reason": "沟通练习"
+            }
+          },
+          "better_version": "我们能一起定个时间吗？",
+          "why_better": "沟通练习",
+          "target_turn": 1
+        },
+        "repair_phrase": "沟通练习"
+      }
+    ],
+    "next_cursor": null
+  },
+  "getReview": {
+    "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "submitted": {
+      "request_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+      "happened": "沟通练习",
+      "my_feeling": "沟通练习",
+      "their_possible_feeling": "沟通练习",
+      "my_action": "沟通练习",
+      "next_action": "沟通练习",
+      "contact_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+      "mark_id": "85b72033-9f07-4bbc-8567-fc31f26508ab"
+    },
+    "score": {
+      "score_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+      "mode": "express",
+      "nvc": {
+        "observation": {
+          "score": 25,
+          "reason": "沟通练习"
+        },
+        "feeling": {
+          "score": 25,
+          "reason": "沟通练习"
+        },
+        "need": {
+          "score": 25,
+          "reason": "沟通练习"
+        },
+        "request": {
+          "score": 25,
+          "reason": "沟通练习"
+        },
+        "total": 100
+      },
+      "emotion": {
+        "read_others": {
+          "level": 3,
+          "reason": "沟通练习"
+        },
+        "self_management": {
+          "level": 3,
+          "reason": "沟通练习"
+        },
+        "relationship": {
+          "level": 3,
+          "reason": "沟通练习"
+        }
+      },
+      "better_version": "我们能一起定个时间吗？",
+      "why_better": "沟通练习",
+      "target_turn": 1
+    },
+    "repair_phrase": "沟通练习"
+  },
+  "deleteReview": {
+    "ok": true
+  },
+  "getTodayPlan": {
+    "day": "2026-11-21",
+    "personalized": false,
+    "items": [
+      {
+        "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+        "kind": "exercise",
+        "title": "沟通练习",
+        "content_id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+        "completed": false
+      }
+    ]
+  },
+  "completePlanItem": {
+    "streak": 1,
+    "achievements": [
+      3
+    ]
+  },
+  "getExercise": {
+    "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "question": "沟通练习",
+    "choices": [
+      "沟通练习",
+      "沟通练习"
+    ]
+  },
+  "answerExercise": {
+    "correct": true,
+    "explanation": "沟通练习"
+  },
+  "getCard": {
+    "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "title": "沟通练习",
+    "body": "沟通练习",
+    "scene": "work"
+  },
+  "getGrowth": {
+    "latest_assessment": null,
+    "wleis_percent": null,
+    "training_reference": null,
+    "valid_behavior_count": 1,
+    "streak": 1,
+    "achievements": [
+      3
+    ]
+  },
+  "getContactQuestions": {
+    "items": [
+      {
+        "id": "85b72033-9f07-4bbc-8567-fc31f26508a0",
+        "prompt": "意见不同时通常怎么回应？"
+      },
+      {
+        "id": "85b72033-9f07-4bbc-8567-fc31f26508a1",
+        "prompt": "喜欢当面谈还是稍后再谈？"
+      },
+      {
+        "id": "85b72033-9f07-4bbc-8567-fc31f26508a2",
+        "prompt": "会主动说出需要吗？"
+      },
+      {
+        "id": "85b72033-9f07-4bbc-8567-fc31f26508a3",
+        "prompt": "压力大时常有什么表现？"
+      },
+      {
+        "id": "85b72033-9f07-4bbc-8567-fc31f26508a4",
+        "prompt": "怎样提建议更容易接受？"
+      }
+    ]
+  },
+  "listCards": {
+    "items": [],
+    "next_cursor": null
+  },
+  "checkHealth": {
+    "ok": true
+  },
+  "uploadWindow": {
+    "ok": true
+  },
+  "deleteWindow": {
+    "ok": true
+  },
+  "getBaselines": {
+    "heart_rate": {
+      "valid_days": 2,
+      "today_valid_seconds": 210,
+      "ready": false,
+      "reason": "有效日不足 7 天",
+      "baseline": null,
+      "threshold": null
+    },
+    "speech_rate": {
+      "valid_days": 2,
+      "today_valid_seconds": 210,
+      "ready": false,
+      "reason": "有效日不足 7 天",
+      "baseline": null,
+      "threshold": null
+    },
+    "volume": {
+      "valid_days": 2,
+      "today_valid_seconds": 210,
+      "ready": false,
+      "reason": "有效日不足 7 天",
+      "baseline": null,
+      "threshold": null
+    },
+    "pitch": {
+      "valid_days": 2,
+      "today_valid_seconds": 210,
+      "ready": false,
+      "reason": "有效日不足 7 天",
+      "baseline": null,
+      "threshold": null
+    },
+    "hrv": {
+      "readings": 0,
+      "sampling_days": 0,
+      "ready_for_alert": false,
+      "reason": "仅展示趋势，暂无读数"
+    }
+  },
+  "reportSignalEvent": {
+    "ok": true
+  },
+  "listSignalEvents": {
+    "items": [
+      {
+        "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+        "starts_at": "2026-11-21T09:00:00+08:00",
+        "kind": "conversation_rhythm",
+        "confirmation": "pending"
+      }
+    ],
+    "next_cursor": null
+  },
+  "annotateSignalEvent": {
+    "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
+    "starts_at": "2026-11-21T09:00:00+08:00",
+    "kind": "conversation_rhythm",
+    "confirmation": "pending",
+    "scene": "work"
+  }
+}
