@@ -13,6 +13,15 @@ check(){ curl -fsS --max-time 5 "$url" |grep -q '"ok":true'; }
 for i in {1..50}; do if check 2>/dev/null; then break; fi;sleep 1; done
 check || { dc logs api; exit 1; }
 dc run --rm --no-deps tests
+# T06: lose the ordinary cache after a real charge. SQL stays available for refunds.
+quota_user=$(openssl rand -hex 16)
+quota_phase(){ dc run --rm --no-deps -e T06_TEST_USER="$quota_user" -e T06_CACHE_PHASE="$1" tests go test -count=1 -tags integration -run '^TestQuotaCacheOutage$' ./internal/membership; }
+quota_phase prime
+dc stop cache
+quota_phase down
+dc start cache
+for i in {1..30}; do if dc exec -T cache redis-cli ping 2>/dev/null | grep -q PONG; then break; fi; sleep 1; done
+quota_phase restored
 before=$(dc exec -T ledger redis-cli --raw keys 'deleted:*' | sort)
 [[ -n $before ]]
 dc restart ledger

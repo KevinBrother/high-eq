@@ -20,7 +20,7 @@ func TestRouter(t *testing.T) {
 				return errors.New("private connection detail")
 			}
 			return nil
-		}, nil, nil)
+		}, nil, nil, nil)
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(tt.method, tt.path, nil)
 		r.Header.Set("Authorization", "Bearer arbitrary")

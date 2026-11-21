@@ -12,6 +12,7 @@ import (
 	"high-eq/server/internal/events"
 	"high-eq/server/internal/fieldcrypt"
 	"high-eq/server/internal/gateway"
+	"high-eq/server/internal/membership"
 	"high-eq/server/internal/privacy"
 	"high-eq/server/migrations"
 )
@@ -21,6 +22,7 @@ type Runtime struct {
 	db                   *pgxpool.Pool
 	cache, registryRedis *redis.Client
 	ledger               *privacy.Ledger
+	Membership           *membership.Service
 	Accounts             *accounts.Service
 	Data                 *privacy.Coordinator
 	Bus                  *events.Bus
@@ -61,7 +63,11 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	if e != nil {
 		return nil, e
 	}
-	hooks, e := privacy.NewRegistry([]string{"accounts", "ai_calls"}, accounts.Hooks(c.Fields), gateway.Hooks())
+	s.Membership, e = membership.New(s.cache)
+	if e != nil {
+		return nil, e
+	}
+	hooks, e := privacy.NewRegistry([]string{"membership", "accounts", "ai_calls"}, s.Membership.Hooks(), accounts.Hooks(c.Fields), gateway.Hooks())
 	if e != nil {
 		return nil, e
 	}

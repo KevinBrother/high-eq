@@ -1,0 +1,11 @@
+{
+  "free": {
+    "daily": {"practice": 3, "reply": 3, "review": 3}, "contacts": 1,
+    "allow": ["assessment", "radar", "exercise", "card", "generic_plan", "manual_mark", "history"]
+  },
+  "member": {
+    "daily": {"practice": null, "reply": null, "review": null}, "contacts": null,
+    "allow": ["assessment", "radar", "exercise", "card", "generic_plan", "manual_mark", "history", "collection", "aligned_replay", "emotion_summary", "personal_plan"]
+  },
+  "lease_seconds": 300
+}

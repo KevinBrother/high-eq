@@ -74,6 +74,17 @@ func TestAccountLifecycle(t *testing.T) {
 	}
 	login(proof("apple", first), false, 400)
 	a := login(proof("apple", first), true, 200)
+	var rights app.Entitlements
+	call("GET", "entitlements", "", nil, 401, nil)
+	call("GET", "entitlements", a.AccessToken, nil, 200, &rights)
+	if rights.Tier != "free" || len(rights.Allowances) != 3 || rights.AutoWatchAlertAvailable {
+		t.Fatalf("unexpected initial rights: %+v", rights)
+	}
+	for _, allowance := range rights.Allowances {
+		if allowance.Remaining == nil || *allowance.Remaining != 3 {
+			t.Fatal(allowance)
+		}
+	}
 	b := login(proof("wechat", other), true, 200)
 	if a.UserId == b.UserId {
 		t.Fatal("merged accounts")
@@ -203,6 +214,7 @@ func TestAccountLifecycle(t *testing.T) {
 	}
 	call("DELETE", "me/closure", a.AccessToken, nil, 401, nil)
 	recovery := login(proof("apple", first), false, 200)
+	call("GET", "entitlements", recovery.AccessToken, nil, 401, nil)
 	call("GET", "me", recovery.AccessToken, nil, 200, &me)
 	if me.FrozenUntil == nil || time.Until(*me.FrozenUntil) < 359*time.Hour {
 		t.Fatal("missing deadline")
