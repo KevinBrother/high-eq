@@ -24,6 +24,8 @@ erDiagram
   scores |o--o{ ai_calls : traces
   model_configs ||--o{ ai_calls : runs
   prompt_versions |o--o{ ai_calls : uses
+  model_configs ||--o{ prompt_releases : targets
+  prompt_versions ||--o{ prompt_releases : selects
   model_configs ||--o{ model_routes : routes
   users ||--o{ manual_marks : marks
   manual_marks ||--o{ mark_requests : deduplicates
@@ -67,7 +69,8 @@ erDiagram
 | `signal_events` | 密文保存事件来源、实际时间、本人核对或对话节奏标注；索引时间用于排序与到期清理 | 180 天滚动或账号/事件/关系人删除；导出不包含原始曲线。 |
 | `model_configs` | 模型端点、AES-GCM 密钥、准入材料引用，默认停用 | 平台配置，不随个人导出；轮换后废弃密钥。T09 在启用/切换/连通测试前校验当前端点和准入材料。 |
 | `provider_admissions` / `gateway_revision` | T09：按材料引用、服务商、HTTPS 基址、用途类型绑定准入；单行 UUID 版本随准入和模型配置的变更在同一事务刷新 | 平台元数据，不含个人记录，不导出。启用配置通过复合外键绑定已核准端点；撤销须先停用。Redis 只发变更提示，不承载材料、密钥或地址。见 [T09](tasks/T09.md)。 |
-| `model_routes` / `prompt_versions` | 七类任务的主备及灰度比例；版本化系统模板，禁放真实用户样本 | 平台配置，不随个人导出或删除；模板版本被引用时不可删除。 |
+| `model_routes` / `prompt_versions` | 七类任务的主备及灰度比例；版本化系统模板，禁放真实用户样本 | 平台配置，不随个人导出或删除；版本只追加，草稿也不能修改或删除。 |
+| `prompt_releases` | 每个任务/生成模型唯一发布指针：主版本、可空实验版本和实验占比；两组版本均须属于该任务 | 平台配置，不存个人分组或渲染结果，不随个人导出或删除。回滚原子切换指针，见 [T11](tasks/T11.md)。 |
 | `ai_calls` | 一次主/备尝试一行，仅关联键、结果、耗时、token、成本。评分分布通过源分数计算，不复制理由 | 随所关联的账号/活动/评分删除；导出本人调用统计，不导出密钥或模板。非个人的系统调用才可无个人关联。 |
 
 ### T13 后台账号与审计（独立于 App 用户）

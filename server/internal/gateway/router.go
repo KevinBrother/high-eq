@@ -39,10 +39,11 @@ func inCanary(id uuid.UUID, percent int) bool {
 type Scope struct{ User, Operation, Activity, Contact, PromptVersion uuid.UUID }
 type Call struct {
 	Scope
-	Task     Task
-	Mode     Mode
-	Messages []Message
-	Emit     func(context.Context, Event) error
+	Task      Task
+	Mode      Mode
+	Variables map[string]string
+	Messages  []Message
+	Emit      func(context.Context, Event) error
 }
 
 // Text is provisional for fragment events. For terminal events replace all fragments with Terminal.
@@ -99,6 +100,7 @@ type attemptStat struct {
 	outcome string
 }
 type Router struct {
+	resolvePrompt        promptResolver
 	load                 func(context.Context, Call) (plan, error)
 	dispatch             func(context.Context, uuid.UUID, endpoint, Kind, Request) (Result, error)
 	record               func(context.Context, Call, attemptStat) error
@@ -107,24 +109,21 @@ type Router struct {
 }
 
 func (r *Router) Run(parent context.Context, c Call) (Reply, error) {
-	req := Request{Mode: c.Mode, Messages: c.Messages}
-	if c.Emit != nil {
-		req.OnDelta = func(string) error { return nil }
-	}
-	if !c.Task.valid() || c.User == uuid.Nil || c.Operation == uuid.Nil || !req.valid() {
+	if !c.Task.valid() || c.User == uuid.Nil || c.Operation == uuid.Nil || c.PromptVersion != uuid.Nil {
 		return Reply{}, ErrRequest
+	}
+	if (c.Mode != Text && c.Mode != Stream && c.Mode != JSONObject) || (c.Mode == Stream) != (c.Emit != nil) {
+		return Reply{}, ErrRequest
+	}
+	for _, m := range c.Messages {
+		if m.Role != "user" && m.Role != "assistant" || m.Content == "" {
+			return Reply{}, ErrRequest
+		}
 	}
 	ctx, cancel := context.WithTimeout(parent, r.total)
 	defer cancel()
 	p, err := r.load(ctx, c)
 	if err != nil {
-		return Reply{}, err
-	}
-	review := reviewer{r: r, c: c, p: p}
-	input, _ := json.Marshal(c.Messages)
-	if term, err := review.check(ctx, string(input)); term != nil {
-		return r.finish(parent, c, *term, err)
-	} else if err != nil {
 		return Reply{}, err
 	}
 	for _, model := range []endpoint{p.primary, p.backup} {
@@ -134,11 +133,22 @@ func (r *Router) Run(parent context.Context, c Call) (Reply, error) {
 		if ctx.Err() != nil {
 			return Reply{}, ctx.Err()
 		}
+		attempt, err := r.prepare(ctx, c, model)
+		if err != nil {
+			return Reply{}, err
+		}
+		review := reviewer{r: r, c: attempt, p: p}
+		input, _ := json.Marshal(attempt.Messages)
+		if term, err := review.check(ctx, string(input)); term != nil {
+			return r.finish(parent, c, *term, err)
+		} else if err != nil {
+			return Reply{}, err
+		}
 		start := time.Now()
 		a := generation{review: &review, model: model}
 		result, err := a.run(ctx)
 		id := uuid.New()
-		audit := r.log(parent, c, attemptStat{id, model, start, time.Since(start), result, outcome(err, a.terminal)})
+		audit := r.log(parent, attempt, attemptStat{id, model, start, time.Since(start), result, outcome(err, a.terminal)})
 		if a.terminal != nil {
 			return r.finish(parent, c, *a.terminal, errors.Join(a.reviewErr, audit))
 		}

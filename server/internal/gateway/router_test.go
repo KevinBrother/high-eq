@@ -64,7 +64,9 @@ func TestModeratedAttempts(t *testing.T) {
 			balances := [2]int{0, 1}
 			scope := Scope{User: uuid.New(), Operation: uuid.New(), Activity: uuid.New()}
 			var stats []attemptStat
-			r := Router{first: time.Second, total: 2 * time.Second, review: time.Second, load: func(context.Context, Call) (plan, error) { return plan{primary: p, backup: b, moderator: m}, nil }, record: func(_ context.Context, _ Call, s attemptStat) error { stats = append(stats, s); return nil }, stop: func(_ context.Context, got Scope, _ Terminal) error {
+			r := Router{resolvePrompt: func(context.Context, string, uuid.UUID, uuid.UUID, map[string]string) (uuid.UUID, string, error) {
+				return uuid.New(), "fixture", nil
+			}, first: time.Second, total: 2 * time.Second, review: time.Second, load: func(context.Context, Call) (plan, error) { return plan{primary: p, backup: b, moderator: m}, nil }, record: func(_ context.Context, _ Call, s attemptStat) error { stats = append(stats, s); return nil }, stop: func(_ context.Context, got Scope, _ Terminal) error {
 				if got != scope {
 					t.Fatal("wrong settlement key")
 				}

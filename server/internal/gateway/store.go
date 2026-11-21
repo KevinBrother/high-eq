@@ -16,7 +16,7 @@ func (c *Catalog) NewRouter(data *privacy.Coordinator, stop Stop) (*Router, erro
 		return nil, ErrConfig
 	}
 	s := routingStore{data.Access}
-	return &Router{load: s.load, record: s.record, stop: stop, first: 10 * time.Second, total: 60 * time.Second, review: 10 * time.Second, dispatch: func(ctx context.Context, rev uuid.UUID, e endpoint, k Kind, r Request) (Result, error) {
+	return &Router{resolvePrompt: databasePrompts(c.db), load: s.load, record: s.record, stop: stop, first: 10 * time.Second, total: 60 * time.Second, review: 10 * time.Second, dispatch: func(ctx context.Context, rev uuid.UUID, e endpoint, k Kind, r Request) (Result, error) {
 		a, t, err := c.lookupAt(ctx, e.id, k, rev)
 		if err != nil {
 			return Result{}, err

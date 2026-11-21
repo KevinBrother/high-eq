@@ -19,15 +19,17 @@ func (f localTransport) RoundTrip(req *http.Request) (*http.Response, error) { r
 // Exercise the real JSON/SSE encoder and decoder without opening a listening socket.
 func TestRoutedJSONWireAndPrivateStats(t *testing.T) {
 	p, b, m := endpoint{id: uuid.New()}, endpoint{id: uuid.New()}, endpoint{id: uuid.New()}
-	scope := Scope{User: uuid.New(), Operation: uuid.New(), PromptVersion: uuid.New()}
+	scope := Scope{User: uuid.New(), Operation: uuid.New()}
+	versions := map[uuid.UUID]uuid.UUID{p.id: uuid.New(), b.id: uuid.New()}
 	attempts := 0
 	reviews := 0
 	a := compatible{noRedirect(localTransport(func(req *http.Request) (*http.Response, error) {
 		var body struct {
-			Model   string
-			Stream  bool
-			Options map[string]bool   `json:"stream_options"`
-			Format  map[string]string `json:"response_format"`
+			Messages []Message
+			Model    string
+			Stream   bool
+			Options  map[string]bool   `json:"stream_options"`
+			Format   map[string]string `json:"response_format"`
 		}
 		defer req.Body.Close()
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -36,12 +38,22 @@ func TestRoutedJSONWireAndPrivateStats(t *testing.T) {
 		w := httptest.NewRecorder()
 		if body.Model == m.id.String() {
 			reviews++
+			if reviews <= 2 { // The two input reviews precede the final review of backup output.
+				var input []Message
+				wantModel := []endpoint{p, b}[reviews-1]
+				if len(body.Messages) != 2 || json.Unmarshal([]byte(body.Messages[1].Content), &input) != nil || len(input) != 2 || input[0].Content != "test-only/"+wantModel.id.String() {
+					t.Fatal("reviewed a different template than the model received")
+				}
+			}
 			if body.Stream || body.Options != nil {
 				t.Fatal("incorrect moderation wire mode")
 			}
 			fmt.Fprint(w, `{"choices":[{"message":{"content":"{\"verdict\":\"allow\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1}}`)
 		} else {
 			attempts++
+			if len(body.Messages) != 2 || body.Messages[0].Role != "system" || body.Messages[0].Content != "test-only/"+body.Model {
+				t.Fatal("dispatched wrong model template")
+			}
 			if !body.Stream || body.Format["type"] != "json_object" || !body.Options["include_usage"] {
 				t.Fatal("incorrect generation wire mode")
 			}
@@ -55,17 +67,19 @@ func TestRoutedJSONWireAndPrivateStats(t *testing.T) {
 		}
 		return w.Result(), nil
 	}))}
-	r := Router{first: time.Second, total: time.Second, review: time.Second, load: func(context.Context, Call) (plan, error) { return plan{primary: p, backup: b, moderator: m}, nil }, dispatch: func(ctx context.Context, _ uuid.UUID, e endpoint, k Kind, r Request) (Result, error) {
+	r := Router{resolvePrompt: func(_ context.Context, _ string, model, user uuid.UUID, vars map[string]string) (uuid.UUID, string, error) {
+		return versions[model], vars["synthetic"] + "/" + model.String(), nil
+	}, first: time.Second, total: time.Second, review: time.Second, load: func(context.Context, Call) (plan, error) { return plan{primary: p, backup: b, moderator: m}, nil }, dispatch: func(ctx context.Context, _ uuid.UUID, e endpoint, k Kind, r Request) (Result, error) {
 		r.includeUsage = k == Model
 		return a.chat(ctx, target{"https://synthetic.invalid", e.id.String(), "test-only"}, r)
 	}, stop: func(context.Context, Scope, Terminal) error { t.Fatal("unexpected stop"); return nil }}
 	records := 0
 	r.record = func(_ context.Context, c Call, s attemptStat) error {
 		records++
-		if c.Messages != nil || c.Emit != nil || s.usage.Text != "" || len(s.usage.Object) > 0 || c.Operation != scope.Operation {
+		if c.Variables != nil || c.Messages != nil || c.Emit != nil || s.usage.Text != "" || len(s.usage.Object) > 0 || c.Operation != scope.Operation {
 			t.Fatal("unsafe statistics")
 		}
-		if s.model.id != m.id && c.PromptVersion != scope.PromptVersion {
+		if c.PromptVersion != versions[s.model.id] {
 			t.Fatal("version lost")
 		}
 		if s.model.id == b.id && (s.outcome != "ok" || !s.usage.UsageKnown || s.usage.InputTokens != 4 || s.usage.OutputTokens != 2) {
@@ -73,8 +87,8 @@ func TestRoutedJSONWireAndPrivateStats(t *testing.T) {
 		}
 		return nil
 	}
-	out, err := r.Run(context.Background(), Call{Scope: scope, Task: Classification, Mode: JSONObject, Messages: []Message{{"user", "合成私密输入"}}})
-	if err != nil || string(out.Result.Object) != `{"ok":true}` || out.CallID == uuid.Nil || attempts != 2 || reviews != 2 || records != 4 {
+	out, err := r.Run(context.Background(), Call{Scope: scope, Task: Classification, Variables: map[string]string{"synthetic": "test-only"}, Mode: JSONObject, Messages: []Message{{"user", "合成私密输入"}}})
+	if err != nil || string(out.Result.Object) != `{"ok":true}` || out.CallID == uuid.Nil || attempts != 2 || reviews != 3 || records != 5 {
 		t.Fatalf("attempts=%d reviews=%d records=%d err=%v", attempts, reviews, records, err)
 	}
 }

@@ -36,10 +36,10 @@ var rules = map[string]rule{
 	"GET /models":           {"listModels", "models", false, false},
 	"GET /routes":           {"listRoutes", "routes", false, false},
 	"GET /metrics":          {"getMetrics", "metrics", false, false},
-	"GET /prompt-versions":  {"listPromptVersions", "prompts", false, false},
-	"POST /prompt-versions": {"createPromptVersion", "prompts", false, false},
-	"GET /prompt-releases":  {"listPromptReleases", "prompts", false, false},
-	"PUT /prompt-releases":  {"setPromptRelease", "prompts", false, false},
+	"GET /prompt-versions":  {"listPromptVersions", "prompts", false, true},
+	"POST /prompt-versions": {"createPromptVersion", "prompts", false, true},
+	"GET /prompt-releases":  {"listPromptReleases", "prompts", false, true},
+	"PUT /prompt-releases":  {"setPromptRelease", "prompts", false, true},
 }
 
 func Register(r gin.IRouter, db *pgxpool.Pool) {
@@ -55,6 +55,8 @@ func reject(c *gin.Context, status int) {
 		code, msg = "unauthenticated", "管理员凭据无效或会话已过期"
 	case 403:
 		code, msg = "forbidden", "此操作需要超级管理员权限"
+	case 404:
+		code, msg = "not_found", "指定的配置不存在"
 	case 501:
 		code, msg = "not_implemented", "此功能尚未开放"
 	}
