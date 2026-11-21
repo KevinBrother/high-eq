@@ -37,14 +37,17 @@ type Message struct {
 	Content string `json:"content"`
 }
 type Request struct {
-	Messages []Message
-	Mode     Mode
-	OnDelta  func(string) error
+	Messages     []Message
+	Mode         Mode
+	OnDelta      func(string) error
+	includeUsage bool // only when stream_options.include_usage is in approved sent_fields
+	jsonStream   bool // routed JSON calls use SSE internally to observe the first content token
 }
 type Result struct {
 	Text                      string
 	Object                    json.RawMessage
 	InputTokens, OutputTokens int
+	UsageKnown                bool
 }
 
 // Resolve is supplied by the routing layer. Business callers never pass a model ID.

@@ -11,6 +11,7 @@ import (
 	"high-eq/server/internal/accounts"
 	"high-eq/server/internal/events"
 	"high-eq/server/internal/fieldcrypt"
+	"high-eq/server/internal/gateway"
 	"high-eq/server/internal/privacy"
 	"high-eq/server/migrations"
 )
@@ -60,7 +61,7 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	if e != nil {
 		return nil, e
 	}
-	hooks, e := privacy.NewRegistry([]string{"accounts"}, accounts.Hooks(c.Fields))
+	hooks, e := privacy.NewRegistry([]string{"accounts", "ai_calls"}, accounts.Hooks(c.Fields), gateway.Hooks())
 	if e != nil {
 		return nil, e
 	}

@@ -34,8 +34,8 @@ type completion struct {
 		Finish string `json:"finish_reason"`
 	}
 	Usage *struct {
-		Input  int `json:"prompt_tokens"`
-		Output int `json:"completion_tokens"`
+		Input  *int `json:"prompt_tokens"`
+		Output *int `json:"completion_tokens"`
 	}
 	Error json.RawMessage
 }
@@ -45,9 +45,13 @@ func (a compatible) chat(ctx context.Context, t target, r Request) (Result, erro
 		Model    string            `json:"model"`
 		Messages []Message         `json:"messages"`
 		Stream   bool              `json:"stream,omitempty"`
+		Options  map[string]bool   `json:"stream_options,omitempty"`
 		Format   map[string]string `json:"response_format,omitempty"`
 	}{Model: t.model, Messages: r.Messages, Stream: r.Mode == Stream}
-	if r.Mode == JSONObject {
+	if body.Stream && r.includeUsage {
+		body.Options = map[string]bool{"include_usage": true}
+	}
+	if r.Mode == JSONObject || r.jsonStream {
 		body.Format = map[string]string{"type": "json_object"}
 	}
 	data, err := json.Marshal(body)
@@ -80,19 +84,22 @@ func (a compatible) chat(ctx context.Context, t target, r Request) (Result, erro
 	}
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxReply+1))
 	var out completion
-	if err != nil || len(raw) > maxReply || json.Unmarshal(raw, &out) != nil || len(out.Error) != 0 || len(out.Choices) != 1 {
+	if err != nil || len(raw) > maxReply || json.Unmarshal(raw, &out) != nil {
 		return Result{}, ErrProvider
+	}
+	result := out.usageResult()
+	if len(out.Error) != 0 || len(out.Choices) != 1 {
+		return result, ErrProvider
 	}
 	choice := out.Choices[0]
 	if choice.Finish != "stop" || choice.Message.Content == nil {
-		return Result{}, ErrProvider
+		return result, ErrProvider
 	}
 	text := *choice.Message.Content
-	result := out.usageResult()
 	if r.Mode == JSONObject {
 		obj := bytes.TrimSpace([]byte(text))
 		if len(obj) == 0 || obj[0] != '{' || !json.Valid(obj) {
-			return Result{}, ErrProvider
+			return result, ErrProvider
 		}
 		result.Object = obj
 	} else {
@@ -102,10 +109,10 @@ func (a compatible) chat(ctx context.Context, t target, r Request) (Result, erro
 }
 
 func (c completion) usageResult() Result {
-	if c.Usage == nil {
+	if c.Usage == nil || c.Usage.Input == nil || c.Usage.Output == nil || *c.Usage.Input < 0 || *c.Usage.Output < 0 {
 		return Result{}
 	}
-	return Result{InputTokens: c.Usage.Input, OutputTokens: c.Usage.Output}
+	return Result{InputTokens: *c.Usage.Input, OutputTokens: *c.Usage.Output, UsageKnown: true}
 }
 
 // Dispatch SSE events on blank lines, never treating EOF as a successful finish.
@@ -133,11 +140,11 @@ func readStream(body io.Reader, emit func(string) error) (Result, error) {
 			if stopped {
 				return result, nil
 			}
-			return Result{}, ErrProvider
+			return result, ErrProvider
 		}
 		var chunk completion
 		if json.Unmarshal([]byte(data), &chunk) != nil || len(chunk.Error) != 0 {
-			return Result{}, ErrProvider
+			return result, ErrProvider
 		}
 		if chunk.Usage != nil {
 			result = chunk.usageResult()
@@ -146,18 +153,18 @@ func readStream(body io.Reader, emit func(string) error) (Result, error) {
 			continue
 		}
 		if stopped || len(chunk.Choices) != 1 {
-			return Result{}, ErrProvider
+			return result, ErrProvider
 		}
 		choice := chunk.Choices[0]
 		if choice.Finish != "" && choice.Finish != "stop" {
-			return Result{}, ErrProvider
+			return result, ErrProvider
 		}
 		if p := choice.Delta.Content; p != nil && *p != "" {
 			if err := emit(*p); err != nil {
-				return Result{}, err
+				return result, err
 			}
 		}
 		stopped = choice.Finish == "stop"
 	}
-	return Result{}, ErrProvider
+	return result, ErrProvider
 }

@@ -123,6 +123,10 @@ func (c *Catalog) refresh(ctx context.Context) error {
 	return nil
 }
 func (c *Catalog) lookup(ctx context.Context, id uuid.UUID, kind Kind) (adapter, target, error) {
+	return c.lookupAt(ctx, id, kind, uuid.Nil)
+}
+
+func (c *Catalog) lookupAt(ctx context.Context, id uuid.UUID, kind Kind, revision uuid.UUID) (adapter, target, error) {
 	// Redis Pub/Sub is a hint; a lost notification cannot extend approval.
 	var v uuid.UUID
 	if err := c.db.QueryRow(ctx, `select version from gateway_revision where singleton`).Scan(&v); err != nil {
@@ -133,7 +137,11 @@ func (c *Catalog) lookup(ctx context.Context, id uuid.UUID, kind Kind) (adapter,
 			return nil, target{}, err
 		}
 	}
-	e, ok := c.state.Load().entries[id]
+	state := c.state.Load()
+	if revision != uuid.Nil && (v != revision || state.version != revision) {
+		return nil, target{}, ErrConfig
+	}
+	e, ok := state.entries[id]
 	a := c.adapters[e.protocol]
 	if !ok || e.kind != kind || a == nil || !validEndpoint(e.endpoint) {
 		return nil, target{}, ErrConfig
