@@ -8,7 +8,7 @@ import 'transport.dart';
 
 class ApiFailure implements Exception {
   final String code, message;
-  final bool retryable;
+  final bool? retryable;
   final int status;
   final DateTime? retryAt;
   const ApiFailure(
@@ -84,7 +84,7 @@ class AppApi {
         response.statusCode,
         error['code'] is String ? error['code'] : 'unavailable',
         error['message'] is String ? error['message'] : '暂时无法连接，请重试',
-        error['retryable'] == true,
+        error['retryable'] is bool ? error['retryable'] : null,
         DateTime.tryParse(error['retry_at'] is String ? error['retry_at'] : ''),
       );
     }
@@ -128,6 +128,7 @@ class AppApi {
     Map<String, String> path = const {},
     Map<String, String> query = const {},
     Json? body,
+    void Function(int)? onStatus,
   }) async* {
     String? access;
     if (op.secured) {
@@ -150,6 +151,7 @@ class AppApi {
       );
     }
     await _success(response, op);
+    onStatus?.call(response.statusCode);
     if (scope != null) sessions.require(scope);
     await for (final chunk in response.stream.timeout(_timeout)) {
       if (scope != null) sessions.require(scope);

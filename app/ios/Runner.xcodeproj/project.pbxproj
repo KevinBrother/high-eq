@@ -16,6 +16,10 @@
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
 		78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */ = {isa = PBXBuildFile; productRef = 78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */; };
+		E72200000000000000000007 = {isa = PBXBuildFile; fileRef = E72200000000000000000001; };
+		E72200000000000000000008 = {isa = PBXBuildFile; fileRef = E72200000000000000000001; };
+		E72200000000000000000009 = {isa = PBXBuildFile; fileRef = E72200000000000000000002; };
+		E7220000000000000000000A = {isa = PBXBuildFile; fileRef = E72200000000000000000005; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -26,6 +30,7 @@
 			remoteGlobalIDString = 97C146ED1CF9000F007C117D;
 			remoteInfo = Runner;
 		};
+		E7220000000000000000000D = {isa = PBXContainerItemProxy; containerPortal = 97C146E61CF9000F007C117D; proxyType = 1; remoteGlobalIDString = E7220000000000000000000F; remoteInfo = ReplyShare; };
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -39,6 +44,7 @@
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E7220000000000000000000C = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (E7220000000000000000000A,); name = "Embed Share Extension"; runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -59,6 +65,11 @@
 		97C147001CF9000F007C117D /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		78E0A7A72DC9AD7400C4905E /* FlutterGeneratedPluginSwiftPackage */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = FlutterGeneratedPluginSwiftPackage; path = Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage; sourceTree = "<group>"; };
+		E72200000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplyInbox.swift; sourceTree = "<group>"; };
+		E72200000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareController.swift; sourceTree = "<group>"; };
+		E72200000000000000000003 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		E72200000000000000000004 = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ReplyShare.entitlements; sourceTree = "<group>"; };
+		E72200000000000000000005 = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ReplyShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -96,6 +107,7 @@
 		97C146E51CF9000F007C117D = {
 			isa = PBXGroup;
 			children = (
+				E72200000000000000000006 /* ReplyShare */,
 				9740EEB11CF90186004384FC /* Flutter */,
 				97C146F01CF9000F007C117D /* Runner */,
 				97C146EF1CF9000F007C117D /* Products */,
@@ -106,6 +118,7 @@
 		97C146EF1CF9000F007C117D /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				E72200000000000000000005 /* ReplyShare.appex */,
 				97C146EE1CF9000F007C117D /* Runner.app */,
 				331C8081294A63A400263BE5 /* RunnerTests.xctest */,
 			);
@@ -128,6 +141,7 @@
 			path = Runner;
 			sourceTree = "<group>";
 		};
+		E72200000000000000000006 = {isa = PBXGroup; children = (E72200000000000000000001, E72200000000000000000002, E72200000000000000000003, E72200000000000000000004,); path = ReplyShare; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -155,6 +169,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 97C147051CF9000F007C117D /* Build configuration list for PBXNativeTarget "Runner" */;
 			buildPhases = (
+				E7220000000000000000000C /* Embed Share Extension */,
 				9740EEB61CF901F6004384FC /* Run Script */,
 				97C146EA1CF9000F007C117D /* Sources */,
 				97C146EB1CF9000F007C117D /* Frameworks */,
@@ -165,12 +180,14 @@
 			buildRules = (
 			);
 			dependencies = (
+				E7220000000000000000000E,
 			);
 			name = Runner;
 			productName = Runner;
 			productReference = 97C146EE1CF9000F007C117D /* Runner.app */;
 			productType = "com.apple.product-type.application";
 		};
+		E7220000000000000000000F = {isa = PBXNativeTarget; buildConfigurationList = E72200000000000000000010; buildPhases = (E7220000000000000000000B,); buildRules = (); dependencies = (); name = ReplyShare; productName = ReplyShare; productReference = E72200000000000000000005; productType = "com.apple.product-type.app-extension"; };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -207,6 +224,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				E7220000000000000000000F /* ReplyShare */,
 				97C146ED1CF9000F007C117D /* Runner */,
 				331C8080294A63A400263BE5 /* RunnerTests */,
 			);
@@ -281,12 +299,14 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E72200000000000000000007 /* ReplyInbox.swift in Sources */,
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				E71700000000000000000001 /* MobileCommerce.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E7220000000000000000000B = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (E72200000000000000000008, E72200000000000000000009,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -295,6 +315,7 @@
 			target = 97C146ED1CF9000F007C117D /* Runner */;
 			targetProxy = 331C8085294A63A400263BE5 /* PBXContainerItemProxy */;
 		};
+		E7220000000000000000000E = {isa = PBXTargetDependency; target = E7220000000000000000000F; targetProxy = E7220000000000000000000D; };
 /* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
@@ -597,6 +618,9 @@
 			};
 			name = Release;
 		};
+		E72200000000000000000011 = {isa = XCBuildConfiguration; baseConfigurationReference = 9740EEB31CF90195004384FC; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = ReplyShare/ReplyShare.entitlements; CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)"; INFOPLIST_FILE = ReplyShare/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 15.0; MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)"; PRODUCT_BUNDLE_IDENTIFIER = cn.higheq.highEq.ReplyShare; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		E72200000000000000000012 = {isa = XCBuildConfiguration; baseConfigurationReference = 9740EEB31CF90195004384FC; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = ReplyShare/ReplyShare.entitlements; CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)"; INFOPLIST_FILE = ReplyShare/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 15.0; MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)"; PRODUCT_BUNDLE_IDENTIFIER = cn.higheq.highEq.ReplyShare; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Profile; };
+		E72200000000000000000013 = {isa = XCBuildConfiguration; baseConfigurationReference = 9740EEB31CF90195004384FC; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = ReplyShare/ReplyShare.entitlements; CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)"; INFOPLIST_FILE = ReplyShare/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 15.0; MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)"; PRODUCT_BUNDLE_IDENTIFIER = cn.higheq.highEq.ReplyShare; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -630,6 +654,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		E72200000000000000000010 = {isa = XCConfigurationList; buildConfigurations = (E72200000000000000000011, E72200000000000000000012, E72200000000000000000013,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 /* Begin XCLocalSwiftPackageReference section */
 		781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage" */ = {

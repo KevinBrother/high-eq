@@ -1,0 +1,31 @@
+name: Reply assistant verification
+on:
+  push:
+    paths: ['app/lib/features/replies/**', 'app/test/replies/**', 'app/tool/t22/**', 'app/ios/ReplyShare/**', 'app/android/app/src/main/**/ReplyShare.kt', 'server/internal/replies/**', 'server/internal/service/replies*', '.github/workflows/t22-replies.yml']
+  pull_request:
+    paths: ['app/lib/features/replies/**', 'app/test/replies/**', 'app/tool/t22/**', 'app/ios/ReplyShare/**', 'app/android/app/src/main/**/ReplyShare.kt', 'server/internal/replies/**', 'server/internal/service/replies*', '.github/workflows/t22-replies.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with: {flutter-version: '3.38.10', cache: true}
+      - working-directory: app
+        run: flutter pub get --enforce-lockfile && flutter test test/replies
+      - name: Real loopback service (requires T21; never call a model)
+        if: ${{ hashFiles('server/internal/service/replies_http.go') != '' }}
+        run: app/tool/t22/live.sh
+      - name: Record pending T21 integration when service is absent
+        if: ${{ hashFiles('server/internal/service/replies_http.go') == '' }}
+        run: echo 'T21 is not in this commit; real HTTP integration was not run.' >> "$GITHUB_STEP_SUMMARY"
+  apple-handoff:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - run: app/tool/t22/apple.sh

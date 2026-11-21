@@ -20,6 +20,11 @@ import WechatOpenSDK
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
+    if let registrar = registrar(forPlugin: "ReplyShare") {
+      FlutterMethodChannel(name: "cn.higheq/reply-share", binaryMessenger: registrar.messenger()).setMethodCallHandler { call, result in
+        if call.method == "take" { result(ReplyInbox.take()) } else { result(FlutterMethodNotImplemented) }
+      }
+    }
     commerce.window = window
     if let registrar = registrar(forPlugin: "MobileCommerce") {
       FlutterMethodChannel(name: "cn.higheq/mobile-commerce", binaryMessenger: registrar.messenger()).setMethodCallHandler(commerce.handle)

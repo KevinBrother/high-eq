@@ -144,6 +144,15 @@ class HomeShell extends StatelessWidget {
                     title: const Text('本次自评与续答'),
                     onTap: () => Navigator.pushNamed(context, '/assessment'),
                   ),
+                if (section == Section.live)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.chat_outlined),
+                    title: const Text('回复助手'),
+                    subtitle: const Text('读懂对方，再组织自己的说法'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.pushNamed(context, '/replies'),
+                  ),
                 if (section == Section.practice)
                   ListTile(
                     contentPadding: EdgeInsets.zero,

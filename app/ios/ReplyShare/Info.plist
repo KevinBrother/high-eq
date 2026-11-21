@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CFBundleDisplayName</key><string>对话手记 · 回复助手</string>
+<key>CFBundleName</key><string>ReplyShare</string>
+<key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+<key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+<key>CFBundlePackageType</key><string>XPC!</string>
+<key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+<key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+<key>NSExtension</key><dict>
+<key>NSExtensionPointIdentifier</key><string>com.apple.share-services</string>
+<key>NSExtensionPrincipalClass</key><string>$(PRODUCT_MODULE_NAME).ShareController</string>
+<key>NSExtensionAttributes</key><dict><key>NSExtensionActivationRule</key><dict><key>NSExtensionActivationSupportsText</key><true/></dict></dict>
+</dict></dict></plist>
