@@ -40,7 +40,27 @@ func run() error {
 		return e
 	}
 	defer s.Close()
-	srv := http.Server{Addr: cfg.Listen, Handler: service.Router(s.Health), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: time.Minute}
+	srv := http.Server{Addr: cfg.Listen, Handler: service.Router(s.Health, s.Accounts), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: time.Minute}
+	// Stop maintenance before closing storage; expired accounts are denied inline
+	// even while a deletion is pending or being retried.
+	worker, stopWorker := context.WithCancel(ctx)
+	workerDone := make(chan struct{})
+	defer func() { stopWorker(); <-workerDone }()
+	go func() {
+		defer close(workerDone)
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-worker.Done():
+				return
+			case <-t.C:
+				if e := s.Accounts.PurgeDue(worker); e != nil && worker.Err() == nil {
+					slog.Error("cleanup unavailable", "module", "accounts", "result", "retry")
+				}
+			}
+		}
+	}()
 	done := make(chan error, 1)
 	go func() { done <- srv.ListenAndServe() }()
 	select {

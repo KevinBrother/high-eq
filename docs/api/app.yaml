@@ -193,7 +193,7 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/BindIdentityInput'}
             example:
-              current_proof: example-only
+              current_proof: {provider: apple, proof: example-current-identity}
               credential:
                 provider: phone
                 proof: example-only
@@ -260,7 +260,7 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/FreezeAccountInput'}
             example:
-              proof: example-only
+              proof: {provider: apple, proof: example-current-identity}
       responses:
         '200':
           description: 成功
@@ -295,7 +295,8 @@ paths:
       operationId: listConsents
       tags:
       - me
-      summary: 授权记录
+      summary: 列出各用途当前的授权决定
+      description: 每个用途只返回最新决定（含已撤回）；按决定更新时间和唯一键降序游标分页。完整历史仅在本人导出中返回。
       responses:
         '200':
           description: 成功
@@ -2865,7 +2866,7 @@ components:
       - current_proof
       - credential
       properties:
-        current_proof: {type: string}
+        current_proof: {$ref: '#/components/schemas/Credential'}
         credential: {$ref: '#/components/schemas/Credential'}
     SwitchIdentityInput:
       type: object
@@ -2877,10 +2878,9 @@ components:
     FreezeAccountInput:
       type: object
       additionalProperties: false
-      required:
-      - proof
+      required: [proof]
       properties:
-        proof: {type: string}
+        proof: {$ref: '#/components/schemas/Credential'}
     FreezeAccountResult:
       type: object
       additionalProperties: false

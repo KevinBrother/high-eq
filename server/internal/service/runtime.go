@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"high-eq/server/internal/accounts"
 	"high-eq/server/internal/events"
 	"high-eq/server/internal/fieldcrypt"
 	"high-eq/server/internal/privacy"
@@ -19,6 +20,7 @@ type Runtime struct {
 	db                   *pgxpool.Pool
 	cache, registryRedis *redis.Client
 	ledger               *privacy.Ledger
+	Accounts             *accounts.Service
 	Data                 *privacy.Coordinator
 	Bus                  *events.Bus
 	Fields               *fieldcrypt.Cipher
@@ -54,12 +56,23 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	if e != nil {
 		return nil, e
 	}
-	hooks, e := privacy.NewRegistry(nil)
+	sms, exchange, e := accounts.DevelopmentProviders(c.Environment, s.cache)
+	if e != nil {
+		return nil, e
+	}
+	hooks, e := privacy.NewRegistry([]string{"accounts"}, accounts.Hooks(c.Fields))
 	if e != nil {
 		return nil, e
 	}
 	s.Data = privacy.NewCoordinator(db, s.ledger, hooks)
+	s.Accounts, e = accounts.New(db, s.Data, c.Fields, c.authMaster, sms, exchange)
+	if e != nil {
+		return nil, e
+	}
 	if e = s.Data.Resume(ctx); e != nil {
+		return nil, e
+	}
+	if e = s.Accounts.PurgeDue(ctx); e != nil {
 		return nil, e
 	}
 	s.Bus = events.New(s.Data, nil)

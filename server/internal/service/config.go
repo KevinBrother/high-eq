@@ -13,6 +13,8 @@ import (
 
 type Config struct {
 	Listen, DatabaseURL string
+	Environment         string
+	authMaster          []byte
 	Cache, Ledger       *redis.Options
 	BackupDays          int
 	Fields              *fieldcrypt.Cipher
@@ -23,7 +25,8 @@ func LoadConfig() (Config, error) {
 	if c.Listen == "" {
 		c.Listen = ":8080"
 	}
-	if os.Getenv("APP_ENV") != "development" {
+	c.Environment = os.Getenv("APP_ENV")
+	if c.Environment != "development" {
 		return c, errors.New("development key provider disabled outside development; configure KMS first")
 	}
 	var e error
@@ -40,6 +43,7 @@ func LoadConfig() (Config, error) {
 	if e != nil {
 		return c, errors.New("invalid field key encoding")
 	}
+	c.authMaster = k // development-only root; accounts derives domain-separated keys
 	c.Fields, e = fieldcrypt.New(1, map[uint32][]byte{1: k})
 	return c, e
 }

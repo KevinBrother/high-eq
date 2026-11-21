@@ -55,26 +55,42 @@ func roots(ctx context.Context, tx pgx.Tx, user uuid.UUID) ([]root, error) {
 // derived rows may not themselves carry the deleted source key.
 func (c *Coordinator) Access(ctx context.Context, user uuid.UUID, fn func(pgx.Tx) error) error {
 	return pgx.BeginFunc(ctx, c.db, func(tx pgx.Tx) error {
-		rr, e := roots(ctx, tx, user)
-		if e != nil {
+		if err := c.GuardTx(ctx, tx, user); err != nil {
+			return err
+		}
+		var frozen bool
+		if e := tx.QueryRow(ctx, "select closure_requested_at is not null from users where id=$1", user).Scan(&frozen); e != nil {
 			return e
 		}
-		ids := make([]uuid.UUID, 0, len(rr))
-		for _, r := range rr {
-			if r.pending {
-				return ErrHidden
-			}
-			ids = append(ids, r.id)
-		}
-		blocked, e := c.ledger.blocked(ctx, ids)
-		if e != nil {
-			return e
-		}
-		if blocked {
+		if frozen {
 			return ErrHidden
 		}
 		return fn(tx)
 	})
+}
+
+// GuardTx extends the deletion barrier to caller-owned login/recovery transactions.
+// Locks remain held through its commit. Never perform business reads before this check.
+func (c *Coordinator) GuardTx(ctx context.Context, tx pgx.Tx, user uuid.UUID) error {
+	rr, e := roots(ctx, tx, user)
+	if e != nil {
+		return e
+	}
+	ids := make([]uuid.UUID, 0, len(rr))
+	for _, r := range rr {
+		if r.pending {
+			return ErrHidden
+		}
+		ids = append(ids, r.id)
+	}
+	blocked, e := c.ledger.blocked(ctx, ids)
+	if e != nil {
+		return e
+	}
+	if blocked {
+		return ErrHidden
+	}
+	return nil
 }
 
 type Deletion struct {
@@ -96,6 +112,12 @@ var removes = map[string]string{
 // No distributed transaction: first persist a fail-closed intent. A crash at
 // any later boundary can be retried from that root, including after ledger TTL.
 func (c *Coordinator) Delete(ctx context.Context, d Deletion) error {
+	return c.DeleteIf(ctx, d, nil)
+}
+
+// DeleteIf rechecks a candidate under the same account lock that records the
+// irreversible intent. Discovery queries may have seen a stale MVCC snapshot.
+func (c *Coordinator) DeleteIf(ctx context.Context, d Deletion, eligible func(pgx.Tx) (bool, error)) error {
 	if _, ok := removes[d.Scope]; !ok || d.UserID == uuid.Nil || d.OperationID == uuid.Nil || (d.Scope == "account") != (d.SourceID == uuid.Nil) {
 		return errors.New("invalid deletion")
 	}
@@ -110,6 +132,12 @@ func (c *Coordinator) Delete(ctx context.Context, d Deletion) error {
 		}
 		if e != nil {
 			return e
+		}
+		if eligible != nil {
+			ok, e := eligible(tx)
+			if e != nil || !ok {
+				return e
+			}
 		}
 		for _, r := range rr {
 			if r.scope == d.Scope && (d.Scope == "account" || r.id == d.SourceID) {

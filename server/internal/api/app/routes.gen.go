@@ -459,7 +459,7 @@ type Assessment struct {
 // BindIdentityInput defines model for BindIdentityInput.
 type BindIdentityInput struct {
 	Credential   Credential `json:"credential"`
-	CurrentProof string     `json:"current_proof"`
+	CurrentProof Credential `json:"current_proof"`
 }
 
 // CompletePlanItemResult defines model for CompletePlanItemResult.
@@ -689,7 +689,7 @@ type FinishSessionResult1Mode string
 
 // FreezeAccountInput defines model for FreezeAccountInput.
 type FreezeAccountInput struct {
-	Proof string `json:"proof"`
+	Proof Credential `json:"proof"`
 }
 
 // FreezeAccountResult defines model for FreezeAccountResult.
@@ -2044,7 +2044,7 @@ type ServerInterface interface {
 	// 重新认证后冻结 15 天；先提示取消苹果订阅
 	// (POST /v1/me/closure)
 	FreezeAccount(c *gin.Context)
-	// 授权记录
+	// 列出各用途当前的授权决定
 	// (GET /v1/me/consents)
 	ListConsents(c *gin.Context, params ListConsentsParams)
 	// 按用途授权或立即撤回

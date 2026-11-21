@@ -7,6 +7,6 @@
 - `./server/tests/runtime.sh` 创建、核验、销毁独立的 Compose 测试项目，不连接开发库。`./server/tests/migrations.sh` 另用临时 PG17 走全量 up / SQL 约束 / down / up（需 `migrate` v4 CLI）。
 - [T04 交接](../docs/tasks/T04.md)：如何新增接口、注册模块、处理事件和故障。[结构与删除协议](../docs/schema.md)；[单体事件目录](../docs/api/events.md)。
 
-本卡只交付公共基础设施；不提供登录、支付、画像或个人导出等业务端点。Compose 是开发配置，不能充当生产部署。
+[T05 用户与认证](../docs/tasks/T05.md)已接入登录、显式绑定、同意和注销。开发替身不会联系真实短信/Apple/微信服务；非开发环境拒绝启动这些替身。Compose 是开发配置，不能充当生产部署。
 
 **新迁移必须能从已发布的版本升级。** 从仓库根 `git fetch origin`，暂存自己的 up/down 文件后运行 `python3 scripts/migration_history/check.py origin/main :index`。若开发期间已有版本号更大的迁移合入，请调整**尚未发布**的这对文件再提交。`Migration history` CI 对比实际提交的 Git blob 和版本号，不允许重写、移除已发布 SQL，也不允许追加比已发布版本更早的新迁移。它补充而非替代空库 up/down 与业务数据验证。
