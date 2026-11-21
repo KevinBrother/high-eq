@@ -1,0 +1,435 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0F293D6C6707A8867AEC8886 /* Link.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C76BE2C39976ABD4B44FA4D /* Link.swift */; };
+		2A2096DE410CCDAB9C4A502E /* Run.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50D2CDF5044BABAC6FCBB7BB /* Run.swift */; };
+		4637CF3DAB22887E5269BE27 /* Link.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C76BE2C39976ABD4B44FA4D /* Link.swift */; };
+		5C12EFE61AE7ED91F66ED678 /* PhoneProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78F8E225D355356F9184F961 /* PhoneProbe.swift */; };
+		6BF4645D9BC13FE852E5E048 /* Wire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10FBC769447818D905DC47F8 /* Wire.swift */; };
+		E22499F455D7A0BEE91C7374 /* T36Watch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = C64F5AAC586DFE6A7545456A /* T36Watch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		E6814A051C832B7D4D2ABA36 /* Wire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10FBC769447818D905DC47F8 /* Wire.swift */; };
+		E8A39FF4B259673F07567A07 /* WatchProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = E55F69817074C72660C11DB0 /* WatchProbe.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		6983178A105C97EF5F6EF782 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 8918686D2D21AE2EF82FBCE2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0826D61903962F88513033ED;
+			remoteInfo = T36Watch;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		937684FD3CBE0CF17D5BB14A /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				E22499F455D7A0BEE91C7374 /* T36Watch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		10FBC769447818D905DC47F8 /* Wire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Wire.swift; sourceTree = "<group>"; };
+		1C76BE2C39976ABD4B44FA4D /* Link.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Link.swift; sourceTree = "<group>"; };
+		50D2CDF5044BABAC6FCBB7BB /* Run.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Run.swift; sourceTree = "<group>"; };
+		78F8E225D355356F9184F961 /* PhoneProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneProbe.swift; sourceTree = "<group>"; };
+		87B66A2D25EFE3E7AD5B0C32 /* T36Phone.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = T36Phone.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C64F5AAC586DFE6A7545456A /* T36Watch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = T36Watch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E55F69817074C72660C11DB0 /* WatchProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchProbe.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		5565F2A181632618C3D8004F /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				87B66A2D25EFE3E7AD5B0C32 /* T36Phone.app */,
+				C64F5AAC586DFE6A7545456A /* T36Watch.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		7E0061DD3664CC6B101FBF36 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				1C76BE2C39976ABD4B44FA4D /* Link.swift */,
+				10FBC769447818D905DC47F8 /* Wire.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		A20FD2A1325EE928EF8DA736 /* Watch */ = {
+			isa = PBXGroup;
+			children = (
+				50D2CDF5044BABAC6FCBB7BB /* Run.swift */,
+				E55F69817074C72660C11DB0 /* WatchProbe.swift */,
+			);
+			path = Watch;
+			sourceTree = "<group>";
+		};
+		B3E04AFB6D1A724EDD078CE4 = {
+			isa = PBXGroup;
+			children = (
+				DE29EE734E40E45C461E8CC3 /* Phone */,
+				7E0061DD3664CC6B101FBF36 /* Shared */,
+				A20FD2A1325EE928EF8DA736 /* Watch */,
+				5565F2A181632618C3D8004F /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		DE29EE734E40E45C461E8CC3 /* Phone */ = {
+			isa = PBXGroup;
+			children = (
+				78F8E225D355356F9184F961 /* PhoneProbe.swift */,
+			);
+			path = Phone;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0574445F04ADF030973A3F9D /* T36Phone */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 35F07F9F8F32F0A67B175C04 /* Build configuration list for PBXNativeTarget "T36Phone" */;
+			buildPhases = (
+				C2A7C6E1314624CC3C88AD0C /* Sources */,
+				937684FD3CBE0CF17D5BB14A /* Embed Watch Content */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				3841DDC2539757032503014F /* PBXTargetDependency */,
+			);
+			name = T36Phone;
+			packageProductDependencies = (
+			);
+			productName = T36Phone;
+			productReference = 87B66A2D25EFE3E7AD5B0C32 /* T36Phone.app */;
+			productType = "com.apple.product-type.application";
+		};
+		0826D61903962F88513033ED /* T36Watch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C1D465C9DC7DF8884A491300 /* Build configuration list for PBXNativeTarget "T36Watch" */;
+			buildPhases = (
+				5D77BCF3EB19AD89D3C4D0F8 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = T36Watch;
+			packageProductDependencies = (
+			);
+			productName = T36Watch;
+			productReference = C64F5AAC586DFE6A7545456A /* T36Watch.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		8918686D2D21AE2EF82FBCE2 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					0574445F04ADF030973A3F9D = {
+						ProvisioningStyle = Automatic;
+					};
+					0826D61903962F88513033ED = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = D07E314672F54E3FC3371436 /* Build configuration list for PBXProject "T36" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = B3E04AFB6D1A724EDD078CE4;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 5565F2A181632618C3D8004F /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				0574445F04ADF030973A3F9D /* T36Phone */,
+				0826D61903962F88513033ED /* T36Watch */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		5D77BCF3EB19AD89D3C4D0F8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4637CF3DAB22887E5269BE27 /* Link.swift in Sources */,
+				2A2096DE410CCDAB9C4A502E /* Run.swift in Sources */,
+				E8A39FF4B259673F07567A07 /* WatchProbe.swift in Sources */,
+				6BF4645D9BC13FE852E5E048 /* Wire.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C2A7C6E1314624CC3C88AD0C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0F293D6C6707A8867AEC8886 /* Link.swift in Sources */,
+				5C12EFE61AE7ED91F66ED678 /* PhoneProbe.swift in Sources */,
+				E6814A051C832B7D4D2ABA36 /* Wire.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		3841DDC2539757032503014F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0826D61903962F88513033ED /* T36Watch */;
+			targetProxy = 6983178A105C97EF5F6EF782 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0E8A7073E2478502B926780A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/Watch.entitlements;
+				INFOPLIST_FILE = Config/Watch.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(T36_BASE_ID).watchkitapp";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Debug;
+		};
+		285FE39E467B67D32DDDACF8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_KEY_CFBundleDisplayName = "T36 对话测试";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(T36_BASE_ID)";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		3AFEBD3EB1B1CED5A772E794 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_KEY_CFBundleDisplayName = "T36 对话测试";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(T36_BASE_ID)";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		AC6CC6A868ECA3E9BD2F12F1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/Watch.entitlements;
+				INFOPLIST_FILE = Config/Watch.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(T36_BASE_ID).watchkitapp";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Release;
+		};
+		D49D006D3022EE44ACF25048 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				T36_BASE_ID = org.example.higheq.t36probe;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		F451250B42BB50063380A128 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+				T36_BASE_ID = org.example.higheq.t36probe;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		35F07F9F8F32F0A67B175C04 /* Build configuration list for PBXNativeTarget "T36Phone" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				285FE39E467B67D32DDDACF8 /* Debug */,
+				3AFEBD3EB1B1CED5A772E794 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C1D465C9DC7DF8884A491300 /* Build configuration list for PBXNativeTarget "T36Watch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0E8A7073E2478502B926780A /* Debug */,
+				AC6CC6A868ECA3E9BD2F12F1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D07E314672F54E3FC3371436 /* Build configuration list for PBXProject "T36" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D49D006D3022EE44ACF25048 /* Debug */,
+				F451250B42BB50063380A128 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 8918686D2D21AE2EF82FBCE2 /* Project object */;
+}
