@@ -13,11 +13,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"high-eq/server/internal/api/admin"
+	"high-eq/server/internal/gateway"
 )
 
 type api struct {
 	admin.ServerInterface
-	db *pgxpool.Pool
+	db      *pgxpool.Pool
+	catalog *gateway.Catalog
 }
 type rule struct {
 	action, target string
@@ -26,15 +28,19 @@ type rule struct {
 
 // Exact route templates only. New routes are closed unless explicitly reviewed.
 var rules = map[string]rule{
+	"GET /admissions":         {"listAdmissions", "admissions", true, true},
+	"POST /admissions":        {"createAdmission", "admissions", true, true},
+	"DELETE /admissions/:ref": {"revokeAdmission", "admissions", true, true},
+
 	"POST /auth/login":      {"adminLogin", "session", false, true},
 	"POST /auth/logout":     {"adminLogout", "session", false, true},
 	"GET /audit-logs":       {"listAuditLogs", "audit", true, true},
-	"POST /models":          {"createModel", "models", true, false},
-	"PATCH /models/:id":     {"updateModel", "models", true, false},
-	"POST /models/:id/test": {"testModel", "models", true, false},
-	"PUT /routes/:task":     {"setRoute", "routes", true, false},
-	"GET /models":           {"listModels", "models", false, false},
-	"GET /routes":           {"listRoutes", "routes", false, false},
+	"POST /models":          {"createModel", "models", true, true},
+	"PATCH /models/:id":     {"updateModel", "models", true, true},
+	"POST /models/:id/test": {"testModel", "models", true, true},
+	"PUT /routes/:task":     {"setRoute", "routes", true, true},
+	"GET /models":           {"listModels", "models", true, true},
+	"GET /routes":           {"listRoutes", "routes", true, true},
 	"GET /metrics":          {"getMetrics", "metrics", false, false},
 	"GET /prompt-versions":  {"listPromptVersions", "prompts", false, true},
 	"POST /prompt-versions": {"createPromptVersion", "prompts", false, true},
@@ -42,8 +48,11 @@ var rules = map[string]rule{
 	"PUT /prompt-releases":  {"setPromptRelease", "prompts", false, true},
 }
 
-func Register(r gin.IRouter, db *pgxpool.Pool) {
+func Register(r gin.IRouter, db *pgxpool.Pool, catalogs ...*gateway.Catalog) {
 	a := api{db: db}
+	if len(catalogs) > 0 {
+		a.catalog = catalogs[0]
+	}
 	admin.RegisterHandlersWithOptions(r.Group("", a.guard), a, admin.GinServerOptions{ErrorHandler: func(c *gin.Context, _ error, _ int) { reject(c, 400) }})
 }
 func reject(c *gin.Context, status int) {
@@ -57,6 +66,8 @@ func reject(c *gin.Context, status int) {
 		code, msg = "forbidden", "此操作需要超级管理员权限"
 	case 404:
 		code, msg = "not_found", "指定的配置不存在"
+	case 409:
+		code, msg = "conflict", "配置仍在使用或不符合准入要求"
 	case 501:
 		code, msg = "not_implemented", "此功能尚未开放"
 	}
@@ -106,6 +117,9 @@ func (a api) guard(c *gin.Context) {
 			return
 		}
 		target := policy.target
+		if id, e := uuid.Parse(c.Param("ref")); e == nil {
+			target = id.String()
+		}
 		if id, e := uuid.Parse(c.Param("id")); e == nil {
 			target = id.String()
 		}

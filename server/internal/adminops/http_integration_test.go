@@ -86,7 +86,7 @@ func TestAdminBoundary(t *testing.T) {
 	for _, route := range []struct{ method, path string }{{"POST", "models"}, {"POST", "models/" + id + "/test"}, {"PUT", "routes/role_play"}} {
 		request(route.method, route.path, o, "", 403)
 	}
-	request("PATCH", "models/"+id, s, "", 501)
+	request("PATCH", "models/"+id, s, "", 400)
 	filter := url.Values{"actor_id": {actor.String()}, "from": {start.Format(time.RFC3339Nano)}, "until": {end.Format(time.RFC3339Nano)}}
 	rows := request("GET", "audit-logs?"+filter.Encode(), s, "", 200)["items"].([]any)
 	if len(rows) != 1 {

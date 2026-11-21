@@ -31,7 +31,7 @@ class AdminApi {
     String path, {
     String? token,
     Map<String, String>? query,
-    Map<String, String>? body,
+    Map<String, dynamic>? body,
   }) async {
     final uri = origin
         .resolve('/admin/v1/$path')
@@ -51,6 +51,8 @@ class AdminApi {
         throw ApiFailure(response.statusCode, switch (response.statusCode) {
           400 => '请检查输入后重试',
           401 => '凭据无效或会话已过期，请重新登录',
+          404 => '配置不存在或不再满足准入条件，请刷新清单',
+          409 => '配置仍在使用或不符合准入条款，请核对主备、字段和留存',
           403 => '当前角色无权执行此操作',
           _ => '服务暂不可用，请稍后重试',
         });
@@ -62,6 +64,34 @@ class AdminApi {
     } on http.ClientException {
       throw const ApiFailure(0, '无法连接后台，请检查网络');
     }
+  }
+
+  Future<List<Map<String, dynamic>>> configurations(
+    String token,
+    String path,
+  ) async {
+    final all = <Map<String, dynamic>>[];
+    String? cursor;
+    do {
+      final page = await _request(
+        'GET',
+        path,
+        token: token,
+        query: {'limit': '100', 'cursor': ?cursor},
+      );
+      all.addAll((page['items'] as List).cast<Map<String, dynamic>>());
+      cursor = page['next_cursor'] as String?;
+    } while (cursor != null);
+    return all;
+  }
+
+  Future<void> configure(
+    String token,
+    String method,
+    String path, [
+    Map<String, dynamic>? body,
+  ]) async {
+    await _request(method, path, token: token, body: body);
   }
 
   Future<Session> login(String name, String password) async {

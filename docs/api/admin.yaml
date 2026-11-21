@@ -137,6 +137,171 @@ paths:
         '500': {$ref: '#/components/responses/E500'}
         '403': {$ref: '#/components/responses/E403'}
       x-example-request: GET /admin/v1/audit-logs?cursor=after-example&limit=20&from=2026-11-20T09%3A00%3A00%2B08%3A00&until=2026-11-21T09%3A00%3A00%2B08%3A00&actor_id=85b72033-9f07-4bbc-8567-fc31f26508ab
+  /admin/v1/admissions:
+    get:
+      operationId: listAdmissions
+      summary: 查看独立核验的准入清单
+      parameters:
+      - in: query
+        name: cursor
+        schema:
+          type: string
+        example: after-example
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+        example: 20
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - items
+                - next_cursor
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Admission'
+                  next_cursor:
+                    type: string
+                    nullable: true
+              example:
+                items:
+                - ref: admission-demo-v1
+                  provider: demo
+                  endpoint: https://model.example.invalid/v1
+                  model_scope: demo-chat
+                  kind: model
+                  purpose: synthetic
+                  sent_fields:
+                  - model
+                  - messages.role
+                  - messages.content
+                  - stream
+                  - response_format.type
+                  processing_country: CN
+                  storage_country: CN
+                  cross_border: false
+                  max_retention_days: 0
+                  deletion_method: contract removal
+                  terms_evidence: contract-reference
+                next_cursor: null
+        '400':
+          $ref: '#/components/responses/E400'
+        '403':
+          $ref: '#/components/responses/E403'
+        '401':
+          $ref: '#/components/responses/E401'
+        '500':
+          $ref: '#/components/responses/E500'
+      x-example-request: GET /admin/v1/admissions
+    post:
+      operationId: createAdmission
+      summary: 登记已核验的不可变准入凭据
+      description: 需独立核实合同。更换条款须登记新凭据，不会自动启用模型。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewAdmission'
+            example:
+              provider: demo
+              endpoint: https://model.example.invalid/v1
+              model_scope: demo-chat
+              kind: model
+              purpose: synthetic
+              sent_fields:
+              - model
+              - messages.role
+              - messages.content
+              - stream
+              - response_format.type
+              processing_country: CN
+              storage_country: CN
+              cross_border: false
+              max_retention_days: 0
+              deletion_method: contract removal
+              terms_evidence: contract-reference
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Admission'
+              example:
+                ref: admission-demo-v1
+                provider: demo
+                endpoint: https://model.example.invalid/v1
+                model_scope: demo-chat
+                kind: model
+                purpose: synthetic
+                sent_fields:
+                - model
+                - messages.role
+                - messages.content
+                - stream
+                - response_format.type
+                processing_country: CN
+                storage_country: CN
+                cross_border: false
+                max_retention_days: 0
+                deletion_method: contract removal
+                terms_evidence: contract-reference
+        '400':
+          $ref: '#/components/responses/E400'
+        '401':
+          $ref: '#/components/responses/E401'
+        '500':
+          $ref: '#/components/responses/E500'
+        '403':
+          $ref: '#/components/responses/E403'
+        '409':
+          $ref: '#/components/responses/E409'
+      x-example-request: POST /admin/v1/admissions
+  /admin/v1/admissions/{ref}:
+    delete:
+      operationId: revokeAdmission
+      summary: 撤销凭据并停用相关模型、移除受影响路由
+      description: 一个事务生效；相关任务须重新选路。
+      parameters:
+      - name: ref
+        schema:
+          type: string
+        example: admission-demo-v1
+        in: path
+        required: true
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ack'
+              example:
+                ok: true
+        '400':
+          $ref: '#/components/responses/E400'
+        '401':
+          $ref: '#/components/responses/E401'
+        '500':
+          $ref: '#/components/responses/E500'
+        '403':
+          $ref: '#/components/responses/E403'
+        '404':
+          $ref: '#/components/responses/E404'
+        '409':
+          $ref: '#/components/responses/E409'
+      x-example-request: DELETE /admin/v1/admissions/admission-demo-v1
   /admin/v1/models:
     get:
       operationId: listModels
@@ -172,6 +337,7 @@ paths:
                   name: 国内主模型
                   provider: demo
                   endpoint: https://model.example.invalid/v1
+                  kind: model
                   model_name: demo-chat
                   input_cny_per_million: 1
                   output_cny_per_million: 2
@@ -180,6 +346,7 @@ paths:
                   key_last_four: '1234'
                 next_cursor: null
         '400': {$ref: '#/components/responses/E400'}
+        '403': {$ref: '#/components/responses/E403'}
         '401': {$ref: '#/components/responses/E401'}
         '500': {$ref: '#/components/responses/E500'}
       x-example-request: GET /admin/v1/models?cursor=after-example&limit=20
@@ -196,6 +363,7 @@ paths:
               name: 国内主模型
               provider: demo
               endpoint: https://model.example.invalid/v1
+              kind: model
               model_name: demo-chat
               input_cny_per_million: 1
               output_cny_per_million: 2
@@ -213,6 +381,7 @@ paths:
                 name: 国内主模型
                 provider: demo
                 endpoint: https://model.example.invalid/v1
+                kind: model
                 model_name: demo-chat
                 input_cny_per_million: 1
                 output_cny_per_million: 2
@@ -254,6 +423,7 @@ paths:
                 name: 国内主模型
                 provider: demo
                 endpoint: https://model.example.invalid/v1
+                kind: model
                 model_name: demo-chat
                 input_cny_per_million: 1
                 output_cny_per_million: 2
@@ -326,11 +496,13 @@ paths:
                 items:
                 - task: role_play
                   primary_model: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  moderation_model: bcda5eb0-9e42-4ae8-b930-dda31ca6b080
                   fallback_model: 5211c6b2-149b-4483-b3b0-c15dbffc61fb
                   canary_model: null
                   canary_percent: 0
                 next_cursor: null
         '400': {$ref: '#/components/responses/E400'}
+        '403': {$ref: '#/components/responses/E403'}
         '401': {$ref: '#/components/responses/E401'}
         '500': {$ref: '#/components/responses/E500'}
       x-example-request: GET /admin/v1/routes?cursor=after-example&limit=20
@@ -353,17 +525,20 @@ paths:
               type: object
               additionalProperties: false
               required:
+              - moderation_model
               - primary_model
               - fallback_model
               - canary_model
               - canary_percent
               properties:
+                moderation_model: {type: string, format: uuid}
                 primary_model: {type: string, format: uuid}
                 fallback_model: {type: string, format: uuid}
                 canary_model: {type: string, format: uuid, nullable: true}
                 canary_percent: {type: integer, minimum: 0, maximum: 100}
             example:
               primary_model: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              moderation_model: bcda5eb0-9e42-4ae8-b930-dda31ca6b080
               fallback_model: 5211c6b2-149b-4483-b3b0-c15dbffc61fb
               canary_model: null
               canary_percent: 0
@@ -376,6 +551,7 @@ paths:
               example:
                 task: role_play
                 primary_model: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                moderation_model: bcda5eb0-9e42-4ae8-b930-dda31ca6b080
                 fallback_model: 5211c6b2-149b-4483-b3b0-c15dbffc61fb
                 canary_model: null
                 canary_percent: 0
@@ -688,6 +864,117 @@ components:
           description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
         expires_at: {type: string, format: date-time}
         role: {type: string, enum: [operator, super_admin]}
+    NewAdmission:
+      type: object
+      additionalProperties: false
+      required:
+      - provider
+      - endpoint
+      - model_scope
+      - kind
+      - purpose
+      - sent_fields
+      - processing_country
+      - storage_country
+      - cross_border
+      - max_retention_days
+      - deletion_method
+      - terms_evidence
+      properties:
+        provider:
+          type: string
+        endpoint:
+          type: string
+          format: uri
+        model_scope:
+          type: string
+        kind:
+          type: string
+          enum:
+          - model
+          - moderation
+        purpose:
+          type: string
+        sent_fields:
+          type: array
+          items:
+            type: string
+        processing_country:
+          type: string
+          enum:
+          - CN
+        storage_country:
+          type: string
+          enum:
+          - CN
+        cross_border:
+          type: boolean
+          enum:
+          - false
+        max_retention_days:
+          type: integer
+          minimum: 0
+        deletion_method:
+          type: string
+        terms_evidence:
+          type: string
+    Admission:
+      type: object
+      additionalProperties: false
+      required:
+      - ref
+      - provider
+      - endpoint
+      - model_scope
+      - kind
+      - purpose
+      - sent_fields
+      - processing_country
+      - storage_country
+      - cross_border
+      - max_retention_days
+      - deletion_method
+      - terms_evidence
+      properties:
+        ref:
+          type: string
+        provider:
+          type: string
+        endpoint:
+          type: string
+          format: uri
+        model_scope:
+          type: string
+        kind:
+          type: string
+          enum:
+          - model
+          - moderation
+        purpose:
+          type: string
+        sent_fields:
+          type: array
+          items:
+            type: string
+        processing_country:
+          type: string
+          enum:
+          - CN
+        storage_country:
+          type: string
+          enum:
+          - CN
+        cross_border:
+          type: boolean
+          enum:
+          - false
+        max_retention_days:
+          type: integer
+          minimum: 0
+        deletion_method:
+          type: string
+        terms_evidence:
+          type: string
     Model:
       type: object
       additionalProperties: false
@@ -696,6 +983,7 @@ components:
       - name
       - provider
       - endpoint
+      - kind
       - model_name
       - input_cny_per_million
       - output_cny_per_million
@@ -711,11 +999,12 @@ components:
           type: string
           description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
         endpoint: {type: string, format: uri}
+        kind: {type: string, enum: [model, moderation]}
         model_name:
           type: string
           description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
-        input_cny_per_million: {type: number, minimum: 0}
-        output_cny_per_million: {type: number, minimum: 0}
+        input_cny_per_million: {type: number, nullable: true, minimum: 0, format: double, maximum: 999999.999999}
+        output_cny_per_million: {type: number, nullable: true, minimum: 0, format: double, maximum: 999999.999999}
         admission_ref: {type: string, nullable: true}
         enabled: {type: boolean}
         key_last_four: {type: string, maxLength: 4}
@@ -726,6 +1015,7 @@ components:
       - name
       - provider
       - endpoint
+      - kind
       - model_name
       - input_cny_per_million
       - output_cny_per_million
@@ -740,14 +1030,15 @@ components:
           type: string
           description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
         endpoint: {type: string, format: uri}
+        kind: {type: string, enum: [model, moderation]}
         model_name:
           type: string
           description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
-        input_cny_per_million: {type: number, minimum: 0}
-        output_cny_per_million: {type: number, minimum: 0}
+        input_cny_per_million: {type: number, minimum: 0, format: double, maximum: 999999.999999}
+        output_cny_per_million: {type: number, minimum: 0, format: double, maximum: 999999.999999}
         admission_ref: {type: string, nullable: true}
         enabled: {type: boolean}
-        api_key: {type: string, format: password, writeOnly: true, minLength: 1}
+        api_key: {type: string, format: password, writeOnly: true, minLength: 5, maxLength: 4096}
     ModelPatch:
       type: object
       additionalProperties: false
@@ -759,14 +1050,15 @@ components:
           type: string
           description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
         endpoint: {type: string, format: uri}
+        kind: {type: string, enum: [model, moderation]}
         model_name:
           type: string
           description: 说明趋势可用性或缺失原因，不是冷启动倒计时。
-        input_cny_per_million: {type: number, minimum: 0}
-        output_cny_per_million: {type: number, minimum: 0}
+        input_cny_per_million: {type: number, minimum: 0, format: double, maximum: 999999.999999}
+        output_cny_per_million: {type: number, minimum: 0, format: double, maximum: 999999.999999}
         admission_ref: {type: string, nullable: true}
         enabled: {type: boolean}
-        api_key: {type: string, format: password, writeOnly: true, minLength: 1}
+        api_key: {type: string, format: password, writeOnly: true, minLength: 5, maxLength: 4096}
       minProperties: 1
     Task:
       type: string
@@ -783,12 +1075,14 @@ components:
       additionalProperties: false
       required:
       - task
+      - moderation_model
       - primary_model
       - fallback_model
       - canary_model
       - canary_percent
       properties:
         task: {$ref: '#/components/schemas/Task'}
+        moderation_model: {type: string, format: uuid, nullable: true}
         primary_model: {type: string, format: uuid}
         fallback_model: {type: string, format: uuid}
         canary_model: {type: string, format: uuid, nullable: true}

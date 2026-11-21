@@ -28,6 +28,66 @@ const (
 	AdminSessionRoleSuperAdmin AdminSessionRole = "super_admin"
 )
 
+// Defines values for AdmissionCrossBorder.
+const (
+	AdmissionCrossBorderFalse AdmissionCrossBorder = false
+)
+
+// Defines values for AdmissionKind.
+const (
+	AdmissionKindModel      AdmissionKind = "model"
+	AdmissionKindModeration AdmissionKind = "moderation"
+)
+
+// Defines values for AdmissionProcessingCountry.
+const (
+	AdmissionProcessingCountryCN AdmissionProcessingCountry = "CN"
+)
+
+// Defines values for AdmissionStorageCountry.
+const (
+	AdmissionStorageCountryCN AdmissionStorageCountry = "CN"
+)
+
+// Defines values for ModelKind.
+const (
+	ModelKindModel      ModelKind = "model"
+	ModelKindModeration ModelKind = "moderation"
+)
+
+// Defines values for ModelPatchKind.
+const (
+	ModelPatchKindModel      ModelPatchKind = "model"
+	ModelPatchKindModeration ModelPatchKind = "moderation"
+)
+
+// Defines values for NewAdmissionCrossBorder.
+const (
+	NewAdmissionCrossBorderFalse NewAdmissionCrossBorder = false
+)
+
+// Defines values for NewAdmissionKind.
+const (
+	NewAdmissionKindModel      NewAdmissionKind = "model"
+	NewAdmissionKindModeration NewAdmissionKind = "moderation"
+)
+
+// Defines values for NewAdmissionProcessingCountry.
+const (
+	NewAdmissionProcessingCountryCN NewAdmissionProcessingCountry = "CN"
+)
+
+// Defines values for NewAdmissionStorageCountry.
+const (
+	NewAdmissionStorageCountryCN NewAdmissionStorageCountry = "CN"
+)
+
+// Defines values for NewModelKind.
+const (
+	NewModelKindModel      NewModelKind = "model"
+	NewModelKindModeration NewModelKind = "moderation"
+)
+
 // Defines values for Task.
 const (
 	TaskClassification    Task = "classification"
@@ -59,6 +119,35 @@ type AdminSession struct {
 // AdminSessionRole defines model for AdminSession.Role.
 type AdminSessionRole string
 
+// Admission defines model for Admission.
+type Admission struct {
+	CrossBorder       AdmissionCrossBorder       `json:"cross_border"`
+	DeletionMethod    string                     `json:"deletion_method"`
+	Endpoint          string                     `json:"endpoint"`
+	Kind              AdmissionKind              `json:"kind"`
+	MaxRetentionDays  int                        `json:"max_retention_days"`
+	ModelScope        string                     `json:"model_scope"`
+	ProcessingCountry AdmissionProcessingCountry `json:"processing_country"`
+	Provider          string                     `json:"provider"`
+	Purpose           string                     `json:"purpose"`
+	Ref               string                     `json:"ref"`
+	SentFields        []string                   `json:"sent_fields"`
+	StorageCountry    AdmissionStorageCountry    `json:"storage_country"`
+	TermsEvidence     string                     `json:"terms_evidence"`
+}
+
+// AdmissionCrossBorder defines model for Admission.CrossBorder.
+type AdmissionCrossBorder bool
+
+// AdmissionKind defines model for Admission.Kind.
+type AdmissionKind string
+
+// AdmissionProcessingCountry defines model for Admission.ProcessingCountry.
+type AdmissionProcessingCountry string
+
+// AdmissionStorageCountry defines model for Admission.StorageCountry.
+type AdmissionStorageCountry string
+
 // Error defines model for Error.
 type Error struct {
 	Code      string     `json:"code"`
@@ -73,57 +162,97 @@ type Model struct {
 	Enabled            bool               `json:"enabled"`
 	Endpoint           string             `json:"endpoint"`
 	Id                 openapi_types.UUID `json:"id"`
-	InputCnyPerMillion float32            `json:"input_cny_per_million"`
+	InputCnyPerMillion *float64           `json:"input_cny_per_million"`
 	KeyLastFour        string             `json:"key_last_four"`
+	Kind               ModelKind          `json:"kind"`
 
 	// ModelName 说明趋势可用性或缺失原因，不是冷启动倒计时。
 	ModelName string `json:"model_name"`
 
 	// Name 说明趋势可用性或缺失原因，不是冷启动倒计时。
-	Name                string  `json:"name"`
-	OutputCnyPerMillion float32 `json:"output_cny_per_million"`
+	Name                string   `json:"name"`
+	OutputCnyPerMillion *float64 `json:"output_cny_per_million"`
 
 	// Provider 说明趋势可用性或缺失原因，不是冷启动倒计时。
 	Provider string `json:"provider"`
 }
 
+// ModelKind defines model for Model.Kind.
+type ModelKind string
+
 // ModelPatch defines model for ModelPatch.
 type ModelPatch struct {
-	AdmissionRef       *string  `json:"admission_ref"`
-	ApiKey             *string  `json:"api_key,omitempty"`
-	Enabled            *bool    `json:"enabled,omitempty"`
-	Endpoint           *string  `json:"endpoint,omitempty"`
-	InputCnyPerMillion *float32 `json:"input_cny_per_million,omitempty"`
+	AdmissionRef       *string         `json:"admission_ref"`
+	ApiKey             *string         `json:"api_key,omitempty"`
+	Enabled            *bool           `json:"enabled,omitempty"`
+	Endpoint           *string         `json:"endpoint,omitempty"`
+	InputCnyPerMillion *float64        `json:"input_cny_per_million,omitempty"`
+	Kind               *ModelPatchKind `json:"kind,omitempty"`
 
 	// ModelName 说明趋势可用性或缺失原因，不是冷启动倒计时。
 	ModelName *string `json:"model_name,omitempty"`
 
 	// Name 说明趋势可用性或缺失原因，不是冷启动倒计时。
 	Name                *string  `json:"name,omitempty"`
-	OutputCnyPerMillion *float32 `json:"output_cny_per_million,omitempty"`
+	OutputCnyPerMillion *float64 `json:"output_cny_per_million,omitempty"`
 
 	// Provider 说明趋势可用性或缺失原因，不是冷启动倒计时。
 	Provider *string `json:"provider,omitempty"`
 }
 
+// ModelPatchKind defines model for ModelPatch.Kind.
+type ModelPatchKind string
+
+// NewAdmission defines model for NewAdmission.
+type NewAdmission struct {
+	CrossBorder       NewAdmissionCrossBorder       `json:"cross_border"`
+	DeletionMethod    string                        `json:"deletion_method"`
+	Endpoint          string                        `json:"endpoint"`
+	Kind              NewAdmissionKind              `json:"kind"`
+	MaxRetentionDays  int                           `json:"max_retention_days"`
+	ModelScope        string                        `json:"model_scope"`
+	ProcessingCountry NewAdmissionProcessingCountry `json:"processing_country"`
+	Provider          string                        `json:"provider"`
+	Purpose           string                        `json:"purpose"`
+	SentFields        []string                      `json:"sent_fields"`
+	StorageCountry    NewAdmissionStorageCountry    `json:"storage_country"`
+	TermsEvidence     string                        `json:"terms_evidence"`
+}
+
+// NewAdmissionCrossBorder defines model for NewAdmission.CrossBorder.
+type NewAdmissionCrossBorder bool
+
+// NewAdmissionKind defines model for NewAdmission.Kind.
+type NewAdmissionKind string
+
+// NewAdmissionProcessingCountry defines model for NewAdmission.ProcessingCountry.
+type NewAdmissionProcessingCountry string
+
+// NewAdmissionStorageCountry defines model for NewAdmission.StorageCountry.
+type NewAdmissionStorageCountry string
+
 // NewModel defines model for NewModel.
 type NewModel struct {
-	AdmissionRef       *string `json:"admission_ref"`
-	ApiKey             *string `json:"api_key,omitempty"`
-	Enabled            bool    `json:"enabled"`
-	Endpoint           string  `json:"endpoint"`
-	InputCnyPerMillion float32 `json:"input_cny_per_million"`
+	AdmissionRef       *string      `json:"admission_ref"`
+	ApiKey             *string      `json:"api_key,omitempty"`
+	Enabled            bool         `json:"enabled"`
+	Endpoint           string       `json:"endpoint"`
+	InputCnyPerMillion float64      `json:"input_cny_per_million"`
+	Kind               NewModelKind `json:"kind"`
 
 	// ModelName 说明趋势可用性或缺失原因，不是冷启动倒计时。
 	ModelName string `json:"model_name"`
 
 	// Name 说明趋势可用性或缺失原因，不是冷启动倒计时。
 	Name                string  `json:"name"`
-	OutputCnyPerMillion float32 `json:"output_cny_per_million"`
+	OutputCnyPerMillion float64 `json:"output_cny_per_million"`
 
 	// Provider 说明趋势可用性或缺失原因，不是冷启动倒计时。
 	Provider string `json:"provider"`
 }
+
+// NewModelKind defines model for NewModel.Kind.
+type NewModelKind string
 
 // PromptRelease defines model for PromptRelease.
 type PromptRelease struct {
@@ -147,11 +276,12 @@ type PromptVersion struct {
 
 // Route defines model for Route.
 type Route struct {
-	CanaryModel   *openapi_types.UUID `json:"canary_model"`
-	CanaryPercent int                 `json:"canary_percent"`
-	FallbackModel openapi_types.UUID  `json:"fallback_model"`
-	PrimaryModel  openapi_types.UUID  `json:"primary_model"`
-	Task          Task                `json:"task"`
+	CanaryModel     *openapi_types.UUID `json:"canary_model"`
+	CanaryPercent   int                 `json:"canary_percent"`
+	FallbackModel   openapi_types.UUID  `json:"fallback_model"`
+	ModerationModel *openapi_types.UUID `json:"moderation_model"`
+	PrimaryModel    openapi_types.UUID  `json:"primary_model"`
+	Task            Task                `json:"task"`
 }
 
 // Task defines model for Task.
@@ -174,6 +304,12 @@ type E409 = Error
 
 // E500 defines model for E500.
 type E500 = Error
+
+// ListAdmissionsParams defines parameters for ListAdmissions.
+type ListAdmissionsParams struct {
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
 
 // ListAuditLogsParams defines parameters for ListAuditLogs.
 type ListAuditLogsParams struct {
@@ -237,11 +373,15 @@ type ListRoutesParams struct {
 
 // SetRouteJSONBody defines parameters for SetRoute.
 type SetRouteJSONBody struct {
-	CanaryModel   *openapi_types.UUID `json:"canary_model"`
-	CanaryPercent int                 `json:"canary_percent"`
-	FallbackModel openapi_types.UUID  `json:"fallback_model"`
-	PrimaryModel  openapi_types.UUID  `json:"primary_model"`
+	CanaryModel     *openapi_types.UUID `json:"canary_model"`
+	CanaryPercent   int                 `json:"canary_percent"`
+	FallbackModel   openapi_types.UUID  `json:"fallback_model"`
+	ModerationModel openapi_types.UUID  `json:"moderation_model"`
+	PrimaryModel    openapi_types.UUID  `json:"primary_model"`
 }
+
+// CreateAdmissionJSONRequestBody defines body for CreateAdmission for application/json ContentType.
+type CreateAdmissionJSONRequestBody = NewAdmission
 
 // AdminLoginJSONRequestBody defines body for AdminLogin for application/json ContentType.
 type AdminLoginJSONRequestBody AdminLoginJSONBody
@@ -263,6 +403,15 @@ type SetRouteJSONRequestBody SetRouteJSONBody
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// 查看独立核验的准入清单
+	// (GET /admin/v1/admissions)
+	ListAdmissions(c *gin.Context, params ListAdmissionsParams)
+	// 登记已核验的不可变准入凭据
+	// (POST /admin/v1/admissions)
+	CreateAdmission(c *gin.Context)
+	// 撤销凭据并停用相关模型、移除受影响路由
+	// (DELETE /admin/v1/admissions/{ref})
+	RevokeAdmission(c *gin.Context, ref string)
 	// 超级管理员按操作人及半开时间区间查询审计
 	// (GET /admin/v1/audit-logs)
 	ListAuditLogs(c *gin.Context, params ListAuditLogsParams)
@@ -315,6 +464,83 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(c *gin.Context)
+
+// ListAdmissions operation middleware
+func (siw *ServerInterfaceWrapper) ListAdmissions(c *gin.Context) {
+
+	var err error
+
+	c.Set(AdminBearerScopes, []string{})
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAdmissionsParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "cursor", c.Request.URL.Query(), &params.Cursor)
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter cursor: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", c.Request.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ListAdmissions(c, params)
+}
+
+// CreateAdmission operation middleware
+func (siw *ServerInterfaceWrapper) CreateAdmission(c *gin.Context) {
+
+	c.Set(AdminBearerScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.CreateAdmission(c)
+}
+
+// RevokeAdmission operation middleware
+func (siw *ServerInterfaceWrapper) RevokeAdmission(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "ref" -------------
+	var ref string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ref", c.Param("ref"), &ref, runtime.BindStyledParameterOptions{Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter ref: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(AdminBearerScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.RevokeAdmission(c, ref)
+}
 
 // ListAuditLogs operation middleware
 func (siw *ServerInterfaceWrapper) ListAuditLogs(c *gin.Context) {
@@ -782,6 +1008,9 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 		ErrorHandler:       errorHandler,
 	}
 
+	router.GET(options.BaseURL+"/admin/v1/admissions", wrapper.ListAdmissions)
+	router.POST(options.BaseURL+"/admin/v1/admissions", wrapper.CreateAdmission)
+	router.DELETE(options.BaseURL+"/admin/v1/admissions/:ref", wrapper.RevokeAdmission)
 	router.GET(options.BaseURL+"/admin/v1/audit-logs", wrapper.ListAuditLogs)
 	router.POST(options.BaseURL+"/admin/v1/auth/login", wrapper.AdminLogin)
 	router.POST(options.BaseURL+"/admin/v1/auth/logout", wrapper.AdminLogout)

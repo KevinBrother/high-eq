@@ -8,7 +8,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"high-eq/server/internal/accounts"
 	"high-eq/server/internal/adminops"
@@ -80,7 +79,7 @@ func gate(auth *accounts.Service) func(*gin.Context) {
 		}
 	}
 }
-func newRouter(health func(context.Context) error, auth *accounts.Service, adminDB *pgxpool.Pool, rights *membership.Service, surveys *assessment.Service) *gin.Engine {
+func newRouter(health func(context.Context) error, auth *accounts.Service, mountAdmin func(gin.IRouter), rights *membership.Service, surveys *assessment.Service) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -97,7 +96,11 @@ func newRouter(health func(context.Context) error, auth *accounts.Service, admin
 	})
 	invalid := func(c *gin.Context, _ error, _ int) { problem(c, 400, "invalid_argument", "请求参数无效", false) }
 	app.RegisterHandlersWithOptions(r, appAPI{health: health, accounts: auth, assessments: surveys, membership: rights}, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(auth)}, ErrorHandler: invalid})
-	adminops.Register(r, adminDB)
+	if mountAdmin != nil {
+		mountAdmin(r)
+	} else {
+		adminops.Register(r, nil)
+	}
 	r.NoRoute(func(c *gin.Context) { problem(c, 404, "not_found", "未找到此接口", false) })
 	return r
 }

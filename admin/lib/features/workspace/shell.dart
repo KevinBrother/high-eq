@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/api.dart';
 import '../../core/session.dart';
+import '../models/model_page.dart';
 import '../audit/audit_page.dart';
 
 class Workspace extends ConsumerStatefulWidget {
@@ -39,12 +40,16 @@ class _Workspace extends ConsumerState<Workspace> {
     final audit = widget.path == '/audit', can = widget.session.canAudit;
     final narrow = MediaQuery.sizeOf(context).width < 700;
     void go(int index) {
-      final dest = index == 1 ? '/audit' : '/';
+      final dest = ['/', '/audit', '/models'][index];
       if (dest != widget.path) Navigator.pushReplacementNamed(context, dest);
     }
 
     final content = switch (widget.path) {
       '/' => _Home(superAdmin: can),
+      '/models' when can => ModelPage(
+        key: ObjectKey(widget.session),
+        session: widget.session,
+      ),
       '/audit' when can => AuditPage(
         key: ObjectKey(widget.session),
         session: widget.session,
@@ -53,7 +58,13 @@ class _Workspace extends ConsumerState<Workspace> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(audit ? '当前角色无权查看审计' : '未找到页面'),
+            Text(
+              audit
+                  ? '当前角色无权查看审计'
+                  : widget.path == '/models'
+                  ? '当前角色无权管理模型'
+                  : '未找到页面',
+            ),
             TextButton(onPressed: () => go(0), child: const Text('返回工作台')),
           ],
         ),
@@ -78,7 +89,11 @@ class _Workspace extends ConsumerState<Workspace> {
             if (can && !narrow)
               NavigationRail(
                 extended: true,
-                selectedIndex: audit ? 1 : 0,
+                selectedIndex: audit
+                    ? 1
+                    : widget.path == '/models'
+                    ? 2
+                    : 0,
                 onDestinationSelected: go,
                 destinations: const [
                   NavigationRailDestination(
@@ -89,6 +104,10 @@ class _Workspace extends ConsumerState<Workspace> {
                     icon: Icon(Icons.fact_check_outlined),
                     label: Text('审计记录'),
                   ),
+                  NavigationRailDestination(
+                    icon: Icon(Icons.alt_route),
+                    label: Text('模型与路由'),
+                  ),
                 ],
               ),
             Expanded(child: content),
@@ -97,7 +116,11 @@ class _Workspace extends ConsumerState<Workspace> {
       ),
       bottomNavigationBar: can && narrow
           ? NavigationBar(
-              selectedIndex: audit ? 1 : 0,
+              selectedIndex: audit
+                  ? 1
+                  : widget.path == '/models'
+                  ? 2
+                  : 0,
               onDestinationSelected: go,
               destinations: const [
                 NavigationDestination(
@@ -107,6 +130,10 @@ class _Workspace extends ConsumerState<Workspace> {
                 NavigationDestination(
                   icon: Icon(Icons.fact_check_outlined),
                   label: '审计记录',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.alt_route),
+                  label: '模型与路由',
                 ),
               ],
             )

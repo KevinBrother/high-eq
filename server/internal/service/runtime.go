@@ -21,6 +21,7 @@ import (
 // Runtime is the composition root. Business cards add module inventory and both hooks here.
 type Runtime struct {
 	Assessments          *assessment.Service
+	catalog              *gateway.Catalog
 	db                   *pgxpool.Pool
 	cache, registryRedis *redis.Client
 	ledger               *privacy.Ledger
@@ -88,6 +89,10 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	if e = s.Accounts.PurgeDue(ctx); e != nil {
 		return nil, e
 	}
+	s.catalog, e = s.StartGateway(ctx)
+	if e != nil {
+		return nil, e
+	}
 	s.Bus = events.New(s.Data, nil)
 	s.Assessments = assessment.New(bank, s.Accounts, c.Fields, s.Bus, s.db)
 	ok = true
@@ -114,4 +119,11 @@ func (s *Runtime) Health(ctx context.Context) error {
 	}
 	return s.ledger.Check(ctx)
 }
-func (s *Runtime) Close() { s.db.Close(); s.cache.Close(); s.registryRedis.Close() }
+func (s *Runtime) Close() {
+	if s.catalog != nil {
+		s.catalog.Close()
+	}
+	s.db.Close()
+	s.cache.Close()
+	s.registryRedis.Close()
+}
