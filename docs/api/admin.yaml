@@ -722,11 +722,50 @@ paths:
         '404': {$ref: '#/components/responses/E404'}
         '409': {$ref: '#/components/responses/E409'}
       x-example-request: PUT /admin/v1/prompt-releases
+  /admin/v1/prompt-models:
+    get:
+      operationId: listPromptModels
+      summary: 运营发布目标（仅生成模型标识、显示名、启用状态）
+      parameters:
+      - in: query
+        name: cursor
+        schema: {type: string}
+        example: after-example
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100}
+        example: 20
+      responses:
+        '200':
+          description: 包含尚未发布模板的模型；不返回凭据、端点或准入信息。
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, name, enabled]
+                      properties:
+                        id: {type: string, format: uuid}
+                        name: {type: string}
+                        enabled: {type: boolean}
+                  next_cursor: {type: string, nullable: true}
+              example: {items: [], next_cursor: null}
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+      x-example-request: GET /admin/v1/prompt-models
   /admin/v1/metrics:
     get:
       operationId: getMetrics
       summary: 按模型、任务和提示词版本聚合调用与评分
-      description: 只读关联键与数值；失败率为失败数/调用数。分布按成功评分去重，不含引文、用户 ID 或评分理由。
+      description: 只读关联键与数值；失败率为失败数/调用数。分布按组内成功关联的源评分去重，不含引文、用户 ID 或评分理由。时间按开始时间左闭右开，默认最近 24 小时，最长 31 天。翻页请固定起止时间。
       parameters:
       - in: query
         name: cursor
@@ -785,6 +824,9 @@ paths:
                       - calls
                       - mean_latency_ms
                       - failure_rate
+                      - unpriced_calls
+                      - failures
+                      - missing_score_values
                       - cost_cny
                       - score_distribution
                       properties:
@@ -794,7 +836,10 @@ paths:
                         calls: {type: integer, minimum: 0}
                         mean_latency_ms: {type: number, minimum: 0}
                         failure_rate: {type: number, minimum: 0, maximum: 1}
-                        cost_cny: {type: number, minimum: 0}
+                        unpriced_calls: {type: integer, minimum: 0, description: 成本未知的尝试次数}
+                        failures: {type: integer, minimum: 0}
+                        missing_score_values: {type: integer, minimum: 0, description: 已关联成功评分中缺少数值投影的去重源数}
+                        cost_cny: {type: number, minimum: 0, description: 仅已知人民币成本小计}
                         score_distribution:
                           type: array
                           items:
@@ -815,6 +860,9 @@ paths:
                   calls: 8
                   mean_latency_ms: 1200
                   failure_rate: 0
+                  failures: 0
+                  unpriced_calls: 2
+                  missing_score_values: 0
                   cost_cny: 0.016
                   score_distribution:
                   - nvc_total: 75

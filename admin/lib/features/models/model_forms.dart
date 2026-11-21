@@ -1,15 +1,8 @@
 import 'package:flutter/material.dart';
 
-typedef RowData = Map<String, dynamic>;
-const tasks = {
-  'role_play': '角色扮演',
-  'reply_suggestion': '回复建议',
-  'scoring': '评分',
-  'profile_inference': '画像推断',
-  'review_analysis': '复盘分析',
-  'content_generation': '内容生成',
-  'classification': '简单分类',
-};
+import '../../core/tasks.dart';
+export '../../core/tasks.dart';
+
 const sentFields =
     'model,messages.role,messages.content,stream,response_format.type';
 

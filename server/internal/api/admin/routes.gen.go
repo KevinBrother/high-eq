@@ -344,6 +344,12 @@ type ListModelsParams struct {
 	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ListPromptModelsParams defines parameters for ListPromptModels.
+type ListPromptModelsParams struct {
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // ListPromptReleasesParams defines parameters for ListPromptReleases.
 type ListPromptReleasesParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
@@ -436,6 +442,9 @@ type ServerInterface interface {
 	// 以固定合成输入检查连通性
 	// (POST /admin/v1/models/{id}/test)
 	TestModel(c *gin.Context, id openapi_types.UUID)
+	// 运营发布目标（仅生成模型标识、显示名、启用状态）
+	// (GET /admin/v1/prompt-models)
+	ListPromptModels(c *gin.Context, params ListPromptModelsParams)
 	// 读取各任务/模型当前提示词分流
 	// (GET /admin/v1/prompt-releases)
 	ListPromptReleases(c *gin.Context, params ListPromptReleasesParams)
@@ -809,6 +818,42 @@ func (siw *ServerInterfaceWrapper) TestModel(c *gin.Context) {
 	siw.Handler.TestModel(c, id)
 }
 
+// ListPromptModels operation middleware
+func (siw *ServerInterfaceWrapper) ListPromptModels(c *gin.Context) {
+
+	var err error
+
+	c.Set(AdminBearerScopes, []string{})
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListPromptModelsParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "cursor", c.Request.URL.Query(), &params.Cursor)
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter cursor: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", c.Request.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ListPromptModels(c, params)
+}
+
 // ListPromptReleases operation middleware
 func (siw *ServerInterfaceWrapper) ListPromptReleases(c *gin.Context) {
 
@@ -1019,6 +1064,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.POST(options.BaseURL+"/admin/v1/models", wrapper.CreateModel)
 	router.PATCH(options.BaseURL+"/admin/v1/models/:id", wrapper.UpdateModel)
 	router.POST(options.BaseURL+"/admin/v1/models/:id/test", wrapper.TestModel)
+	router.GET(options.BaseURL+"/admin/v1/prompt-models", wrapper.ListPromptModels)
 	router.GET(options.BaseURL+"/admin/v1/prompt-releases", wrapper.ListPromptReleases)
 	router.PUT(options.BaseURL+"/admin/v1/prompt-releases", wrapper.SetPromptRelease)
 	router.GET(options.BaseURL+"/admin/v1/prompt-versions", wrapper.ListPromptVersions)

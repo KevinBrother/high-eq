@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"high-eq/server/internal/api/admin"
+	"high-eq/server/internal/fieldcrypt"
 	"high-eq/server/internal/gateway"
 )
 
@@ -20,6 +21,7 @@ type api struct {
 	admin.ServerInterface
 	db      *pgxpool.Pool
 	catalog *gateway.Catalog
+	fields  *fieldcrypt.Cipher
 }
 type rule struct {
 	action, target string
@@ -41,7 +43,8 @@ var rules = map[string]rule{
 	"PUT /routes/:task":     {"setRoute", "routes", true, true},
 	"GET /models":           {"listModels", "models", true, true},
 	"GET /routes":           {"listRoutes", "routes", true, true},
-	"GET /metrics":          {"getMetrics", "metrics", false, false},
+	"GET /prompt-models":    {"listPromptModels", "prompts", false, true},
+	"GET /metrics":          {"getMetrics", "metrics", false, true},
 	"GET /prompt-versions":  {"listPromptVersions", "prompts", false, true},
 	"POST /prompt-versions": {"createPromptVersion", "prompts", false, true},
 	"GET /prompt-releases":  {"listPromptReleases", "prompts", false, true},
@@ -49,10 +52,15 @@ var rules = map[string]rule{
 }
 
 func Register(r gin.IRouter, db *pgxpool.Pool, catalogs ...*gateway.Catalog) {
-	a := api{db: db}
+	var catalog *gateway.Catalog
 	if len(catalogs) > 0 {
-		a.catalog = catalogs[0]
+		catalog = catalogs[0]
 	}
+	RegisterDashboard(r, db, catalog, nil)
+}
+
+func RegisterDashboard(r gin.IRouter, db *pgxpool.Pool, catalog *gateway.Catalog, fields *fieldcrypt.Cipher) {
+	a := api{db: db, catalog: catalog, fields: fields}
 	admin.RegisterHandlersWithOptions(r.Group("", a.guard), a, admin.GinServerOptions{ErrorHandler: func(c *gin.Context, _ error, _ int) { reject(c, 400) }})
 }
 func reject(c *gin.Context, status int) {

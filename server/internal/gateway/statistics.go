@@ -33,6 +33,14 @@ func Metrics(ctx context.Context, db *pgxpool.Pool, f Filter, emit func(Metric) 
 func readMetrics(ctx context.Context, db interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 }, f Filter, emit func(Metric) error) error {
+	return MetricPage(ctx, db, f, "", uuid.Nil, "", nil, emit)
+}
+
+// MetricPage also accepts a transaction so an admin page and its score bins
+// share a snapshot. NULL prompt versions sort before version UUIDs.
+func MetricPage(ctx context.Context, db interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}, f Filter, afterTask string, afterModel uuid.UUID, afterVersion string, limit *int, emit func(Metric) error) error {
 	if !f.Until.After(f.From) || f.From.IsZero() || f.Task != "" && !f.Task.valid() || emit == nil {
 		return ErrRequest
 	}
@@ -41,7 +49,8 @@ func readMetrics(ctx context.Context, db interface {
  coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(cost_cny),0)::text
  from ai_calls where started_at>=$1 and started_at<$2 and ($3::text='' or task::text=$3)
  and ($4::uuid is null or model_id=$4) and ($5::uuid is null or prompt_version_id=$5)
- group by task,model_id,prompt_version_id order by task,model_id,prompt_version_id`, f.From, f.Until, f.Task, optional(f.Model), optional(f.PromptVersion))
+ and (task::text,model_id,coalesce(prompt_version_id::text,''))>($6::text,$7::uuid,$8::text)
+ group by task,model_id,prompt_version_id order by task::text,model_id,coalesce(prompt_version_id::text,'') limit $9`, f.From, f.Until, f.Task, optional(f.Model), optional(f.PromptVersion), afterTask, afterModel, afterVersion, limit)
 	if err != nil {
 		return err
 	}

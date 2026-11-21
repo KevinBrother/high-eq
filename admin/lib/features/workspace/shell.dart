@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../operations/prompts.dart';
+import '../operations/metrics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/api.dart';
 import '../../core/session.dart';
@@ -39,13 +41,29 @@ class _Workspace extends ConsumerState<Workspace> {
   Widget build(BuildContext context) {
     final audit = widget.path == '/audit', can = widget.session.canAudit;
     final narrow = MediaQuery.sizeOf(context).width < 700;
+    final destinations = [
+      ('/', '工作台', Icons.dashboard_outlined),
+      ('/prompts', '模板管理', Icons.edit_note),
+      ('/metrics', '监控看板', Icons.bar_chart),
+      if (can) ('/audit', '审计记录', Icons.fact_check_outlined),
+      if (can) ('/models', '模型与路由', Icons.alt_route),
+    ];
+    final index = destinations.indexWhere((d) => d.$1 == widget.path);
     void go(int index) {
-      final dest = ['/', '/audit', '/models'][index];
+      final dest = destinations[index].$1;
       if (dest != widget.path) Navigator.pushReplacementNamed(context, dest);
     }
 
     final content = switch (widget.path) {
       '/' => _Home(superAdmin: can),
+      '/prompts' => PromptPage(
+        key: ObjectKey(widget.session),
+        session: widget.session,
+      ),
+      '/metrics' => MetricsPage(
+        key: ObjectKey(widget.session),
+        session: widget.session,
+      ),
       '/models' when can => ModelPage(
         key: ObjectKey(widget.session),
         session: widget.session,
@@ -86,55 +104,30 @@ class _Workspace extends ConsumerState<Workspace> {
       body: SafeArea(
         child: Row(
           children: [
-            if (can && !narrow)
+            if (!narrow)
               NavigationRail(
                 extended: true,
-                selectedIndex: audit
-                    ? 1
-                    : widget.path == '/models'
-                    ? 2
-                    : 0,
+                selectedIndex: index < 0 ? null : index,
                 onDestinationSelected: go,
-                destinations: const [
-                  NavigationRailDestination(
-                    icon: Icon(Icons.dashboard_outlined),
-                    label: Text('工作台'),
-                  ),
-                  NavigationRailDestination(
-                    icon: Icon(Icons.fact_check_outlined),
-                    label: Text('审计记录'),
-                  ),
-                  NavigationRailDestination(
-                    icon: Icon(Icons.alt_route),
-                    label: Text('模型与路由'),
-                  ),
+                destinations: [
+                  for (final d in destinations)
+                    NavigationRailDestination(
+                      icon: Icon(d.$3),
+                      label: Text(d.$2),
+                    ),
                 ],
               ),
             Expanded(child: content),
           ],
         ),
       ),
-      bottomNavigationBar: can && narrow
+      bottomNavigationBar: narrow
           ? NavigationBar(
-              selectedIndex: audit
-                  ? 1
-                  : widget.path == '/models'
-                  ? 2
-                  : 0,
+              selectedIndex: index < 0 ? 0 : index,
               onDestinationSelected: go,
-              destinations: const [
-                NavigationDestination(
-                  icon: Icon(Icons.dashboard_outlined),
-                  label: '工作台',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.fact_check_outlined),
-                  label: '审计记录',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.alt_route),
-                  label: '模型与路由',
-                ),
+              destinations: [
+                for (final d in destinations)
+                  NavigationDestination(icon: Icon(d.$3), label: d.$2),
               ],
             )
           : null,
@@ -163,7 +156,9 @@ class _Home extends StatelessWidget {
               subtitle: Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
-                  superAdmin ? '可查看后台写操作的审计记录。' : '已登录运营后台。当前尚无开放的运营工具。',
+                  superAdmin
+                      ? '管理模板、监控调用，并核查模型配置与操作审计。'
+                      : '在模板管理中配置版本，在监控看板中核对调用与评分。',
                 ),
               ),
             ),

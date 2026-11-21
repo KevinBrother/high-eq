@@ -68,8 +68,9 @@ class AdminApi {
 
   Future<List<Map<String, dynamic>>> configurations(
     String token,
-    String path,
-  ) async {
+    String path, [
+    Map<String, String> filters = const {},
+  ]) async {
     final all = <Map<String, dynamic>>[];
     String? cursor;
     do {
@@ -77,7 +78,7 @@ class AdminApi {
         'GET',
         path,
         token: token,
-        query: {'limit': '100', 'cursor': ?cursor},
+        query: {...filters, 'limit': '100', 'cursor': ?cursor},
       );
       all.addAll((page['items'] as List).cast<Map<String, dynamic>>());
       cursor = page['next_cursor'] as String?;
@@ -85,14 +86,19 @@ class AdminApi {
     return all;
   }
 
-  Future<void> configure(
+  Future<Map<String, dynamic>> configure(
     String token,
     String method,
     String path, [
     Map<String, dynamic>? body,
   ]) async {
-    await _request(method, path, token: token, body: body);
+    return _request(method, path, token: token, body: body);
   }
+
+  Future<Map<String, dynamic>> metrics(
+    String token,
+    Map<String, String> query,
+  ) => _request('GET', 'metrics', token: token, query: query);
 
   Future<Session> login(String name, String password) async {
     final data = await _request(
