@@ -1,15 +1,10 @@
-# 服务端
+# Go 单体服务
 
-当前交付 PostgreSQL 17 数据模型，尚无 HTTP 服务。模型说明与清理边界见 [schema.md](../docs/schema.md)。
+从仓库根运行 `./server/dev.sh`。需要 Docker Compose v2、OpenSSL、curl。脚本只在 `build/t04/dev.env` 首次生成开发数据库口令与 256 位字段密钥；不会加载项目 `.env`。不要上传此文件，保留开发库时也要保留密钥。默认仅在本机 `127.0.0.1:8080` 监听，冲突时使用 `HEQ_PORT=18080 ./server/dev.sh`。
 
-## 验证迁移
+- 就绪：`curl -i http://127.0.0.1:8080/v1/health` → `200 {"ok":true}`；任一依赖不健康则 500，不泄露地址、密钥或堆栈。
+- `./server/dev.sh logs api` 查看结构化日志；`./server/dev.sh down` 停服务但保留卷。PG 与删除登记是**不同的卷**，不要单独清空/回滚登记卷来修复启动失败。
+- `./server/tests/runtime.sh` 创建、核验、销毁独立的 Compose 测试项目，不连接开发库。`./server/tests/migrations.sh` 另用临时 PG17 走全量 up / SQL 约束 / down / up（需 `migrate` v4 CLI）。
+- [T04 交接](../docs/tasks/T04.md)：如何新增接口、注册模块、处理事件和故障。[结构与删除协议](../docs/schema.md)；[单体事件目录](../docs/api/events.md)。
 
-需 Docker、`openssl`、golang-migrate v4（含 PostgreSQL driver）。从仓库根运行：
-
-```sh
-./server/tests/migrations.sh
-```
-
-脚本只创建临时数据库容器，绑定随机本地端口，退出即销毁，不读取 `.env` 或连接已有库。依次进行：空库 up → SQL 约束/级联检查 → down 清空 → 再次 up。可用 `PG_TEST_IMAGE` 指定预下载的 PG17 镜像 ID。
-
-GitHub Actions 的 `Verify / PostgreSQL migrations and invariants` 在 push、PR 或手动触发时运行同一脚本，只使用临时容器，不依赖项目密钥。它验证数据库迁移，不部署服务，也不代表 T34 的发布及灾备验收。
+本卡只交付公共基础设施；不提供登录、支付、画像或个人导出等业务端点。Compose 是开发配置，不能充当生产部署。

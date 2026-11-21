@@ -1,0 +1,48 @@
+# Local only. Generate private, persistent dev credentials with server/dev.sh.
+x-env: &runtime-env
+  APP_ENV: development
+  DATABASE_URL: postgres://postgres:${HEQ_PG_PASSWORD:?use server/dev.sh}@db:5432/postgres?sslmode=disable
+  REDIS_URL: redis://cache:6379/0
+  LEDGER_URL: redis://ledger:6379/0
+  FIELD_KEY_BASE64: ${HEQ_FIELD_KEY:?use server/dev.sh}
+  BACKUP_RETENTION_DAYS: 45
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: ${HEQ_PG_PASSWORD}
+    volumes: [pg:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD, pg_isready, -U, postgres, -h, 127.0.0.1]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  cache:
+    image: redis:8.2.0
+    command: [redis-server, --save, ""]
+    healthcheck: &redis-health
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  ledger:
+    image: redis:8.2.0
+    command: [redis-server, --appendonly, 'yes', --appendfsync, always, --maxmemory-policy, noeviction, --aof-load-truncated, 'no']
+    volumes: [deletions:/data]
+    healthcheck: *redis-health
+  api:
+    build: ./server
+    depends_on:
+      db: {condition: service_healthy}
+      cache: {condition: service_healthy}
+      ledger: {condition: service_healthy}
+    environment: *runtime-env
+    ports: ['127.0.0.1:${HEQ_PORT:-8080}:8080']
+  tests:
+    profiles: [verify]
+    build: {context: ./server, target: toolchain}
+    environment: *runtime-env
+    command: [go, test, -p=1, -count=1, -v, -tags, integration, ./...]
+volumes:
+  pg:
+  deletions:

@@ -1,0 +1,6 @@
+package: admin
+generate:
+  models: true
+  gin-server: true
+compatibility:
+  always-prefix-enum-values: true
