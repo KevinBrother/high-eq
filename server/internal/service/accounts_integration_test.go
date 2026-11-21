@@ -33,7 +33,7 @@ func TestAccountLifecycle(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer s.Close()
-	router := Router(s.Health, s.Accounts)
+	router := s.Router()
 	call := func(method, path, bearer string, data any, status int, dst any) {
 		t.Helper()
 		b, _ := json.Marshal(data)

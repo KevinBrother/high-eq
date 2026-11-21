@@ -1,0 +1,9 @@
+# Add to the repository's local development compose file.
+services:
+  admin-web:
+    image: nginx:1.28.0
+    depends_on: [api]
+    ports: ['127.0.0.1:8090:80']
+    volumes:
+      - ./admin/build/web:/usr/share/nginx/html:ro
+      - ./admin/nginx.conf:/etc/nginx/conf.d/default.conf:ro
