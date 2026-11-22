@@ -50,10 +50,12 @@ type Input struct {
 	Contact  *uuid.UUID `json:"contact_id,omitempty"`
 	Scene    *string    `json:"scene,omitempty"`
 	Scenario *string    `json:"scenario,omitempty"`
+	Previous *uuid.UUID `json:"previous_id,omitempty"`
 }
 
 func (in Input) describe() (scene, mode, kind string, target *string, e error) {
-	if in.ID == uuid.Nil || in.Contact != nil && *in.Contact == uuid.Nil {
+	if in.ID == uuid.Nil || in.Contact != nil && *in.Contact == uuid.Nil ||
+		in.Previous != nil && *in.Previous == uuid.Nil {
 		return "", "", "", nil, accounts.ErrInvalid
 	}
 	if in.Level != nil {
@@ -92,7 +94,10 @@ type Result struct {
 	Progress   *scoring.Progress `json:"progress,omitempty"`
 	Settlement Settlement        `json:"settlement"`
 }
-type Session struct {
+
+// SessionSummary is the only shape exposed by history lists. Keeping it
+// separate from Session makes a setup/contact projection leak a compile error.
+type SessionSummary struct {
 	ID         uuid.UUID     `json:"session_id"`
 	Status     string        `json:"status"`
 	Mode       string        `json:"mode"`
@@ -101,6 +106,22 @@ type Session struct {
 	Messages   []app.Message `json:"messages"`
 	Settlement Settlement    `json:"settlement"`
 	Result     *Result       `json:"result,omitempty"`
+}
+
+type Session struct {
+	SessionSummary
+	// Setup is populated only by an authorized session detail read. It is
+	// deliberately absent from history list items and create responses.
+	Setup *Input `json:"setup,omitempty"`
+}
+
+func (r record) summary() SessionSummary {
+	return r.Session.SessionSummary
+}
+
+func (r record) detail() Session {
+	setup := r.input
+	return Session{SessionSummary: r.summary(), Setup: &setup}
 }
 
 // Pin the lesson at creation: later edits to the catalog cannot reinterpret a stored score.
@@ -235,7 +256,35 @@ func (s *Service) allowed(ctx context.Context, tx pgx.Tx, u uuid.UUID, in Input)
 	}
 	return nil
 }
-func (s *Service) Create(ctx context.Context, p accounts.Principal, in Input) (out Session, e error) {
+
+// A comparison is an explicit repeat of the same exercise or custom scenario,
+// not an arbitrary association supplied by the client. Read only the setup, not
+// the prior transcript or scores. The caller holds the owner's account lock.
+func (s *Service) checkPrior(ctx context.Context, tx pgx.Tx, user uuid.UUID, in Input) error {
+	if in.Previous == nil {
+		return nil
+	}
+	var enc []byte
+	err := tx.QueryRow(ctx, `select a.content_enc from activities a join practice_work w on w.activity_id=a.id where a.user_id=$1 and a.id=$2 and a.state='complete'`, user, *in.Previous).Scan(&enc)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return accounts.ErrInvalid
+	}
+	if err != nil {
+		return err
+	}
+	var prior setupSnapshot
+	if err = s.open(user, *in.Previous, "setup", enc, &prior); err != nil {
+		return err
+	}
+	old := prior.Input
+	old.ID, old.Previous = in.ID, in.Previous
+	if !reflect.DeepEqual(old, in) {
+		return accounts.ErrInvalid
+	}
+	return nil
+}
+
+func (s *Service) Create(ctx context.Context, p accounts.Principal, in Input) (out SessionSummary, e error) {
 	scene, mode, kind, target, e := in.describe()
 	if e != nil {
 		return
@@ -253,6 +302,9 @@ func (s *Service) Create(ctx context.Context, p accounts.Principal, in Input) (o
 			return err
 		}
 		if tag.RowsAffected() == 1 {
+			if err = s.checkPrior(ctx, tx, p.User, in); err != nil {
+				return err
+			}
 			if _, err = tx.Exec(ctx, `insert into practice_work(activity_id)values($1)`, in.ID); err != nil {
 				return err
 			}
@@ -261,23 +313,38 @@ func (s *Service) Create(ctx context.Context, p accounts.Principal, in Input) (o
 		if errors.Is(err, ErrMissing) || err == nil && !reflect.DeepEqual(r.input, in) {
 			return membership.ErrConflict
 		}
-		out = r.Session
+		out = r.summary()
 		return err
 	})
 	return
 }
 func (s *Service) Get(ctx context.Context, p accounts.Principal, id uuid.UUID) (out Session, e error) {
-	e = s.Accounts.WithSession(ctx, p, false, func(tx pgx.Tx) error { r, e := s.load(ctx, tx, p.User, id); out = r.Session; return e })
+	e = s.Accounts.WithSession(ctx, p, false, func(tx pgx.Tx) error {
+		r, e := s.load(ctx, tx, p.User, id)
+		if e == nil {
+			out = r.detail()
+			if prior := out.Setup.Previous; prior != nil {
+				var live bool
+				if err := tx.QueryRow(ctx, `select exists(select from activities where user_id=$1 and id=$2 and state='complete')`, p.User, *prior).Scan(&live); err != nil {
+					return err
+				}
+				if !live {
+					out.Setup.Previous = nil
+				}
+			}
+		}
+		return e
+	})
 	return
 }
 
 type Page struct {
-	Items []Session `json:"items"`
-	Next  *string   `json:"next_cursor"`
+	Items []SessionSummary `json:"items"`
+	Next  *string          `json:"next_cursor"`
 }
 
 func (s *Service) List(ctx context.Context, p accounts.Principal, params app.ListSessionsParams) (out Page, e error) {
-	out.Items = []Session{}
+	out.Items = []SessionSummary{}
 	n, e := limit(params.Limit)
 	if e != nil {
 		return
@@ -317,7 +384,7 @@ func (s *Service) List(ctx context.Context, p accounts.Principal, params app.Lis
 			if e != nil {
 				return e
 			}
-			out.Items = append(out.Items, r.Session)
+			out.Items = append(out.Items, r.summary())
 		}
 		return nil
 	})

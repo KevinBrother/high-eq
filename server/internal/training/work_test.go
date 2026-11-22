@@ -53,7 +53,7 @@ func TestSettlePendingRejectsStaleWorker(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tx := &settlementFenceTx{worker: &original}
-			err := (&Service{}).settlePendingTx(context.Background(), tx, job{record: record{Session: Session{ID: uuid.New()}}, run: tc.run})
+			err := (&Service{}).settlePendingTx(context.Background(), tx, job{record: record{Session: Session{SessionSummary: SessionSummary{ID: uuid.New()}}}, run: tc.run})
 			if !errors.Is(err, membership.ErrConflict) {
 				t.Fatalf("got %v want worker fence conflict", err)
 			}

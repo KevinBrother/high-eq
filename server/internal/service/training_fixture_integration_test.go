@@ -1,4 +1,4 @@
-//go:build integration
+//go:build integration || t20live
 
 package service
 
@@ -188,7 +188,7 @@ func (h *practiceWire) vendor(w http.ResponseWriter, r *http.Request) {
 }
 func newPracticeWire(t *testing.T) *practiceWire {
 	t.Helper()
-	if os.Getenv("T19_DISPOSABLE") != "yes" {
+	if os.Getenv("T19_DISPOSABLE") != "yes" && os.Getenv("T20_DISPOSABLE") != "yes" {
 		t.Skip("run server/tests/t19-wire.sh in disposable compose project")
 	}
 	h := &practiceWire{t: t, ctx: context.Background()}

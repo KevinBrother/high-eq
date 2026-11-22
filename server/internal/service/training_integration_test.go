@@ -656,6 +656,7 @@ func TestPracticeWire(t *testing.T) {
 			}
 		}
 	})
+	t.Run("owner_only_relaunch_inputs", h.checkRelaunch)
 }
 func (h *practiceWire) exportDelete(u app.Tokens, p string, id uuid.UUID) {
 	var raw bytes.Buffer

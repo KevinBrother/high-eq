@@ -2,12 +2,22 @@ import 'dart:convert';
 import '../../core/sse.dart';
 import '../../core/transport.dart';
 import '../contacts/models.dart' show newRequestId;
+import '../contacts/repository.dart';
 import '../contacts/scene.dart';
 import 'repository.dart';
 
 /// Account-lifetime offline rehearsal. No HTTP client, inference or balance writes.
 class DemoPractice implements PracticeRepository {
-  final _sessions = <String, Json>{}, _journal = <String, Json>{};
+  DemoPractice({ContactsRepository? contacts}) : _contacts = contacts;
+  final ContactsRepository? _contacts;
+  final _sessions = <String, Json>{},
+      _setups = <String, Json>{},
+      _journal = <String, Json>{};
+  bool _practiceConsent = false;
+  @override
+  Future<bool> practiceConsent() async => _practiceConsent;
+  @override
+  Future<void> grantPracticeConsent() async => _practiceConsent = true;
   final _levels = [
     for (final scene in Scene.values)
       for (var d = 1; d <= 3; d++)
@@ -25,6 +35,39 @@ class DemoPractice implements PracticeRepository {
         },
   ];
   Json _copy(Json j) => jsonDecode(jsonEncode(j));
+  Json _summary(Json session) => _copy(session)..remove('setup');
+
+  // The demo has no database foreign keys. Mirror activities.contact_id's
+  // ON DELETE CASCADE by pruning only sessions and pending intents tied to a
+  // relation that is no longer present in the shared contact store.
+  Future<void> _pruneDeletedContacts() async {
+    final contacts = _contacts;
+    if (contacts == null) return;
+    final ids = (await contacts.load()).people.map((p) => p.id).toSet();
+    bool removed(Json? setup) {
+      final contact = setup?['contact_id'];
+      return contact is String && !ids.contains(contact);
+    }
+
+    final gone = <String>{};
+    for (final entry in _setups.entries) {
+      if (removed(entry.value)) gone.add(entry.key);
+    }
+    for (final id in _sessions.keys) {
+      if (removed(_setups[id])) gone.add(id);
+    }
+    for (final id in gone) {
+      _setups.remove(id);
+      _sessions.remove(id);
+    }
+    final pending = _journal['creating'];
+    final pendingInput = pending?['input'];
+    if (pendingInput is Json && removed(pendingInput)) {
+      _journal.remove('creating');
+    }
+    _journal.removeWhere((key, _) => gone.contains(key));
+  }
+
   @override
   Future<List<Json>> levels(Scene scene, int? difficulty) async => _levels
       .where(
@@ -35,8 +78,11 @@ class DemoPractice implements PracticeRepository {
       .map(_copy)
       .toList();
   @override
-  Future<List<Json>> history() async =>
-      _sessions.values.toList().reversed.map(_copy).toList();
+  Future<List<Json>> history() async {
+    await _pruneDeletedContacts();
+    return _sessions.values.toList().reversed.map(_summary).toList();
+  }
+
   @override
   Future<Json> create(Json body) async {
     final id = body['request_id'] as String;
@@ -44,6 +90,7 @@ class DemoPractice implements PracticeRepository {
     if (body['level_id'] != null && level == null) {
       throw const FormatException();
     }
+    _setups.putIfAbsent(id, () => _copy(body));
     _sessions.putIfAbsent(
       id,
       () => {
@@ -60,13 +107,23 @@ class DemoPractice implements PracticeRepository {
         },
       },
     );
-    return get(id);
+    return _summary(_sessions[id]!);
   }
 
   @override
-  Future<Json> get(String id) async => _copy(_sessions[id]!);
+  Future<Json> get(String id) async {
+    await _pruneDeletedContacts();
+    final s = _sessions[id];
+    if (s == null) throw StateError('会话已随关系人删除');
+    return {..._copy(s), if (_setups[id] != null) 'setup': _copy(_setups[id]!)};
+  }
+
   @override
-  Future<Json?> read(String key) async => _journal[key];
+  Future<Json?> read(String key) async {
+    await _pruneDeletedContacts();
+    return _journal[key];
+  }
+
   @override
   Future<void> remember(String key, Json? value) async {
     if (value == null) {

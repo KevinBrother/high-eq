@@ -13,11 +13,11 @@ import 'repository.dart';
 
 final _repository = Provider((ref) {
   final api = ref.watch(apiProvider).requireValue;
-  ref.watch(
+  final space = ref.watch(
     contactSpaceProvider,
   ); // invalidated on identity change, including demo history
   return api.transport is ExampleTransport
-      ? DemoPractice()
+      ? DemoPractice(contacts: space.repo)
       : ApiPractice(api, api.sessions.active!);
 });
 
@@ -52,9 +52,8 @@ class PracticeLobby extends StatefulWidget {
 }
 
 class _PracticeLobbyState extends State<PracticeLobby> {
-  // Only the current lobby retains the custom setup; do not build a second
-  // persistent archive of private scenarios, transcripts or scores.
-  final _started = <String, Json>{};
+  // Launch parameters live in the authorized session detail response. The
+  // lobby keeps no account-journal copy of custom text or a contact id.
   int? difficulty;
   final scenario = TextEditingController();
   final scroll = ScrollController();
@@ -153,37 +152,54 @@ class _PracticeLobbyState extends State<PracticeLobby> {
     if (existing != null) {
       throw const ApiFailure(409, 'conflict', '请先恢复或放弃上次创建请求。', false);
     }
-    if (!widget.demo && await widget.repo.read('notice.v1') == null) {
-      if (!mounted) return;
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('开始前，先了解记录方式'),
-          content: const Text(
-            '对话和评分反馈可能含有你或他人的信息。内容会加密保存，直到删除这场练习、相关关系人或注销账号。请不要填写真实姓名等不必要的信息。',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('暂不开始'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('了解，继续练习'),
-            ),
-          ],
-        ),
-      );
-      if (ok != true || !mounted) return;
-      await widget.repo.remember('notice.v1', {'seen': true});
-    }
     await create({
       'input': {...input, 'request_id': newRequestId()},
     });
   }
 
+  // Every creation path, including replay and repeat, must re-read the T05
+  // purpose grant. A local notice or an old draft is not consent.
+  Future<bool> ensurePracticeConsent() async {
+    if (widget.demo) return true;
+    final granted = await widget.repo.practiceConsent();
+    if (!mounted) return false;
+    if (granted) return true;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('开始前，先了解记录方式'),
+        content: const Text(
+          '对话和评分反馈可能含有你或他人的信息。内容会加密保存，直到删除这场练习、相关关系人或注销账号。请不要填写真实姓名等不必要的信息。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('暂不开始'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('了解，继续练习'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return false;
+    await widget.repo.grantPracticeConsent();
+    final confirmed = await widget.repo.practiceConsent();
+    if (!mounted) return false;
+    if (!confirmed) {
+      throw const ApiFailure(403, 'forbidden', '练习授权未生效，请重试。', true);
+    }
+    return true;
+  }
+
   Future<void> create(Json intent) async {
-    final body = intent['input'] as Json;
+    if (!await ensurePracticeConsent()) return;
+    final input = intent['input'] as Json;
+    final body = {
+      ...input,
+      if (intent['previous_id'] != null) 'previous_id': intent['previous_id'],
+    };
     // Fail closed for deleted / newly read-only contacts (also on replay).
     if (body['contact_id'] != null) {
       final book = await widget.contacts!.load();
@@ -196,16 +212,31 @@ class _PracticeLobbyState extends State<PracticeLobby> {
     await widget.repo.remember('creating', intent);
     final s = await widget.repo.create(body);
     if (s['session_id'] != body['request_id']) throw const FormatException();
-    _started[s['session_id']] = intent;
     await widget.repo.remember('creating', null);
     if (!mounted) return;
-    await open(s, body, priorId: intent['previous_id']);
+    await open(s, input, priorId: intent['previous_id']);
   }
 
   Future<void> open(Json s, Json? seed, {String? priorId}) async {
     final id = s['session_id'];
-    final original = _started[id];
-    seed = original?['input'] ?? seed;
+    Json? original;
+    if (seed == null) {
+      try {
+        final detail = await widget.repo.get(id);
+        if (detail['session_id'] != id) throw const FormatException();
+        s = detail;
+        original = detail['setup'] as Json?;
+      } catch (_) {
+        // Missing detail must not block read-only recovery from list history.
+      }
+    }
+    if (original != null) {
+      // GET returns a flat CreateSessionInput, not the old local journal envelope.
+      seed = {
+        for (final key in ['level_id', 'contact_id', 'scene', 'scenario'])
+          if (original[key] is String) key: original[key],
+      };
+    }
     final level = s['level_id'] ?? seed?['level_id'];
     priorId ??= original?['previous_id'];
     Json? previous;
@@ -230,7 +261,7 @@ class _PracticeLobbyState extends State<PracticeLobby> {
       compareUnavailable = true;
     } // Missing comparison must not prevent recovery.
     if (!mounted) return;
-    final again = await Navigator.push<Json>(
+    final repeat = await Navigator.push<Json>(
       context,
       MaterialPageRoute(
         builder: (_) => PracticeChat(
@@ -238,14 +269,16 @@ class _PracticeLobbyState extends State<PracticeLobby> {
           initial: s,
           seed: seed,
           previous: previous,
+          previousId: priorId,
           compareUnavailable: compareUnavailable,
         ),
       ),
     );
     if (!mounted) return;
-    if (again != null && seed != null) {
+    final input = repeat?['input'];
+    if (input is Json) {
       await create({
-        'input': {...seed, 'request_id': newRequestId()},
+        'input': {...input, 'request_id': newRequestId()},
         'previous_id': id,
       });
     } else {
@@ -422,16 +455,7 @@ class _PracticeLobbyState extends State<PracticeLobby> {
                   'moderation_unavailable' => '审核暂不可用',
                   _ => '继续本场',
                 }),
-                onTap: busy
-                    ? null
-                    : () => run(
-                        () => open(
-                          s,
-                          s['level_id'] == null
-                              ? null
-                              : {'level_id': s['level_id']},
-                        ),
-                      ),
+                onTap: busy ? null : () => run(() => open(s, null)),
               );
             }),
           ],

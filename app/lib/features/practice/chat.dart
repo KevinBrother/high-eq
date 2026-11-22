@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../core/transport.dart';
 import 'conversation.dart';
@@ -9,6 +11,7 @@ class PracticeChat extends StatefulWidget {
     required this.repo,
     required this.initial,
     this.previous,
+    this.previousId,
     this.seed,
     this.compareUnavailable = false,
     super.key,
@@ -17,24 +20,117 @@ class PracticeChat extends StatefulWidget {
   final Json initial;
   final bool compareUnavailable;
   final Json? previous, seed;
+  final String? previousId;
   @override
   State<PracticeChat> createState() => _PracticeChatState();
 }
 
 class _PracticeChatState extends State<PracticeChat> {
-  late final c = Conversation(widget.repo, widget.initial);
+  late Conversation c;
   final input = TextEditingController();
+  Json? seed, previous;
+  String? explicitPrior;
+  bool compareUnavailable = false;
+  int lifecycleEpoch = 0, contextEpoch = 0;
+
   @override
   void initState() {
     super.initState();
-    c.recover();
+    _resetConversation();
+    unawaited(_recover());
+  }
+
+  @override
+  void didUpdateWidget(PracticeChat oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.repo, widget.repo) ||
+        oldWidget.initial['session_id'] != widget.initial['session_id']) {
+      final old = c;
+      input.clear();
+      _resetConversation();
+      old.dispose();
+      unawaited(_recover());
+    }
   }
 
   @override
   void dispose() {
+    lifecycleEpoch++;
+    contextEpoch++;
     c.dispose();
     input.dispose();
     super.dispose();
+  }
+
+  void _resetConversation() {
+    lifecycleEpoch++;
+    contextEpoch++;
+    c = Conversation(widget.repo, widget.initial);
+    seed = widget.seed?.isEmpty == true ? null : widget.seed;
+    previous = widget.previous;
+    explicitPrior = widget.previousId;
+    compareUnavailable = widget.compareUnavailable;
+  }
+
+  bool _stillCurrent(int lifecycle, int context) =>
+      mounted &&
+      lifecycle == lifecycleEpoch &&
+      context == contextEpoch &&
+      c.id == widget.initial['session_id'];
+
+  Future<void> _recover() async {
+    final conversation = c;
+    final lifecycle = lifecycleEpoch;
+    await conversation.recover();
+    if (!mounted ||
+        lifecycle != lifecycleEpoch ||
+        !identical(conversation, c) ||
+        !conversation.ledgerKnown) {
+      return;
+    }
+    await _restoreContext(conversation, lifecycle);
+  }
+
+  Future<void> _restoreContext(Conversation conversation, int lifecycle) async {
+    final setup = conversation.snapshot['setup'];
+    if (setup is! Json) return;
+
+    final context = ++contextEpoch;
+    final restoredSeed = <String, dynamic>{
+      for (final key in ['level_id', 'contact_id', 'scene', 'scenario'])
+        if (setup[key] is String) key: setup[key],
+    };
+    final nextSeed = restoredSeed.isEmpty ? null : restoredSeed;
+    final prior = setup['previous_id'];
+    final same = prior is String && prior == explicitPrior;
+    setState(() {
+      seed = nextSeed;
+      // Explicit chains are owner-validated by the detail endpoint. Discard a
+      // score when that particular predecessor is no longer linked; preserve
+      // a level-history comparison when there never was an explicit chain.
+      if (!same && (prior is String || explicitPrior != null)) {
+        previous = null;
+        compareUnavailable = false;
+      }
+      explicitPrior = prior is String ? prior : null;
+    });
+    if (prior is! String || (same && previous != null)) return;
+    try {
+      final detail = await widget.repo.get(prior);
+      if (detail['session_id'] != prior || detail['result'] is! Json) {
+        throw const FormatException();
+      }
+      if (!_stillCurrent(lifecycle, context)) return;
+      setState(() {
+        previous = detail['result'] as Json;
+        compareUnavailable = false;
+      });
+    } catch (_) {
+      if (!_stillCurrent(lifecycle, context)) return;
+      setState(() {
+        compareUnavailable = true;
+      });
+    }
   }
 
   Future<void> confirmExit() async {
@@ -63,7 +159,6 @@ class _PracticeChatState extends State<PracticeChat> {
     listenable: c,
     builder: (context, _) {
       final done = c.status == 'complete' && c.snapshot['result'] != null;
-      final ready = c.active && !c.busy && !c.needsRead && c.command == null;
       final send = c.command?['body'];
       final bubbles = <Widget>[
         for (final m in c.rows) _Bubble(m['text'], user: m['role'] == 'user'),
@@ -87,7 +182,7 @@ class _PracticeChatState extends State<PracticeChat> {
           actions: [
             if (c.active)
               TextButton(
-                onPressed: !c.busy || c.streaming ? confirmExit : null,
+                onPressed: c.canExit ? confirmExit : null,
                 child: const Text('主动退出'),
               ),
           ],
@@ -96,11 +191,11 @@ class _PracticeChatState extends State<PracticeChat> {
           child: done
               ? PracticeResult(
                   c.snapshot,
-                  previous: widget.previous,
-                  compareUnavailable: widget.compareUnavailable,
-                  repeat: widget.seed == null
+                  previous: previous,
+                  compareUnavailable: compareUnavailable,
+                  repeat: seed == null
                       ? null
-                      : () => Navigator.pop(context, c.snapshot['result']),
+                      : () => Navigator.pop(context, {'input': seed}),
                 )
               : LayoutBuilder(
                   builder: (context, bounds) => Column(
@@ -123,7 +218,7 @@ class _PracticeChatState extends State<PracticeChat> {
                         child: bubbles.isEmpty
                             ? Center(
                                 child: Text(
-                                  widget.seed?['scenario'] ?? '试着说出你的第一句话。',
+                                  seed?['scenario'] ?? '试着说出你的第一句话。',
                                   textAlign: TextAlign.center,
                                 ),
                               )
@@ -151,20 +246,22 @@ class _PracticeChatState extends State<PracticeChat> {
                                 const _BannerText('本场未取得评分。')
                               else if (c.status == 'exited')
                                 const _BannerText('本场已主动退出。'),
+                              if (c.status == 'capped')
+                                _BannerText(
+                                  c.hasSavedReply
+                                      ? '本场已达长度上限，已保留完整对话，可以结束并评分。'
+                                      : '本场已达长度上限，没有可评分内容。',
+                                ),
                               if (c.notice.isNotEmpty &&
                                   c.status != 'safety' &&
                                   c.status != 'moderation_unavailable')
                                 _BannerText(c.notice),
-                              if (!c.busy && (c.needsRead || !c.ledgerKnown))
+                              if (c.canRecover)
                                 OutlinedButton(
-                                  onPressed: c.recover,
+                                  onPressed: _recover,
                                   child: const Text('恢复会话'),
                                 ),
-                              if (!c.busy &&
-                                  !c.needsRead &&
-                                  c.command != null &&
-                                  (c.active ||
-                                      c.status == 'moderation_unavailable'))
+                              if (c.canRetry)
                                 OutlinedButton(
                                   onPressed: c.retry,
                                   child: Text(switch (c.command!['kind']) {
@@ -179,7 +276,7 @@ class _PracticeChatState extends State<PracticeChat> {
                                     Expanded(
                                       child: TextField(
                                         controller: input,
-                                        enabled: ready,
+                                        enabled: c.canSend,
                                         minLines: 1,
                                         maxLines: 3,
                                         decoration: const InputDecoration(
@@ -189,7 +286,7 @@ class _PracticeChatState extends State<PracticeChat> {
                                     ),
                                     IconButton.filled(
                                       tooltip: '发送',
-                                      onPressed: !ready
+                                      onPressed: !c.canSend
                                           ? null
                                           : () {
                                               final text = input.text.trim();
@@ -201,8 +298,7 @@ class _PracticeChatState extends State<PracticeChat> {
                                     ),
                                   ],
                                 ),
-                              if (ready &&
-                                  c.rows.any((m) => m['role'] == 'assistant'))
+                              if (c.canScore)
                                 TextButton(
                                   onPressed: c.finish,
                                   child: const Text('结束并评分'),

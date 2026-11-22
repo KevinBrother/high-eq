@@ -179,9 +179,21 @@ class BaselineSourceFactsContract(unittest.TestCase):
         self.assertNotRegex(corpus, r"reply_requests[^\n]*(?:候选|待对表|不存在)")
         self.assertNotIn("T21 服务端仍未合入", corpus)
         self.assertIn("T25 后端增量", corpus)
-        self.assertIn("客户端仍未写入", read("docs/compliance/separate-consents.md"))
         self.assertIn("回复类导入触发器", corpus)
         self.assertRegex(corpus, r"回复.*触发器.*禁止.*chat_imports")
+        self.assertIn("notice.v1` 不能代替服务端同意", read("docs/compliance/separate-consents.md"))
+
+    def test_practice_consent_precedes_creation_and_rechecks_after_grant(self) -> None:
+        lobby = read("app/lib/features/practice/lobby.dart")
+        consent = lobby.split("Future<bool> ensurePracticeConsent()", 1)[1].split("Future<void> create(", 1)[0]
+        self.assertLess(consent.index("practiceConsent()"), consent.index("showDialog"))
+        self.assertLess(consent.index("if (ok != true"), consent.index("grantPracticeConsent()"))
+        self.assertLess(consent.index("grantPracticeConsent()"), consent.rindex("practiceConsent()"))
+        create = lobby.split("Future<void> create(Json intent)", 1)[1].split("Future<void> open(", 1)[0]
+        self.assertLess(create.index("if (!await ensurePracticeConsent()) return"), create.index("widget.repo.create(body)"))
+        repo = read("app/lib/features/practice/repository.dart")
+        self.assertIn("purpose: 'practice'", repo)
+        self.assertIn("'version': 'v1', 'granted': true", repo)
 
     def test_t19_practice_contract_is_substantive(self) -> None:
         migration = read("server/migrations/20261122003019_practice_work.up.sql")
@@ -270,6 +282,67 @@ class BaselineSourceFactsContract(unittest.TestCase):
             self.assertIn(phrase, d38.group(0), phrase)
 
         self.assertIn("TestPracticeWire", read("docs/compliance/qa.md"))
+
+    def test_practice_setup_is_authorized_detail_only_and_contact_deletion_is_scoped(self) -> None:
+        lobby = read("app/lib/features/practice/lobby.dart")
+        demo = read("app/lib/features/practice/demo.dart")
+        store = read("server/internal/training/store.go")
+        api = read("docs/api/app.yaml")
+        conversation = read("app/lib/features/practice/conversation.dart")
+        inventory = read("docs/compliance/data-inventory.md")
+
+        self.assertNotIn("started.", lobby)
+        self.assertIn("_pruneDeletedContacts", demo)
+        self.assertIn("..remove('setup')", demo)
+        self.assertIn("contact is String && !ids.contains(contact)", demo)
+
+        summary = store.split("type SessionSummary struct {", 1)[1].split("type Session struct {", 1)[0]
+        session = store.split("type Session struct {", 1)[1].split("func (r record) summary()", 1)[0]
+        self.assertNotIn("Setup", summary)
+        self.assertIn("Setup *Input", session)
+        self.assertIn("Items []SessionSummary `json:\"items\"`", store)
+        listing = store.split("func (s *Service) List(", 1)[1]
+        self.assertIn("r.summary()", listing)
+        self.assertNotIn("r.Session", listing)
+
+        summary_schema = api.split("    SessionSummary:", 1)[1].split("    Level:", 1)[0]
+        detail_schema = api.split("    Session:", 1)[1].split("    SessionSummary:", 1)[0]
+        list_schema = api.split("    ListSessionsResult:", 1)[1].split("    Reply:", 1)[0]
+        create_endpoint = api.split("  /v1/sessions:", 1)[1].split("  /v1/sessions/{session_id}:", 1)[0]
+        self.assertIn("setup:", detail_schema)
+        for forbidden in ("setup:", "contact_id", "previous_id", "scenario"):
+            self.assertNotIn(forbidden, summary_schema)
+        self.assertIn("$ref: '#/components/schemas/SessionSummary'", create_endpoint)
+        self.assertNotIn("$ref: '#/components/schemas/Session'", create_endpoint)
+        self.assertIn("$ref: '#/components/schemas/SessionSummary'", list_schema)
+        detail_endpoint = api.split("  /v1/sessions/{session_id}:", 1)[1].split("  /v1/sessions/{session_id}/exit:", 1)[0]
+        self.assertIn("$ref: '#/components/schemas/Session'", detail_endpoint)
+
+        create = store.split("func (s *Service) Create(", 1)[1].split("func (s *Service) Get(", 1)[0]
+        self.assertIn("(out SessionSummary, e error)", create)
+        self.assertIn("out = r.summary()", create)
+        self.assertNotIn("out = Session{", create)
+
+        exit_method = conversation.split("Future<void> exit() async {", 1)[1].split("Future<void> retry()", 1)[0]
+        self.assertIn("current?['kind'] == 'exit'", exit_method)
+        self.assertIn("current['fallback'] as Json", exit_method)
+        self.assertIn("不形成嵌套退出", read("app/test/practice/finish_exit_test.dart"))
+
+        d10 = re.search(r"^\| D10 \|.*$", inventory, re.M)
+        self.assertIsNotNone(d10, "data-inventory.md must have a D10 practice row")
+        for phrase in (
+            "activities.content_enc",
+            "SessionSummary",
+            "有效登录会话",
+            "归属",
+            "不要求仍有有效的 `practice` 同意",
+            "重练创建才复核",
+            "creating",
+            "practice.started",
+            "外键级联",
+            "跨设备",
+        ):
+            self.assertIn(phrase, d10.group(0), phrase)
 
     def test_candidate_evidence_uses_archive_hash_not_working_tree(self) -> None:
         corpus = compliance_corpus()

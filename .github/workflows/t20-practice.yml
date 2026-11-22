@@ -1,0 +1,58 @@
+name: T20 practice and preview
+on:
+  push:
+    paths:
+      - 'app/lib/core/**'
+      - 'app/lib/features/practice/**'
+      - 'app/test/practice/**'
+      - 'app/tool/t20/**'
+      - 'server/internal/service/training*'
+      - 'server/internal/training/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/t20-practice.yml'
+  pull_request:
+    paths:
+      - 'app/lib/core/**'
+      - 'app/lib/features/practice/**'
+      - 'app/test/practice/**'
+      - 'app/tool/t20/**'
+      - 'server/internal/service/training*'
+      - 'server/internal/training/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/t20-practice.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with: {persist-credentials: false}
+      - name: Require T19 integration source
+        run: |
+          missing=()
+          for file in \
+            server/internal/service/training_fixture_integration_test.go \
+            server/internal/service/training_integration_test.go \
+            server/internal/training/send.go \
+            server/internal/training/finish.go; do
+            [[ -f "$file" ]] || missing+=("$file")
+          done
+          if (( ${#missing[@]} )); then
+            {
+              echo '## T20 live verification blocked'
+              echo
+              echo 'Required T19 integration source is missing; this run is not a fixture pass.'
+              printf -- '- `%s`\n' "${missing[@]}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with: {flutter-version: '3.38.10', cache: true}
+      - name: Flutter practice regression
+        working-directory: app
+        run: flutter pub get --enforce-lockfile && flutter test test/practice
+      - name: Real loopback practice HTTP/SSE
+        run: app/tool/t20/live.sh

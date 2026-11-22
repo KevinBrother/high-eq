@@ -32,6 +32,8 @@ String problem(Object e) {
 }
 
 abstract interface class PracticeRepository {
+  Future<bool> practiceConsent();
+  Future<void> grantPracticeConsent();
   Future<List<Json>> levels(Scene scene, int? difficulty);
   Future<List<Json>> history();
   Future<Json> create(Json body);
@@ -88,6 +90,39 @@ class ApiPractice implements PracticeRepository {
       wire.finishSession(scope: scope, sessionId: id);
   @override
   Future<Json> exit(String id) => wire.exitSession(scope: scope, sessionId: id);
+  @override
+  Future<bool> practiceConsent() async {
+    final seen = <String>{};
+    String? cursor;
+    do {
+      final page = await wire.listConsents(
+        scope: scope,
+        cursor: cursor,
+        limit: 100,
+      );
+      for (final item in (page['items'] as List).cast<Json>()) {
+        if (item['purpose'] == 'practice') return item['granted'] == true;
+      }
+      cursor = page['next_cursor'] as String?;
+      if (cursor != null && !seen.add(cursor)) {
+        throw const FormatException('分页异常');
+      }
+    } while (cursor != null);
+    return false;
+  }
+
+  @override
+  Future<void> grantPracticeConsent() async {
+    final value = await wire.setConsent(
+      scope: scope,
+      purpose: 'practice',
+      body: {'version': 'v1', 'granted': true},
+    );
+    if (value['purpose'] != 'practice' || value['granted'] != true) {
+      throw const FormatException('练习授权未生效');
+    }
+  }
+
   @override
   Future<Json?> read(String key) async {
     final bytes = await api.sessions.get(

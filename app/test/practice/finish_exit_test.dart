@@ -56,6 +56,75 @@ class Held extends DemoPractice {
   }
 }
 
+class ExitAfterModeration extends DemoPractice {
+  bool moderated = false;
+  int sends = 0, exits = 0;
+  final release = Completer<void>();
+  final sentBodies = <Json>[];
+
+  @override
+  Stream<ReplyEvent> send(String id, Json body) {
+    sends++;
+    sentBodies.add({...body});
+    if (sends > 1) {
+      moderated = false;
+      return super.send(id, body);
+    }
+    return (() async* {
+      yield const ReplyEvent(ReplyEventKind.fragment, {'text': '正在生成'});
+      await release.future;
+    })();
+  }
+
+  @override
+  Future<Json> exit(String id) async {
+    exits++;
+    moderated = true;
+    throw const ApiFailure(409, 'conflict', '会话已结束', false);
+  }
+
+  @override
+  Future<Json> get(String id) async => {
+    ...await super.get(id),
+    if (moderated) 'status': 'moderation_unavailable',
+  };
+}
+
+class RepeatedExitAfterNetwork extends DemoPractice {
+  bool moderated = false;
+  int sends = 0, exits = 0;
+  final release = Completer<void>();
+  final sentBodies = <Json>[];
+
+  @override
+  Stream<ReplyEvent> send(String id, Json body) {
+    sends++;
+    sentBodies.add({...body});
+    if (sends > 1) {
+      moderated = false;
+      return super.send(id, body);
+    }
+    return (() async* {
+      yield const ReplyEvent(ReplyEventKind.fragment, {'text': '正在生成'});
+      await release.future;
+    })();
+  }
+
+  @override
+  Future<Json> exit(String id) async {
+    exits++;
+    if (exits == 1) throw const FormatException('offline');
+    moderated = true;
+    throw const ApiFailure(409, 'conflict', '会话已结束', false);
+  }
+
+  @override
+  Future<Json> get(String id) async => {
+    ...await super.get(id),
+    if (moderated) 'status': 'moderation_unavailable',
+  };
+}
+
 void main() {
   for (final safety in [true, false]) {
     testWidgets('评分${safety ? '危机' : '503'}只显示对应终止与原日退款', (t) async {
@@ -121,5 +190,111 @@ void main() {
     expect(find.text('本场已主动退出。'), findsOneWidget);
     expect(find.text('本场未扣次'), findsOneWidget);
     expect(find.text('迟到帧'), findsNothing);
+  });
+
+  testWidgets('流式审核故障与主动退出交错时恢复原发言重试', (t) async {
+    final r = ExitAfterModeration();
+    addTearDown(() {
+      if (!r.release.isCompleted) r.release.complete();
+    });
+    final s = await r.create({
+      'request_id': 'a',
+      'scene': 'work',
+      'scenario': '排练',
+    });
+    await t.pumpWidget(
+      MaterialApp(
+        home: PracticeChat(repo: r, initial: s),
+      ),
+    );
+    await t.pumpAndSettle();
+    await t.enterText(find.byType(TextField), '合成发言');
+    await t.tap(find.byTooltip('发送'));
+    await t.pump();
+    expect(find.text('正在生成'), findsOneWidget);
+
+    await t.tap(find.text('主动退出'));
+    await t.pump();
+    await t.tap(find.text('确认退出'));
+    await t.pumpAndSettle();
+
+    expect(r.exits, 1);
+    expect(find.text(moderationHelp), findsOneWidget);
+    expect(find.text('重试原发言'), findsOneWidget);
+    expect(find.text('重试原退出'), findsNothing);
+
+    // Rebuild the page so the retry must come from the account journal, not a
+    // command that only survived in the disposed Conversation instance.
+    await t.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    await t.pumpWidget(
+      MaterialApp(
+        home: PracticeChat(repo: r, initial: await r.get('a')),
+      ),
+    );
+    await t.pumpAndSettle();
+    expect(find.text('重试原发言'), findsOneWidget);
+    expect(find.text('重试原退出'), findsNothing);
+
+    await t.tap(find.text('重试原发言'));
+    await t.pumpAndSettle();
+    expect(r.sends, 2);
+    expect(r.sentBodies, hasLength(2));
+    expect(r.sentBodies[1], r.sentBodies[0]);
+    expect(find.byType(TextField), findsOneWidget);
+    expect(find.text('重试原发言'), findsNothing);
+  });
+
+  testWidgets('二次确认退出仍保留最早发言回退，不形成嵌套退出', (t) async {
+    final r = RepeatedExitAfterNetwork();
+    addTearDown(() {
+      if (!r.release.isCompleted) r.release.complete();
+    });
+    final s = await r.create({
+      'request_id': 'a',
+      'scene': 'work',
+      'scenario': '排练',
+    });
+    await t.pumpWidget(
+      MaterialApp(
+        home: PracticeChat(repo: r, initial: s),
+      ),
+    );
+    await t.pumpAndSettle();
+    await t.enterText(find.byType(TextField), '最早的原发言');
+    await t.tap(find.byTooltip('发送'));
+    await t.pump();
+    expect(find.text('正在生成'), findsOneWidget);
+
+    await t.tap(find.text('主动退出'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('确认退出'));
+    await t.pumpAndSettle();
+    expect(r.exits, 1);
+
+    // The first request never reached the service; a second confirmation
+    // must not overwrite the send fallback with another exit command.
+    await t.tap(find.text('主动退出'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('确认退出'));
+    await t.pumpAndSettle();
+    expect(r.exits, 2);
+    expect(find.text('重试原发言'), findsOneWidget);
+    expect(find.text('重试原退出'), findsNothing);
+
+    await t.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    await t.pumpWidget(
+      MaterialApp(
+        home: PracticeChat(repo: r, initial: await r.get('a')),
+      ),
+    );
+    await t.pumpAndSettle();
+    expect(find.text('重试原发言'), findsOneWidget);
+    expect(find.text('重试原退出'), findsNothing);
+
+    await t.tap(find.text('重试原发言'));
+    await t.pumpAndSettle();
+    expect(r.sends, 2);
+    expect(r.sentBodies, hasLength(2));
+    expect(r.sentBodies[1], r.sentBodies[0]);
   });
 }

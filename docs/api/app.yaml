@@ -1428,7 +1428,7 @@ paths:
           description: 成功
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Session'}
+              schema: {$ref: '#/components/schemas/SessionSummary'}
               example:
                 session_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
                 status: pending
@@ -3379,7 +3379,34 @@ components:
         settlement: {$ref: '#/components/schemas/Settlement'}
         level_id: {type: string, format: uuid}
         result: {$ref: '#/components/schemas/FinishSessionResult'}
-      description: capped 表示预算耗尽但已有完整历史，仍可 finish 评分；已完成会话带 result，供重连或重练对比分数；仅关卡会话带 level_id。messages 只含已保存记录。
+        setup:
+          allOf:
+          - {$ref: '#/components/schemas/CreateSessionInput'}
+          description: 仅本人授权成功的会话详情 GET 按需返回原始创建参数；历史列表不返回 setup。
+      description: capped 表示预算耗尽但已有完整历史，仍可 finish 评分；已完成会话带 result，供重连或重练对比分数；仅关卡会话带 level_id。messages 只含已保存记录。setup 仅用于本人授权成功的详情 GET，列表不返回自定义场景或关系人标识。
+    SessionSummary:
+      type: object
+      additionalProperties: false
+      required:
+      - session_id
+      - status
+      - mode
+      - target_item
+      - messages
+      - settlement
+      properties:
+        session_id: {type: string, format: uuid}
+        status: {type: string, enum: [pending, active, capped, complete, exited, safety, moderation_unavailable, failed]}
+        mode: {type: string, enum: [single_skill, full_session]}
+        target_item: {type: string, nullable: true, pattern: ^(observation|feeling|need|request)$}
+        messages:
+          type: array
+          items: {$ref: '#/components/schemas/Message'}
+          minItems: 0
+        settlement: {$ref: '#/components/schemas/Settlement'}
+        level_id: {type: string, format: uuid}
+        result: {$ref: '#/components/schemas/FinishSessionResult'}
+      description: 历史列表项；与 Session 的稳定字段一致，但永不携带 setup、自定义场景或关系人标识。
     Level:
       type: object
       additionalProperties: false
@@ -3420,6 +3447,7 @@ components:
           request_id: {type: string, format: uuid}
           level_id: {type: string, format: uuid}
           contact_id: {type: string, format: uuid}
+          previous_id: {type: string, format: uuid, description: 仅可引用本账号已完成且启动参数相同的上一次练习；无法关联时返回 400。}
       - type: object
         additionalProperties: false
         required:
@@ -3431,6 +3459,7 @@ components:
           scenario: {type: string, minLength: 1}
           scene: {type: string, enum: [work, partner, family, friends, social]}
           contact_id: {type: string, format: uuid}
+          previous_id: {type: string, format: uuid, description: 仅可引用本账号已完成且启动参数相同的上一次练习；无法关联时返回 400。}
     SendMessageInput:
       type: object
       additionalProperties: false
@@ -3583,7 +3612,7 @@ components:
       properties:
         items:
           type: array
-          items: {$ref: '#/components/schemas/Session'}
+          items: {$ref: '#/components/schemas/SessionSummary'}
           minItems: 0
         next_cursor: {type: string, nullable: true}
     Reply:

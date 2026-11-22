@@ -307,6 +307,24 @@ const (
 	SessionStatusSafety                SessionStatus = "safety"
 )
 
+// Defines values for SessionSummaryMode.
+const (
+	SessionSummaryModeFullSession SessionSummaryMode = "full_session"
+	SessionSummaryModeSingleSkill SessionSummaryMode = "single_skill"
+)
+
+// Defines values for SessionSummaryStatus.
+const (
+	SessionSummaryStatusActive                SessionSummaryStatus = "active"
+	SessionSummaryStatusCapped                SessionSummaryStatus = "capped"
+	SessionSummaryStatusComplete              SessionSummaryStatus = "complete"
+	SessionSummaryStatusExited                SessionSummaryStatus = "exited"
+	SessionSummaryStatusFailed                SessionSummaryStatus = "failed"
+	SessionSummaryStatusModerationUnavailable SessionSummaryStatus = "moderation_unavailable"
+	SessionSummaryStatusPending               SessionSummaryStatus = "pending"
+	SessionSummaryStatusSafety                SessionSummaryStatus = "safety"
+)
+
 // Defines values for SettlementStatus.
 const (
 	SettlementStatusCharged   SettlementStatus = "charged"
@@ -556,15 +574,21 @@ type CreateSessionInput struct {
 type CreateSessionInput0 struct {
 	ContactId *openapi_types.UUID `json:"contact_id,omitempty"`
 	LevelId   openapi_types.UUID  `json:"level_id"`
-	RequestId openapi_types.UUID  `json:"request_id"`
+
+	// PreviousId 仅可引用本账号已完成且启动参数相同的上一次练习；无法关联时返回 400。
+	PreviousId *openapi_types.UUID `json:"previous_id,omitempty"`
+	RequestId  openapi_types.UUID  `json:"request_id"`
 }
 
 // CreateSessionInput1 defines model for .
 type CreateSessionInput1 struct {
-	ContactId *openapi_types.UUID      `json:"contact_id,omitempty"`
-	RequestId openapi_types.UUID       `json:"request_id"`
-	Scenario  string                   `json:"scenario"`
-	Scene     CreateSessionInput1Scene `json:"scene"`
+	ContactId *openapi_types.UUID `json:"contact_id,omitempty"`
+
+	// PreviousId 仅可引用本账号已完成且启动参数相同的上一次练习；无法关联时返回 400。
+	PreviousId *openapi_types.UUID      `json:"previous_id,omitempty"`
+	RequestId  openapi_types.UUID       `json:"request_id"`
+	Scenario   string                   `json:"scenario"`
+	Scene      CreateSessionInput1Scene `json:"scene"`
 }
 
 // CreateSessionInput1Scene defines model for CreateSessionInput.1.Scene.
@@ -905,8 +929,8 @@ type ListReviewsResult struct {
 
 // ListSessionsResult defines model for ListSessionsResult.
 type ListSessionsResult struct {
-	Items      []Session `json:"items"`
-	NextCursor *string   `json:"next_cursor"`
+	Items      []SessionSummary `json:"items"`
+	NextCursor *string          `json:"next_cursor"`
 }
 
 // LoginInput defines model for LoginInput.
@@ -1107,7 +1131,7 @@ type SendProfileFeedbackInput struct {
 // SendProfileFeedbackInputSubject defines model for SendProfileFeedbackInput.Subject.
 type SendProfileFeedbackInputSubject string
 
-// Session capped 表示预算耗尽但已有完整历史，仍可 finish 评分；已完成会话带 result，供重连或重练对比分数；仅关卡会话带 level_id。messages 只含已保存记录。
+// Session capped 表示预算耗尽但已有完整历史，仍可 finish 评分；已完成会话带 result，供重连或重练对比分数；仅关卡会话带 level_id。messages 只含已保存记录。setup 仅用于本人授权成功的详情 GET，列表不返回自定义场景或关系人标识。
 type Session struct {
 	LevelId   *openapi_types.UUID  `json:"level_id,omitempty"`
 	Messages  []Message            `json:"messages"`
@@ -1116,9 +1140,12 @@ type Session struct {
 	SessionId openapi_types.UUID   `json:"session_id"`
 
 	// Settlement charged 的净扣为 1；refunded 为 0 并保留原扣次日；uncharged 为 0 且无扣次日。
-	Settlement Settlement    `json:"settlement"`
-	Status     SessionStatus `json:"status"`
-	TargetItem *string       `json:"target_item"`
+	Settlement Settlement `json:"settlement"`
+
+	// Setup 仅本人授权成功的会话详情 GET 按需返回原始创建参数；历史列表不返回 setup。
+	Setup      *CreateSessionInput `json:"setup,omitempty"`
+	Status     SessionStatus       `json:"status"`
+	TargetItem *string             `json:"target_item"`
 }
 
 // SessionMode defines model for Session.Mode.
@@ -1126,6 +1153,26 @@ type SessionMode string
 
 // SessionStatus defines model for Session.Status.
 type SessionStatus string
+
+// SessionSummary 历史列表项；与 Session 的稳定字段一致，但永不携带 setup、自定义场景或关系人标识。
+type SessionSummary struct {
+	LevelId   *openapi_types.UUID  `json:"level_id,omitempty"`
+	Messages  []Message            `json:"messages"`
+	Mode      SessionSummaryMode   `json:"mode"`
+	Result    *FinishSessionResult `json:"result,omitempty"`
+	SessionId openapi_types.UUID   `json:"session_id"`
+
+	// Settlement charged 的净扣为 1；refunded 为 0 并保留原扣次日；uncharged 为 0 且无扣次日。
+	Settlement Settlement           `json:"settlement"`
+	Status     SessionSummaryStatus `json:"status"`
+	TargetItem *string              `json:"target_item"`
+}
+
+// SessionSummaryMode defines model for SessionSummary.Mode.
+type SessionSummaryMode string
+
+// SessionSummaryStatus defines model for SessionSummary.Status.
+type SessionSummaryStatus string
 
 // SetConsentInput defines model for SetConsentInput.
 type SetConsentInput struct {

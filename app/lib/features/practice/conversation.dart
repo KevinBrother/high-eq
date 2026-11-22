@@ -16,6 +16,23 @@ class Conversation extends ChangeNotifier {
   List<Json> get rows => (snapshot['messages'] as List).cast<Json>();
   String get status => snapshot['status'];
   bool get active => ['pending', 'active'].contains(status);
+  bool get hasSavedReply => rows.lastOrNull?['role'] == 'assistant';
+  bool get canSend => active && !busy && !needsRead && command == null;
+  bool get canScore =>
+      !busy &&
+      !needsRead &&
+      command == null &&
+      (active || status == 'capped') &&
+      hasSavedReply;
+  bool get canRetry =>
+      command != null &&
+      !busy &&
+      !needsRead &&
+      (active ||
+          status == 'moderation_unavailable' ||
+          (status == 'capped' && command!['kind'] == 'finish'));
+  bool get canExit => active && (!busy || streaming);
+  bool get canRecover => !busy && (needsRead || !ledgerKnown);
   Json? command;
   String fragment = '', notice = '';
   bool busy = false, streaming = false, needsRead = true, ledgerKnown = false;
@@ -94,10 +111,14 @@ class Conversation extends ChangeNotifier {
     snapshot = next;
     ledgerKnown = true;
     needsRead = false;
-    if (saved || (!active && status != 'moderation_unavailable')) {
+    final unfinishedScore = status == 'capped' && command?['kind'] == 'finish';
+    if (saved ||
+        (!active && status != 'moderation_unavailable' && !unfinishedScore)) {
       await _clear(e);
       if (e != _epoch) return;
     }
+    await _restoreInterruptedSend(e);
+    if (e != _epoch) return;
     // A server may persist a user row before its assistant reply.
     if (command == null &&
         (active || status == 'moderation_unavailable') &&
@@ -118,14 +139,22 @@ class Conversation extends ChangeNotifier {
     if (e == _epoch) command = null;
   }
 
-  Future<void> send(String text) async {
-    if (!active ||
-        busy ||
-        needsRead ||
-        command != null ||
-        text.trim().isEmpty) {
+  Future<void> _restoreInterruptedSend(int e) async {
+    final exit = command;
+    final fallback = exit?['fallback'];
+    if (status != 'moderation_unavailable' ||
+        exit?['kind'] != 'exit' ||
+        fallback is! Map<String, dynamic> ||
+        fallback['kind'] != 'send') {
       return;
     }
+    command = fallback;
+    await repo.remember(id, fallback);
+    if (e != _epoch) return;
+  }
+
+  Future<void> send(String text) async {
+    if (!canSend || text.trim().isEmpty) return;
     await _run({
       'kind': 'send',
       'body': {'client_message_id': newRequestId(), 'text': text.trim()},
@@ -133,27 +162,29 @@ class Conversation extends ChangeNotifier {
   }
 
   Future<void> finish() async {
-    if (!busy &&
-        active &&
-        !needsRead &&
-        command == null &&
-        rows.any((m) => m['role'] == 'assistant')) {
-      await _run({'kind': 'finish'});
-    }
+    if (canScore) await _run({'kind': 'finish'});
   }
 
   Future<void> exit() async {
-    if (active && (!busy || streaming)) await _run({'kind': 'exit'});
+    if (!canExit) return;
+    final current = command;
+    final Json? fallback;
+    if (current?['kind'] == 'send') {
+      fallback = current;
+    } else if (current?['kind'] == 'exit' &&
+        current?['fallback'] is Json &&
+        current!['fallback']['kind'] == 'send') {
+      // A failed exit can remain journalled while the session is still
+      // writable. Reuse the earliest send instead of nesting another exit.
+      fallback = current['fallback'] as Json;
+    } else {
+      fallback = null;
+    }
+    await _run({'kind': 'exit', 'fallback': ?fallback});
   }
 
   Future<void> retry() async {
-    final op = command;
-    if (op != null &&
-        !busy &&
-        !needsRead &&
-        (active || status == 'moderation_unavailable')) {
-      await _run(op);
-    }
+    if (canRetry) await _run(command!);
   }
 
   Future<void> _terminal(String status) async {
@@ -274,7 +305,8 @@ class Conversation extends ChangeNotifier {
         await _terminal('moderation_unavailable');
       }
       if (op['kind'] == 'finish' ||
-          (err is ApiFailure && err.code == 'moderation_unavailable')) {
+          (err is ApiFailure &&
+              (err.status == 409 || err.code == 'moderation_unavailable'))) {
         try {
           await _read(e);
         } catch (_) {
