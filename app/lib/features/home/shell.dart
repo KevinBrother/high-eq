@@ -48,7 +48,12 @@ enum Section {
 
 class HomeShell extends StatelessWidget {
   final Section section;
-  const HomeShell(this.section, {super.key});
+
+  /// Optional page body. When absent, the original four-tab placeholder is
+  /// rendered so the shell remains usable while feature pages are rolled out.
+  final Widget? content;
+
+  const HomeShell(this.section, {super.key, this.content});
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -58,159 +63,170 @@ class HomeShell extends StatelessWidget {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 580),
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(26, 24, 26, 32),
-              children: [
-                Row(
+            child:
+                content ??
+                ListView(
+                  padding: const EdgeInsets.fromLTRB(26, 24, 26, 32),
                   children: [
-                    Icon(Icons.forum_outlined, size: 22, color: colors.primary),
-                    const SizedBox(width: 9),
-                    Text('对话手记', style: theme.textTheme.titleSmall),
-                    const Spacer(),
-                    Text(
-                      '0${section.index + 1} / 04',
-                      style: theme.textTheme.labelMedium,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 46),
-                Semantics(
-                  header: true,
-                  child: Text(
-                    section.label,
-                    style: theme.textTheme.displayMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  section.headline,
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 34),
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: colors.primaryContainer,
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    Row(
                       children: [
-                        ExcludeSemantics(
-                          child: Icon(
-                            section.icon,
-                            size: 48,
-                            color: colors.onPrimaryContainer,
-                          ),
+                        Icon(
+                          Icons.forum_outlined,
+                          size: 22,
+                          color: colors.primary,
                         ),
-                        const SizedBox(height: 36),
+                        const SizedBox(width: 9),
+                        Text('对话手记', style: theme.textTheme.titleSmall),
+                        const Spacer(),
                         Text(
-                          section.title,
-                          style: theme.textTheme.headlineSmall?.copyWith(
-                            color: colors.onPrimaryContainer,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          section.hint,
-                          style: theme.textTheme.bodyLarge?.copyWith(
-                            color: colors.onPrimaryContainer,
-                            height: 1.55,
-                          ),
+                          '0${section.index + 1} / 04',
+                          style: theme.textTheme.labelMedium,
                         ),
                       ],
                     ),
-                  ),
+                    const SizedBox(height: 46),
+                    Semantics(
+                      header: true,
+                      child: Text(
+                        section.label,
+                        style: theme.textTheme.displayMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      section.headline,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 34),
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: colors.primaryContainer,
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ExcludeSemantics(
+                              child: Icon(
+                                section.icon,
+                                size: 48,
+                                color: colors.onPrimaryContainer,
+                              ),
+                            ),
+                            const SizedBox(height: 36),
+                            Text(
+                              section.title,
+                              style: theme.textTheme.headlineSmall?.copyWith(
+                                color: colors.onPrimaryContainer,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              section.hint,
+                              style: theme.textTheme.bodyLarge?.copyWith(
+                                color: colors.onPrimaryContainer,
+                                height: 1.55,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.tune),
+                      title: const Text('切换练习场景'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.pushNamed(context, '/scene'),
+                    ),
+                    if (section == Section.live)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.bookmark_add_outlined),
+                        title: const Text('我上头了'),
+                        subtitle: const Text('记下此刻，稍后再想'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.pushNamed(
+                          context,
+                          '/marks',
+                          arguments: true,
+                        ),
+                      ),
+                    if (section == Section.live || section == Section.growth)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.history),
+                        title: const Text('标记历史'),
+                        onTap: () => Navigator.pushNamed(context, '/marks'),
+                      ),
+                    if (section == Section.live || section == Section.growth)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.menu_book_outlined),
+                        title: const Text('复盘与踩坑本'),
+                        subtitle: const Text('把一次摩擦，变成下一次的准备'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.pushNamed(context, '/reviews'),
+                      ),
+                    if (section == Section.practice ||
+                        section == Section.growth ||
+                        section == Section.me)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.radar),
+                        title: const Text('本次自评与续答'),
+                        onTap: () =>
+                            Navigator.pushNamed(context, '/assessment'),
+                      ),
+                    if (section == Section.live)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.chat_outlined),
+                        title: const Text('回复助手'),
+                        subtitle: const Text('读懂对方，再组织自己的说法'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.pushNamed(context, '/replies'),
+                      ),
+                    if (section == Section.practice)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.forum_outlined),
+                        title: const Text('对练与预演'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.pushNamed(context, '/training'),
+                      ),
+                    if (section == Section.me) ...[
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.workspace_premium_outlined),
+                        title: const Text('会员与今日额度'),
+                        onTap: () =>
+                            Navigator.pushNamed(context, '/membership'),
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.logout),
+                        title: const Text('退出账号'),
+                        onTap: () => Navigator.pushNamed(context, '/logout'),
+                      ),
+                    ],
+                    if (section == Section.me)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.people_outline),
+                        title: const Text('关系人手记'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.pushNamed(context, '/contacts'),
+                      ),
+                  ],
                 ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.tune),
-                  title: const Text('切换练习场景'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.pushNamed(context, '/scene'),
-                ),
-                if (section == Section.live)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.bookmark_add_outlined),
-                    title: const Text('我上头了'),
-                    subtitle: const Text('记下此刻，稍后再想'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () =>
-                        Navigator.pushNamed(context, '/marks', arguments: true),
-                  ),
-                if (section == Section.live || section == Section.growth)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.history),
-                    title: const Text('标记历史'),
-                    onTap: () => Navigator.pushNamed(context, '/marks'),
-                  ),
-                if (section == Section.live || section == Section.growth)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.menu_book_outlined),
-                    title: const Text('复盘与踩坑本'),
-                    subtitle: const Text('把一次摩擦，变成下一次的准备'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => Navigator.pushNamed(context, '/reviews'),
-                  ),
-                if (section == Section.practice ||
-                    section == Section.growth ||
-                    section == Section.me)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.radar),
-                    title: const Text('本次自评与续答'),
-                    onTap: () => Navigator.pushNamed(context, '/assessment'),
-                  ),
-                if (section == Section.live)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.chat_outlined),
-                    title: const Text('回复助手'),
-                    subtitle: const Text('读懂对方，再组织自己的说法'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => Navigator.pushNamed(context, '/replies'),
-                  ),
-                if (section == Section.practice)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.forum_outlined),
-                    title: const Text('对练与预演'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => Navigator.pushNamed(context, '/training'),
-                  ),
-                if (section == Section.me) ...[
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.workspace_premium_outlined),
-                    title: const Text('会员与今日额度'),
-                    onTap: () => Navigator.pushNamed(context, '/membership'),
-                  ),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.logout),
-                    title: const Text('退出账号'),
-                    onTap: () => Navigator.pushNamed(context, '/logout'),
-                  ),
-                ],
-                if (section == Section.me)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.people_outline),
-                    title: const Text('关系人手记'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => Navigator.pushNamed(context, '/contacts'),
-                  ),
-              ],
-            ),
           ),
         ),
       ),

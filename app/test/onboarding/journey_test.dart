@@ -96,7 +96,15 @@ void main() {
       await demoLogin(t);
       expect(find.text('是否同意开始本次自评？'), findsOneWidget);
       Future<void> tap(String s) async {
-        final f = find.text(s).last;
+        final labels = find.text(s);
+        if (labels.evaluate().isEmpty && (s == '本次自评与续答' || s == '切换练习场景')) {
+          await t.scrollUntilVisible(
+            labels,
+            200,
+            scrollable: find.byType(Scrollable).first,
+          );
+        }
+        final f = labels.last;
         await t.ensureVisible(f);
         await t.pumpAndSettle();
         await t.tap(f);

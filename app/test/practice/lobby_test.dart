@@ -295,6 +295,43 @@ void main() {
     expect(r.creates[0]['level_id'], r.creates[1]['level_id']);
     expect(r.creates[0]['request_id'], isNot(r.creates[1]['request_id']));
   });
+  testWidgets('计划深链只打开精确目标关卡', (t) async {
+    final r = Recorded();
+    final target = (await r.levels(Scene.work, null)).first;
+
+    await t.pumpWidget(
+      MaterialApp(
+        home: PracticeLobby(
+          demo: true,
+          repo: r,
+          scene: SceneMemory(),
+          targetLevelId: target['id'] as String,
+        ),
+      ),
+    );
+    await t.pumpAndSettle();
+
+    expect(r.creates, hasLength(1));
+    expect(r.creates.single['level_id'], target['id']);
+  });
+  testWidgets('计划目标关卡失效时阻断且不误开其他关卡', (t) async {
+    final r = Recorded();
+
+    await t.pumpWidget(
+      MaterialApp(
+        home: PracticeLobby(
+          demo: true,
+          repo: r,
+          scene: SceneMemory(),
+          targetLevelId: 'deleted-level',
+        ),
+      ),
+    );
+    await t.pumpAndSettle();
+
+    expect(r.creates, isEmpty);
+    expect(find.text('这项计划中的对练已删除或不可用，请返回今日计划重新选择。'), findsOneWidget);
+  });
   testWidgets('预演创建丢响应复用请求，返回不退出；整场定位第二次用户发言', (t) async {
     final r = Recorded()..loseFirst = true;
     await t.pumpWidget(
@@ -579,6 +616,75 @@ void main() {
     );
     expect(find.text('再练一次'), findsNothing);
     expect(r.creates, hasLength(1));
+  });
+
+  testWidgets('详情不可得时待开始历史只读且不能主动退出', (t) async {
+    final r = OfflineDetail(), scene = SceneMemory(Scene.friends);
+    await r.create({
+      'request_id': 'pending-offline',
+      'scene': 'friends',
+      'scenario': '待开始的只读预演',
+    });
+    r.offlineId = 'pending-offline';
+
+    await t.pumpWidget(
+      MaterialApp(
+        home: PracticeLobby(demo: true, repo: r, scene: scene),
+      ),
+    );
+    await t.pumpAndSettle();
+    await t.scrollUntilVisible(
+      find.text('尚未发言的练习'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tapLabel(t, '尚未发言的练习');
+
+    expect(find.text('恢复会话'), findsOneWidget);
+    expect(find.text('当前只能查看已有内容。恢复会话后才能发言、评分或主动退出。'), findsOneWidget);
+    expect(t.widget<TextField>(find.byType(TextField)).enabled, isFalse);
+    final exit = t.widget<TextButton>(find.widgetWithText(TextButton, '主动退出'));
+    expect(exit.onPressed, isNull);
+    expect(find.text('结束并评分'), findsNothing);
+    expect(r.exits, 0);
+  });
+
+  testWidgets('详情不可得时进行中历史只读且不能主动退出', (t) async {
+    final r = OfflineDetail(), scene = SceneMemory(Scene.friends);
+    await r.create({
+      'request_id': 'active-offline',
+      'scene': 'friends',
+      'scenario': '进行中的只读预演',
+    });
+    await pumpDemoReply(
+      t,
+      r.send('active-offline', {
+        'client_message_id': 'active-offline-1',
+        'text': '已经保存的发言',
+      }),
+    );
+    r.offlineId = 'active-offline';
+
+    await t.pumpWidget(
+      MaterialApp(
+        home: PracticeLobby(demo: true, repo: r, scene: scene),
+      ),
+    );
+    await t.pumpAndSettle();
+    await t.scrollUntilVisible(
+      find.text('已经保存的发言'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tapLabel(t, '已经保存的发言');
+
+    expect(find.text('恢复会话'), findsOneWidget);
+    expect(find.text('当前只能查看已有内容。恢复会话后才能发言、评分或主动退出。'), findsOneWidget);
+    expect(t.widget<TextField>(find.byType(TextField)).enabled, isFalse);
+    final exit = t.widget<TextButton>(find.widgetWithText(TextButton, '主动退出'));
+    expect(exit.onPressed, isNull);
+    expect(find.text('结束并评分'), findsNothing);
+    expect(r.exits, 0);
   });
 
   testWidgets('大厅详情失败后聊天恢复自定义预演对比与重练上下文', (t) async {

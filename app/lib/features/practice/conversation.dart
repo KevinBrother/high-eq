@@ -31,11 +31,16 @@ class Conversation extends ChangeNotifier {
       (active ||
           status == 'moderation_unavailable' ||
           (status == 'capped' && command!['kind'] == 'finish'));
-  bool get canExit => active && (!busy || streaming);
+  bool get canExit =>
+      active && (!needsRead || detailKnown) && (!busy || streaming);
   bool get canRecover => !busy && (needsRead || !ledgerKnown);
   Json? command;
   String fragment = '', notice = '';
-  bool busy = false, streaming = false, needsRead = true, ledgerKnown = false;
+  bool busy = false,
+      streaming = false,
+      needsRead = true,
+      detailKnown = false,
+      ledgerKnown = false;
   int _epoch = 0;
   void Function()? _stop;
   @override
@@ -109,6 +114,7 @@ class Conversation extends ChangeNotifier {
       return;
     }
     snapshot = next;
+    detailKnown = true;
     ledgerKnown = true;
     needsRead = false;
     final unfinishedScore = status == 'capped' && command?['kind'] == 'finish';

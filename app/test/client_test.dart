@@ -90,6 +90,165 @@ void main() {
     expect(calls, 2);
     expect(sessions.active, isNull);
   });
+  test('business 401 with refresh 5xx clears account', () async {
+    var calls = 0;
+    handler.handle = (op, _) async {
+      calls++;
+      if (op == AppOp.refreshTokens) {
+        return response({
+          'code': 'unavailable',
+          'message': 'refresh unavailable',
+        }, 500);
+      }
+      return response({
+        'code': 'unauthenticated',
+        'message': 'account frozen',
+      }, 401);
+    };
+
+    await expectLater(
+      api.json(AppOp.getGrowth, scope: a),
+      throwsA(
+        isA<ApiFailure>()
+            .having((e) => e.status, 'status', 401)
+            .having((e) => e.code, 'code', 'unauthenticated')
+            .having((e) => e.message, 'message', '请重新登录'),
+      ),
+    );
+    expect(calls, 2);
+    expect(sessions.active, isNull);
+  });
+
+  test('getMe business 401 with refresh 5xx preserves account', () async {
+    var calls = 0;
+    handler.handle = (op, _) async {
+      calls++;
+      if (op == AppOp.refreshTokens) {
+        return response({
+          'code': 'unavailable',
+          'message': 'refresh unavailable',
+          'retryable': true,
+        }, 503);
+      }
+      return response({
+        'code': 'unauthenticated',
+        'message': 'probe unauthorized',
+      }, 401);
+    };
+
+    await expectLater(
+      api.json(AppOp.getMe, scope: a),
+      throwsA(
+        isA<ApiFailure>()
+            .having((e) => e.status, 'status', 503)
+            .having((e) => e.retryable, 'retryable', isTrue),
+      ),
+    );
+    expect(calls, 2);
+    expect(sessions.active, same(a));
+  });
+
+  test('business 401 with refresh timeout clears account', () async {
+    var calls = 0;
+    handler.handle = (op, _) async {
+      calls++;
+      if (op == AppOp.refreshTokens) {
+        throw TimeoutException('refresh timed out');
+      }
+      return response({
+        'code': 'unauthenticated',
+        'message': 'account frozen',
+      }, 401);
+    };
+
+    await expectLater(
+      api.json(AppOp.getGrowth, scope: a),
+      throwsA(
+        isA<ApiFailure>()
+            .having((e) => e.status, 'status', 401)
+            .having((e) => e.code, 'code', 'unauthenticated')
+            .having((e) => e.message, 'message', '请重新登录'),
+      ),
+    );
+    expect(calls, 2);
+    expect(sessions.active, isNull);
+  });
+
+  test('business 401 replay still unauthorized clears account', () async {
+    var calls = 0;
+    handler.handle = (op, _) async {
+      calls++;
+      if (op == AppOp.refreshTokens) {
+        return response(tokens('A', 'new').toJson());
+      }
+      return response({
+        'code': 'unauthenticated',
+        'message': 'still frozen',
+      }, 401);
+    };
+
+    await expectLater(
+      api.json(AppOp.getGrowth, scope: a),
+      throwsA(
+        isA<ApiFailure>()
+            .having((e) => e.status, 'status', 401)
+            .having((e) => e.code, 'code', 'unauthenticated')
+            .having((e) => e.message, 'message', '请重新登录'),
+      ),
+    );
+    expect(calls, 3);
+    expect(sessions.active, isNull);
+  });
+
+  test('expired access refresh 5xx preserves account', () async {
+    await sessions.rotate(
+      a,
+      Tokens(
+        'A',
+        'expired',
+        'refresh',
+        DateTime.now().toUtc().subtract(const Duration(minutes: 1)),
+      ),
+    );
+    var calls = 0;
+    handler.handle = (op, _) async {
+      calls++;
+      expect(op, AppOp.refreshTokens);
+      return response({
+        'code': 'unavailable',
+        'message': 'refresh unavailable',
+      }, 500);
+    };
+
+    await expectLater(
+      api.json(AppOp.getGrowth, scope: a),
+      throwsA(
+        isA<ApiFailure>()
+            .having((e) => e.status, 'status', 500)
+            .having((e) => e.code, 'code', 'unavailable'),
+      ),
+    );
+    expect(calls, 1);
+    expect(sessions.require(a).access, 'expired');
+  });
+
+  test('ordinary service 5xx preserves account', () async {
+    handler.handle = (_, _) async => response({
+      'code': 'unavailable',
+      'message': 'temporarily unavailable',
+    }, 503);
+
+    await expectLater(
+      api.json(AppOp.getGrowth, scope: a),
+      throwsA(
+        isA<ApiFailure>()
+            .having((e) => e.status, 'status', 503)
+            .having((e) => e.code, 'code', 'unavailable'),
+      ),
+    );
+    expect(sessions.require(a).access, 'access');
+  });
+
   test('late refresh or scheduled A queue cannot send as B', () async {
     final pending = Completer<http.StreamedResponse>(),
         started = Completer<void>();

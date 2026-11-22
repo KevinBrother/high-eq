@@ -121,6 +121,13 @@ class AppApi {
         }
       });
 
+  Future<Never> _rejectUnauthorized(AccountScope scope) async {
+    final active = sessions.active;
+    if (active != null && !identical(active, scope)) throw SessionChanged();
+    if (identical(active, scope)) await sessions.clear();
+    throw const ApiFailure(401, 'unauthenticated', '请重新登录', false);
+  }
+
   /// Authenticated calls deliberately have no "use current account" fallback.
   Stream<List<int>> bytes(
     AppOp op, {
@@ -141,7 +148,16 @@ class AppApi {
     var response = await _send(op, path, query, body, access);
     if (op.secured && response.statusCode == 401) {
       await response.stream.listen(null).cancel();
-      if (sessions.require(scope!).access == access) await _refresh(scope);
+      try {
+        if (sessions.require(scope!).access == access) await _refresh(scope);
+      } on SessionChanged {
+        rethrow;
+      } catch (_) {
+        // Authentication probes are allowed to surface a transient refresh
+        // failure without discarding a still-valid local session.
+        if (op == AppOp.getMe) rethrow;
+        await _rejectUnauthorized(scope!);
+      }
       response = await _send(
         op,
         path,
@@ -149,6 +165,10 @@ class AppApi {
         body,
         sessions.require(scope).access,
       );
+      if (response.statusCode == 401) {
+        await response.stream.listen(null).cancel();
+        await _rejectUnauthorized(scope);
+      }
     }
     await _success(response, op);
     onStatus?.call(response.statusCode);

@@ -1,0 +1,88 @@
+name: T27 growth and practice
+on:
+  push:
+    paths:
+      - 'app/lib/core/**'
+      - 'app/lib/features/growth/**'
+      - 'app/lib/features/practice/**'
+      - 'app/lib/features/home/shell.dart'
+      - 'app/lib/main.dart'
+      - 'app/test/client_test.dart'
+      - 'app/test/growth/**'
+      - 'app/test/marks/book_test.dart'
+      - 'app/test/practice/**'
+      - 'app/tool/t27/**'
+      - 'server/internal/growth/**'
+      - 'server/internal/assessment/**'
+      - 'server/internal/service/growth*'
+      - 'server/internal/service/assessment*'
+      - 'server/internal/service/runtime*'
+      - 'server/internal/service/http.go'
+      - 'server/content/t26.yaml'
+      - 'server/content/embed.go'
+      - 'server/migrations/*growth*'
+      - 'docker-compose.yml'
+      - '.github/workflows/t27-growth.yml'
+  pull_request:
+    paths:
+      - 'app/lib/core/**'
+      - 'app/lib/features/growth/**'
+      - 'app/lib/features/practice/**'
+      - 'app/lib/features/home/shell.dart'
+      - 'app/lib/main.dart'
+      - 'app/test/client_test.dart'
+      - 'app/test/growth/**'
+      - 'app/test/marks/book_test.dart'
+      - 'app/test/practice/**'
+      - 'app/tool/t27/**'
+      - 'server/internal/growth/**'
+      - 'server/internal/assessment/**'
+      - 'server/internal/service/growth*'
+      - 'server/internal/service/assessment*'
+      - 'server/internal/service/runtime*'
+      - 'server/internal/service/http.go'
+      - 'server/content/t26.yaml'
+      - 'server/content/embed.go'
+      - 'server/migrations/*growth*'
+      - 'docker-compose.yml'
+      - '.github/workflows/t27-growth.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with: {persist-credentials: false}
+      - name: Require T27 growth source
+        run: |
+          missing=()
+          for file in \
+            server/internal/growth/planning.go \
+            server/internal/service/growth_http.go \
+            server/internal/service/runtime.go \
+            server/internal/service/http.go \
+            server/content/t26.yaml; do
+            [[ -f "$file" ]] || missing+=("$file")
+          done
+          if (( ${#missing[@]} )); then
+            {
+              echo '## T27 live verification blocked'
+              echo
+              echo 'Required growth planning source is missing; this run is not a fixture pass.'
+              printf -- '- `%s`\n' "${missing[@]}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with: {flutter-version: '3.38.10', cache: true}
+      - name: Install locked Flutter dependencies
+        working-directory: app
+        run: flutter pub get --enforce-lockfile
+      - name: T27 client regression
+        working-directory: app
+        run: flutter test test/client_test.dart test/growth test/practice test/marks/book_test.dart
+      - name: Real loopback growth HTTP
+        run: app/tool/t27/live.sh

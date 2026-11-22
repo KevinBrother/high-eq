@@ -256,6 +256,12 @@ class _PracticeChatState extends State<PracticeChat> {
                                   c.status != 'safety' &&
                                   c.status != 'moderation_unavailable')
                                 _BannerText(c.notice),
+                              if (c.active &&
+                                  c.needsRead &&
+                                  c.command?['kind'] != 'exit')
+                                const _BannerText(
+                                  '当前只能查看已有内容。恢复会话后才能发言、评分或主动退出。',
+                                ),
                               if (c.canRecover)
                                 OutlinedButton(
                                   onPressed: _recover,

@@ -1,36 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/api.dart';
-import '../../core/providers.dart';
 import '../../core/transport.dart';
 import '../contacts/models.dart';
 import '../contacts/repository.dart';
 import '../contacts/routes.dart';
 import '../contacts/scene.dart';
 import 'chat.dart';
-import 'demo.dart';
+import 'providers.dart';
 import 'repository.dart';
-
-final _repository = Provider((ref) {
-  final api = ref.watch(apiProvider).requireValue;
-  final space = ref.watch(
-    contactSpaceProvider,
-  ); // invalidated on identity change, including demo history
-  return api.transport is ExampleTransport
-      ? DemoPractice(contacts: space.repo)
-      : ApiPractice(api, api.sessions.active!);
-});
 
 class PracticeRoute extends ConsumerWidget {
   const PracticeRoute({super.key});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final space = ref.watch(contactSpaceProvider);
+    final argument = ModalRoute.of(context)?.settings.arguments;
     return PracticeLobby(
-      repo: ref.watch(_repository),
+      repo: ref.watch(practiceRepositoryProvider),
       scene: space.scene,
       contacts: space.repo,
       demo: space.demo,
+      targetLevelId: argument is String ? argument : null,
     );
   }
 }
@@ -41,12 +32,14 @@ class PracticeLobby extends StatefulWidget {
     required this.scene,
     this.contacts,
     this.demo = false,
+    this.targetLevelId,
     super.key,
   });
   final PracticeRepository repo;
   final SceneMemory scene;
   final ContactsRepository? contacts;
   final bool demo;
+  final String? targetLevelId;
   @override
   State<PracticeLobby> createState() => _PracticeLobbyState();
 }
@@ -62,11 +55,21 @@ class _PracticeLobbyState extends State<PracticeLobby> {
   String? error;
   Contact? person;
   bool busy = false, quota = false;
+  String? _targetLevelId;
+  bool _targetHandled = false,
+      resolvingTarget = false,
+      targetUnavailable = false;
   @override
   void initState() {
     super.initState();
+    final target = widget.targetLevelId?.trim();
+    _targetLevelId = target == null || target.isEmpty ? null : target;
+    resolvingTarget = _targetLevelId != null;
     refresh();
     widget.scene.addListener(filter);
+    if (_targetLevelId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _openTargetLevel());
+    }
   }
 
   @override
@@ -89,6 +92,31 @@ class _PracticeLobbyState extends State<PracticeLobby> {
       person = null;
       levels = widget.repo.levels(widget.scene.value, difficulty)..ignore();
     });
+  }
+
+  Future<void> _openTargetLevel() async {
+    final target = _targetLevelId;
+    if (target == null || _targetHandled) return;
+    _targetHandled = true;
+    try {
+      final level = await widget.repo.findLevel(target);
+      if (!mounted) return;
+      if (level == null) {
+        setState(() {
+          resolvingTarget = false;
+          targetUnavailable = true;
+        });
+        return;
+      }
+      setState(() => resolvingTarget = false);
+      await run(() => start({'level_id': target}));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        resolvingTarget = false;
+        this.error = problem(error);
+      });
+    }
   }
 
   Future<void> run(Future<void> Function() f) async {
@@ -323,6 +351,21 @@ class _PracticeLobbyState extends State<PracticeLobby> {
           children: [
             if (widget.demo) const Text('离线演示 · 示例反馈不会计入真实额度'),
             if (busy) Semantics(liveRegion: true, child: const Text('正在处理…')),
+            if (resolvingTarget)
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: SizedBox.square(
+                  dimension: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                title: Text('正在打开计划中的对练…'),
+              ),
+            if (targetUnavailable)
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.link_off_outlined),
+                title: Text('这项计划中的对练已删除或不可用，请返回今日计划重新选择。'),
+              ),
             if (error != null) Text(error!, semanticsLabel: error),
             if (quota)
               TextButton(
@@ -377,7 +420,7 @@ class _PracticeLobbyState extends State<PracticeLobby> {
                   ChoiceChip(
                     label: Text(d == null ? '全部难度' : '难度 $d'),
                     selected: difficulty == d,
-                    onSelected: busy
+                    onSelected: busy || resolvingTarget
                         ? null
                         : (_) {
                             setState(() {
@@ -401,7 +444,7 @@ class _PracticeLobbyState extends State<PracticeLobby> {
                   '难度 ${l['difficulty']} · ${skills[l['target_item']] ?? '整场表达'}',
                 ),
                 trailing: const Icon(Icons.chevron_right),
-                onTap: busy
+                onTap: busy || resolvingTarget
                     ? null
                     : () => run(
                         () => start({
@@ -422,7 +465,7 @@ class _PracticeLobbyState extends State<PracticeLobby> {
               decoration: const InputDecoration(labelText: '你想和对方谈什么？'),
             ),
             FilledButton(
-              onPressed: busy || scenario.text.trim().isEmpty
+              onPressed: busy || resolvingTarget || scenario.text.trim().isEmpty
                   ? null
                   : () => run(
                       () => start({

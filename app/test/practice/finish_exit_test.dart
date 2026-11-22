@@ -5,6 +5,7 @@ import 'package:high_eq/core/api.dart';
 import 'package:high_eq/core/sse.dart';
 import 'package:high_eq/core/transport.dart';
 import 'package:high_eq/features/practice/chat.dart';
+import 'package:high_eq/features/practice/conversation.dart';
 import 'package:high_eq/features/practice/demo.dart';
 import 'package:high_eq/features/practice/repository.dart';
 
@@ -125,7 +126,50 @@ class RepeatedExitAfterNetwork extends DemoPractice {
   };
 }
 
+class OfflineExitJournal extends DemoPractice {
+  String? offlineId;
+  int exits = 0;
+
+  @override
+  Future<Json> get(String id) async {
+    if (id == offlineId) throw const FormatException('offline');
+    return super.get(id);
+  }
+
+  @override
+  Future<Json> exit(String id) {
+    exits++;
+    return super.exit(id);
+  }
+}
+
 void main() {
+  test('详情未读时即使日志有退出命令也不允许退出', () async {
+    final r = OfflineExitJournal();
+    final initial = await r.create({
+      'request_id': 'a',
+      'scene': 'work',
+      'scenario': '排练',
+    });
+    await r.remember('a', {
+      'kind': 'exit',
+      'fallback': {
+        'kind': 'send',
+        'body': {'client_message_id': 'b', 'text': '最早的原发言'},
+      },
+    });
+    r.offlineId = 'a';
+    final c = Conversation(r, initial);
+    addTearDown(c.dispose);
+
+    await c.recover();
+
+    expect(c.needsRead, isTrue);
+    expect(c.canExit, isFalse);
+    await c.exit();
+    expect(r.exits, 0);
+  });
+
   for (final safety in [true, false]) {
     testWidgets('评分${safety ? '危机' : '503'}只显示对应终止与原日退款', (t) async {
       final r = Faults(safety: safety);

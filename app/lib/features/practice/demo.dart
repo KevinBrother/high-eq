@@ -6,6 +6,8 @@ import '../contacts/repository.dart';
 import '../contacts/scene.dart';
 import 'repository.dart';
 
+const demoPlanLevelId = '85b72033-9f07-4bbc-8567-fc31f26508b4';
+
 /// Account-lifetime offline rehearsal. No HTTP client, inference or balance writes.
 class DemoPractice implements PracticeRepository {
   DemoPractice({ContactsRepository? contacts}) : _contacts = contacts;
@@ -22,7 +24,9 @@ class DemoPractice implements PracticeRepository {
     for (final scene in Scene.values)
       for (var d = 1; d <= 3; d++)
         {
-          'id': newRequestId(),
+          'id': scene == Scene.work && d == 3
+              ? demoPlanLevelId
+              : newRequestId(),
           'title': ['先说发生了什么', '说清我的需要', '一起商量下一步'][d - 1],
           'scene': scene.name,
           'difficulty': d,
@@ -77,6 +81,17 @@ class DemoPractice implements PracticeRepository {
       )
       .map(_copy)
       .toList();
+  @override
+  Future<Json?> findLevel(String id) async {
+    final level = _levels.where((level) => level['id'] == id).firstOrNull;
+    return level == null ? null : _copy(level);
+  }
+
+  bool completedLevel(String contentId) => _sessions.values.any(
+    (session) =>
+        session['level_id'] == contentId && session['status'] == 'complete',
+  );
+
   @override
   Future<List<Json>> history() async {
     await _pruneDeletedContacts();

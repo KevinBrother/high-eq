@@ -35,6 +35,7 @@ abstract interface class PracticeRepository {
   Future<bool> practiceConsent();
   Future<void> grantPracticeConsent();
   Future<List<Json>> levels(Scene scene, int? difficulty);
+  Future<Json?> findLevel(String id);
   Future<List<Json>> history();
   Future<Json> create(Json body);
   Future<Json> get(String id);
@@ -74,6 +75,16 @@ class ApiPractice implements PracticeRepository {
       difficulty: difficulty,
     ),
   );
+  @override
+  Future<Json?> findLevel(String id) async {
+    for (final scene in Scene.values) {
+      final rows = await levels(scene, null);
+      final match = rows.where((row) => row['id'] == id).firstOrNull;
+      if (match != null) return match;
+    }
+    return null;
+  }
+
   @override
   Future<List<Json>> history() =>
       _pages((c) => wire.listSessions(scope: scope, cursor: c, limit: 100));

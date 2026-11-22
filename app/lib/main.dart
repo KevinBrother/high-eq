@@ -5,6 +5,8 @@ import 'core/api.dart';
 import 'core/providers.dart';
 import 'core/session.dart';
 import 'core/theme.dart';
+import 'features/growth/growth_page.dart';
+import 'features/growth/practice_home.dart';
 import 'features/home/shell.dart';
 import 'features/replies/share_host.dart';
 import 'features/replies/route.dart';
@@ -141,6 +143,10 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
                 AssessmentBook(api!, scope),
                 startup: settings.name == '/',
               );
+            case '/practice':
+              return const PracticeHomeRoute();
+            case '/growth':
+              return const GrowthRoute();
             case '/training':
               return const PracticeRoute();
             case '/marks':
