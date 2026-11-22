@@ -57,6 +57,7 @@
 | D35 | 提示词发布指针 | `prompt_releases.task`、`model_id`、`model_kind`、`primary_version_id`、`experiment_version_id`、`experiment_percent` | 平台配置 | 只保存任务/模型到不可变提示词版本的发布指针和实验比例；不存个人分组或渲染结果 | 随平台配置维护；不进入 App 用户导出或普通账号删除；版本只追加，发布指针可原子切换/回滚 | 非用户同意；平台配置 | `[已知]` `[待运营填写]` |
 | D36 | 额度尝试与恢复 | `quota_attempts.activity_id`、`token`、`state`、`held_day`、`valid_until`、`metered` | 普通账号/源结算元数据 | 内部工作令牌和状态，不含正文；`held_day` 是原时区自然日，`valid_until` 限定有效占位 | 随活动/账号级联；仅有效 `held`/`metered` 占位计入原日可用量，重连/重试按 `token` 和 `valid_until` 恢复或替换过期尝试；单条活动删除级联本行但不自动退回 `daily_quota_usage` 日汇总；T35 目标仅导出结算状态，不导出内部令牌 | 对应 AI 功能 | `[已知]` `[待 T35 对表]` |
 | D37 | 提交分析前的本机分享草稿 | Android：`ReplyShare.pending`（当前 Activity 的一次性内存）；iOS：App Group `group.cn.higheq.highEq.reply` 下 `Library/Caches/T22/incoming` | 设备端临时源/交接副本 | 仅用户本人交接给主 App；Android 不写磁盘；iOS 使用 `.atomic` + `.completeFileProtection` 系统完整文件保护，不是业务 AES-GCM；分享扩展不联网、不读剪贴板、不要求登录 | Android 由系统分享把纯文本交给当前 Activity 内存，`take` 返回后立即清空，进程结束消失；iOS 在用户点“带入草稿”时原子写入，再次带入替换 `incoming`，主 App 启动、回到前台或收到可用通知时可先领取，领取不要求已登录；未登录时不显示正文，也可丢弃，登录后才可查看或编辑。领取时将 `incoming` 改名为 `claimed`，成功读取后删除。10 分钟仅用于拒领，App 未打开时不保证到点物理擦除，过期 `incoming` 留到下次领取/清理；未分析不上传；提交前不上传；只有开始分析并确认提交后才进入上传链路 | `chat_import`（提交分析时确认） | `[已知：bc66e6e]` `[待真机复核]` `[待 T35 对表]`；T21 服务端仍未合入 |
+| D38 | 对练工作租约与结算补偿 | `practice_work.activity_id`、`used_tokens`、`worker`、`valid_until`、`action`、`client_id`、`completed_at`、`delivery_pending`、`settlement_pending`、`settlement_outcome` | 活动级关联元数据 | 不含正文；`worker` 是短期工作令牌，`valid_until` 限定 95 秒租约，`used_tokens` 上限 30000；`settlement_outcome` 只记录安全、审核不可用或失败等补偿状态 | `activity_id` 以 `REFERENCES activities ON DELETE CASCADE` 随单项活动删除；T19 清理钩子的核对范围是 `account`、`contacts`、`sessions`，并在删除后检查不再存在本人 `practice_work` 源；内部导出按每批 50 条输出会话、`setup` 和 `source_id`，`capped` 保留最后完整回复、丢弃未完成尾部，无完整回复时退款并禁止 finish；但通用 `/v1/me/export` 和 `/v1/me/data/:kind/:id` 仍为 `501 not_implemented`，T35 接线前不可由用户入口使用 | `practice`；选用关系人时检查其使用权；仅在接入 T25 画像摘要时额外检查 `contacts` 同意（本次 T19 未接入摘要） | T19 后端增量，不计入 `f60ace3` 的 42 项；T20 首用授权与 T35 通用权利入口分开验收。 |
 
 ## 3. 敏感字段加密核对
 
@@ -94,7 +95,7 @@
 
 ## 6. 导出与删除验收清单
 
-- [ ] 固定基线通用 `GET /v1/me/export` 当前返回 `501 not_implemented`；T35 必须接线后才能验证模块清单覆盖 D01–D37 中应导出的个人数据，并排除密钥、HMAC、平台收据原文和他人数据。D37 是设备端临时交接，不计入 PG17 42 项，须另验领取、过期拒领和实际清理边界。`[待 T35 对表]`
+- [ ] 固定基线通用 `GET /v1/me/export` 当前返回 `501 not_implemented`；T35 必须接线后才能验证模块清单覆盖 D01–D38 中应导出的个人数据，并排除密钥、HMAC、平台收据原文和他人数据。D37 是设备端临时交接，不计入 PG17 42 项，须另验领取、过期拒领和实际清理边界。`[待 T35 对表]`
 - [ ] 固定基线通用 `DELETE /v1/me/data/:kind/:id` 当前返回 `501 not_implemented`；T35 接线后须能从源记录追到 `scores`、`growth_scores`、`ai_calls`、画像观察、计划和关联日志，并验证删除后重算不可回填。`[待 T35 对表]`
 - [ ] 注销冻结、15 天冷静期、撤销注销、按根清理和支付订单脱敏，分别核对线上签收；另在 T23 合入后验证 `review_tombstones` 的清理。前者是基线设计，后者是候选验收，不应混称已上线。`[待 T35 对表]`
 - [ ] 健康窗口专用删除保持按账号、渠道和 30 秒起点定位，越权、相邻窗口和其他账号不受影响；该能力与通用单条删除分开验收。`[待 T35 对表]`

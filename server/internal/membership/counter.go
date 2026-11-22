@@ -26,7 +26,7 @@ func (s *Service) capacity(ctx context.Context, tx pgx.Tx, user uuid.UUID, f str
 	e := tx.QueryRow(ctx, `select coalesce((select used from daily_quota_usage
         where user_id=$1 and feature=$2 and charged_day=$3::date),0) + (
         select count(*) from quota_attempts q join activities a on a.id=q.activity_id
-        where a.user_id=$1 and a.kind::text=$2 and q.held_day=$3::date
+        where a.user_id=$1 and (a.kind::text=$2 or ($2='practice' and a.kind='drill')) and q.held_day=$3::date
           and q.activity_id<>$4 and q.state='held' and q.metered and q.valid_until>$5
     )`, user, f, a.day, exclude, a.at).Scan(&baseline)
 	if e != nil {

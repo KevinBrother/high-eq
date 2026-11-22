@@ -28,6 +28,9 @@ func load(ctx context.Context, tx pgx.Tx, user, id uuid.UUID) (operation, error)
 	e := tx.QueryRow(ctx, `select a.kind::text,coalesce(q.state,''),coalesce(q.token,$3),coalesce(q.valid_until,a.created_at)
         from activities a left join quota_attempts q on q.activity_id=a.id
         where a.id=$1 and a.user_id=$2`, id, user, uuid.Nil).Scan(&op.feature, &op.State, &op.Token, &op.until)
+	if op.feature == "drill" {
+		op.feature = "practice"
+	}
 	if e == nil && !slices.Contains(features, op.feature) {
 		return op, ErrConflict
 	}
@@ -109,7 +112,7 @@ func (s *Service) SaveApproved(ctx context.Context, tx pgx.Tx, user, id, token u
 		return e
 	}
 	var saved bool
-	if e = tx.QueryRow(ctx, `select (case when kind='practice' then exists(
+	if e = tx.QueryRow(ctx, `select (case when kind in ('practice','drill') then exists(
             select from practice_messages where activity_id=a.id and role='assistant' and octet_length(content_enc)>0
         ) else octet_length(content_enc)>0 end) is true
         from activities a where a.id=$1 and user_id=$2`, id, user).Scan(&saved); e != nil {

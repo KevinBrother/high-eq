@@ -4,12 +4,209 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+func TestCallGuardFencesDispatchAndFragments(t *testing.T) {
+	p, m := endpoint{id: uuid.New()}, endpoint{id: uuid.New()}
+	scope := Scope{User: uuid.New(), Operation: uuid.New(), Activity: uuid.New()}
+	newRouter := func() *Router {
+		r := &Router{resolvePrompt: func(context.Context, string, uuid.UUID, uuid.UUID, map[string]string) (uuid.UUID, string, error) {
+			return uuid.New(), "fixture", nil
+		}, first: time.Second, total: 2 * time.Second, review: time.Second, load: func(context.Context, Call) (plan, error) {
+			return plan{primary: p, moderator: m}, nil
+		}, record: func(context.Context, Call, attemptStat) error { return nil }, stop: func(context.Context, Scope, Terminal) error { return nil }}
+		return r
+	}
+
+	t.Run("after input review", func(t *testing.T) {
+		r := newRouter()
+		guardCalls, modelCalls, reviewCalls := 0, 0, 0
+		r.dispatch = func(_ context.Context, _ uuid.UUID, _ endpoint, k Kind, _ Request) (Result, error) {
+			if k == Moderation {
+				reviewCalls++
+				return Result{Object: []byte(`{"verdict":"allow"}`)}, nil
+			}
+			modelCalls++
+			return Result{}, errors.New("model must not run")
+		}
+		revoked := errors.New("authorization revoked")
+		c := Call{Task: RolePlay, Scope: scope, Mode: Text, Messages: []Message{{"user", "合成输入"}}, Guard: func(context.Context) error {
+			guardCalls++
+			if guardCalls > 1 {
+				return revoked
+			}
+			return nil
+		}}
+		if _, err := r.Run(context.Background(), c); !errors.Is(err, revoked) {
+			t.Fatalf("got %v want guard error", err)
+		}
+		if guardCalls != 2 || reviewCalls != 1 || modelCalls != 0 {
+			t.Fatalf("guard=%d reviews=%d model=%d", guardCalls, reviewCalls, modelCalls)
+		}
+	})
+
+	t.Run("before every fragment", func(t *testing.T) {
+		r := newRouter()
+		var events []string
+		guardCalls := 0
+		var denied bool
+		revoked := errors.New("session ended")
+		r.dispatch = func(_ context.Context, _ uuid.UUID, _ endpoint, k Kind, req Request) (Result, error) {
+			if k == Moderation {
+				return Result{Object: []byte(`{"verdict":"allow"}`)}, nil
+			}
+			if err := req.OnDelta("甲。"); err != nil {
+				return Result{}, err
+			}
+			denied = true
+			return Result{}, req.OnDelta("乙。")
+		}
+		c := Call{Task: RolePlay, Scope: scope, Mode: Stream, Messages: []Message{{"user", "合成输入"}}, Emit: func(_ context.Context, e Event) error {
+			events = append(events, e.Name+":"+e.Text)
+			return nil
+		}, Guard: func(context.Context) error {
+			guardCalls++
+			if denied {
+				return revoked
+			}
+			return nil
+		}}
+		if _, err := r.Run(context.Background(), c); !errors.Is(err, revoked) {
+			t.Fatalf("got %v want guard error", err)
+		}
+		if guardCalls < 4 || !reflect.DeepEqual(events, []string{"fragment:甲。"}) {
+			t.Fatalf("guard=%d events=%v", guardCalls, events)
+		}
+	})
+
+	t.Run("before output review after revocation", func(t *testing.T) {
+		r := newRouter()
+		revoked := errors.New("authorization revoked")
+		var denied bool
+		var events []string
+		reviewCalls := 0
+		r.dispatch = func(_ context.Context, _ uuid.UUID, _ endpoint, k Kind, req Request) (Result, error) {
+			if k == Moderation {
+				reviewCalls++
+				return Result{Object: []byte(`{"verdict":"allow"}`)}, nil
+			}
+			if err := req.OnDelta("甲。"); err != nil {
+				return Result{}, err
+			}
+			denied = true
+			return Result{}, req.OnDelta("乙。")
+		}
+		c := Call{Task: RolePlay, Scope: scope, Mode: Stream, Messages: []Message{{"user", "合成输入"}}, Emit: func(_ context.Context, e Event) error {
+			events = append(events, e.Name+":"+e.Text)
+			return nil
+		}, Guard: func(context.Context) error {
+			if denied {
+				return revoked
+			}
+			return nil
+		}}
+		if _, err := r.Run(context.Background(), c); !errors.Is(err, revoked) {
+			t.Fatalf("got %v want guard error", err)
+		}
+		if reviewCalls != 2 || !reflect.DeepEqual(events, []string{"fragment:甲。"}) {
+			t.Fatalf("reviews=%d events=%v", reviewCalls, events)
+		}
+	})
+
+	t.Run("before full output review after revocation", func(t *testing.T) {
+		r := newRouter()
+		revoked := errors.New("authorization revoked")
+		var denied bool
+		reviewCalls := 0
+		r.dispatch = func(_ context.Context, _ uuid.UUID, _ endpoint, k Kind, req Request) (Result, error) {
+			if k == Moderation {
+				reviewCalls++
+				return Result{Object: []byte(`{"verdict":"allow"}`)}, nil
+			}
+			if err := req.OnDelta("完整回复"); err != nil {
+				return Result{}, err
+			}
+			denied = true
+			return Result{}, nil
+		}
+		c := Call{Task: RolePlay, Scope: scope, Mode: Text, Messages: []Message{{"user", "合成输入"}}, Guard: func(context.Context) error {
+			if denied {
+				return revoked
+			}
+			return nil
+		}}
+		if _, err := r.Run(context.Background(), c); !errors.Is(err, revoked) {
+			t.Fatalf("got %v want guard error", err)
+		}
+		if reviewCalls != 1 {
+			t.Fatalf("reviews=%d", reviewCalls)
+		}
+	})
+
+	t.Run("before backup review after revocation", func(t *testing.T) {
+		primary, backup, moderator := endpoint{id: uuid.New()}, endpoint{id: uuid.New()}, endpoint{id: uuid.New()}
+		revoked := errors.New("authorization revoked")
+		var denied bool
+		reviewCalls, backupCalls := 0, 0
+		r := &Router{resolvePrompt: func(context.Context, string, uuid.UUID, uuid.UUID, map[string]string) (uuid.UUID, string, error) {
+			return uuid.New(), "fixture", nil
+		}, first: time.Second, total: 2 * time.Second, review: time.Second, load: func(context.Context, Call) (plan, error) {
+			return plan{primary: primary, backup: backup, moderator: moderator}, nil
+		}, record: func(context.Context, Call, attemptStat) error { return nil }, stop: func(context.Context, Scope, Terminal) error { return nil }}
+		r.dispatch = func(_ context.Context, _ uuid.UUID, e endpoint, k Kind, _ Request) (Result, error) {
+			if k == Moderation {
+				reviewCalls++
+				return Result{Object: []byte(`{"verdict":"allow"}`)}, nil
+			}
+			if e.id == primary.id {
+				denied = true
+				return Result{}, ErrProvider
+			}
+			backupCalls++
+			return Result{}, nil
+		}
+		c := Call{Task: RolePlay, Scope: scope, Mode: Text, Messages: []Message{{"user", "合成输入"}}, Guard: func(context.Context) error {
+			if denied {
+				return revoked
+			}
+			return nil
+		}}
+		if _, err := r.Run(context.Background(), c); !errors.Is(err, revoked) {
+			t.Fatalf("got %v want revocation", err)
+		}
+		if reviewCalls != 1 || backupCalls != 0 {
+			t.Fatalf("reviews=%d backup calls=%d", reviewCalls, backupCalls)
+		}
+	})
+}
+
+func TestCallPreservesFragmentEmitError(t *testing.T) {
+	primary, moderator := endpoint{id: uuid.New()}, endpoint{id: uuid.New()}
+	want := errors.New("business callback rejected fragment")
+	r := &Router{resolvePrompt: func(context.Context, string, uuid.UUID, uuid.UUID, map[string]string) (uuid.UUID, string, error) {
+		return uuid.New(), "fixture", nil
+	}, first: time.Second, total: 2 * time.Second, review: time.Second, load: func(context.Context, Call) (plan, error) {
+		return plan{primary: primary, moderator: moderator}, nil
+	}, record: func(context.Context, Call, attemptStat) error { return nil }, stop: func(context.Context, Scope, Terminal) error { return nil }}
+	r.dispatch = func(_ context.Context, _ uuid.UUID, _ endpoint, k Kind, req Request) (Result, error) {
+		if k == Moderation {
+			return Result{Object: []byte(`{"verdict":"allow"}`)}, nil
+		}
+		return Result{}, req.OnDelta("甲。")
+	}
+	c := Call{Task: RolePlay, Scope: Scope{User: uuid.New(), Operation: uuid.New(), Activity: uuid.New()}, Mode: Stream, Messages: []Message{{"user", "合成输入"}}, Emit: func(context.Context, Event) error {
+		return want
+	}}
+	if _, err := r.Run(context.Background(), c); !errors.Is(err, want) {
+		t.Fatalf("got %v want callback error", err)
+	}
+}
 
 func TestStickyCohorts(t *testing.T) {
 	for _, percent := range []int{0, 1, 17, 50, 99, 100} {

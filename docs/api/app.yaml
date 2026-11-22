@@ -3350,7 +3350,7 @@ components:
       - settlement
       properties:
         session_id: {type: string, format: uuid}
-        status: {type: string, enum: [pending, active, complete, exited, safety, moderation_unavailable, failed]}
+        status: {type: string, enum: [pending, active, capped, complete, exited, safety, moderation_unavailable, failed]}
         mode: {type: string, enum: [single_skill, full_session]}
         target_item: {type: string, nullable: true, pattern: ^(observation|feeling|need|request)$}
         messages:
@@ -3360,7 +3360,7 @@ components:
         settlement: {$ref: '#/components/schemas/Settlement'}
         level_id: {type: string, format: uuid}
         result: {$ref: '#/components/schemas/FinishSessionResult'}
-      description: 已完成会话带 result，供重连或重练对比分数；仅关卡会话带 level_id。messages 只含已保存记录。
+      description: capped 表示预算耗尽但已有完整历史，仍可 finish 评分；已完成会话带 result，供重连或重练对比分数；仅关卡会话带 level_id。messages 只含已保存记录。
     Level:
       type: object
       additionalProperties: false

@@ -18,6 +18,7 @@ import (
 	"high-eq/server/internal/membership"
 	"high-eq/server/internal/payments"
 	"high-eq/server/internal/privacy"
+	"high-eq/server/internal/training"
 	"high-eq/server/migrations"
 )
 
@@ -25,6 +26,7 @@ import (
 type Runtime struct {
 	Payments             *payments.Service
 	Marks                *marks.Service
+	Practice             *training.Service
 	Emotion              *emotion.Service
 	Assessments          *assessment.Service
 	catalog              *gateway.Catalog
@@ -80,7 +82,7 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	if e != nil {
 		return nil, e
 	}
-	hooks, e := privacy.NewRegistry([]string{"assessments", "payments", "membership", "accounts", "ai_calls", "emotion", "manual_marks"}, payments.Hooks(), s.Membership.Hooks(), assessment.Hooks(c.Fields), accounts.Hooks(c.Fields), gateway.Hooks(), emotion.Hooks(c.Fields), marks.Hooks(c.Fields))
+	hooks, e := privacy.NewRegistry([]string{"training", "assessments", "payments", "membership", "accounts", "ai_calls", "emotion", "manual_marks"}, payments.Hooks(), s.Membership.Hooks(), assessment.Hooks(c.Fields), accounts.Hooks(c.Fields), training.Hooks(c.Fields), gateway.Hooks(), emotion.Hooks(c.Fields), marks.Hooks(c.Fields))
 	if e != nil {
 		return nil, e
 	}
@@ -103,9 +105,10 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	if e != nil {
 		return nil, e
 	}
-	s.Bus = events.New(s.Data, nil)
+	s.Bus = events.New(s.Data, training.Decoder(c.Fields, nil))
 	s.Marks = &marks.Service{Fields: c.Fields, DB: s.db, Data: s.Data}
 	s.Emotion = &emotion.Service{DB: s.db, Data: s.Data, Fields: c.Fields, Bus: s.Bus}
+	s.initPractice()
 	s.Assessments = assessment.New(bank, s.Accounts, c.Fields, s.Bus, s.db)
 	ok = true
 	return s, nil

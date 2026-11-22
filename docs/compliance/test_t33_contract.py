@@ -79,10 +79,6 @@ class BaselineSourceFactsContract(unittest.TestCase):
 
     def test_candidate_modules_are_not_described_as_baseline(self) -> None:
         self.assertEqual(
-            sorted(p.name for p in (ROOT / "server/internal/training").iterdir()),
-            [".gitkeep"],
-        )
-        self.assertEqual(
             sorted(p.name for p in (ROOT / "server/internal/profile").iterdir()),
             [".gitkeep"],
         )
@@ -91,14 +87,102 @@ class BaselineSourceFactsContract(unittest.TestCase):
         )
 
         corpus = compliance_corpus()
-        for term in ("server/internal/training/", "server/internal/profile/", "reply_requests"):
+        for term in ("server/internal/profile/", "reply_requests"):
             self.assertRegex(
                 corpus,
                 rf"{re.escape(term)}[^\n]*(?:候选|待对表|不存在)",
                 f"{term} must be marked as candidate/pending, not baseline",
             )
-        self.assertNotRegex(corpus, r"服务端会拒绝未授权创建/继续对练")
+        self.assertIn("客户端仍未写入", read("docs/compliance/separate-consents.md"))
         self.assertNotRegex(corpus, r"回复类.*触发器.*禁止写入")
+
+    def test_t19_practice_contract_is_substantive(self) -> None:
+        migration = read("server/migrations/20261122003019_practice_work.up.sql")
+        down = read("server/migrations/20261122003019_practice_work.down.sql")
+        for needle in (
+            "REFERENCES activities ON DELETE CASCADE",
+            "used_tokens integer NOT NULL DEFAULT 0 CHECK(used_tokens BETWEEN 0 AND 30000)",
+            "worker uuid, valid_until timestamptz",
+            "settlement_pending boolean NOT NULL DEFAULT false",
+            "settlement_outcome text CHECK(settlement_outcome IN ('safety','moderation_unavailable','failed'))",
+            "CHECK ((worker IS NULL) = (valid_until IS NULL))",
+            "'capped'",
+            "19000000-1000-4000-8000-000000000001",
+        ):
+            self.assertIn(needle, migration)
+        self.assertIn("UPDATE activities SET state='failed' WHERE state='capped'", down)
+
+        store = read("server/internal/training/store.go")
+        self.assertIn('accounts.Granted(ctx, tx, u, "practice")', store)
+        allowed = store.split("func (s *Service) allowed(", 1)[1].split("\nfunc ", 1)[0]
+        self.assertRegex(allowed, re.compile(
+            r'if in\.Contact != nil \{\s+if s\.Summary != nil \{.*?'
+            r'accounts\.Granted\(ctx, tx, u, "contacts"\).*?return membership\.ErrForbidden'
+            r'\s+\}\s+\}\s+return s\.Rights\.RequireContact\(ctx, tx, u, in\.Contact\)', re.S))
+        for doc in ("data-inventory.md", "privacy-policy-draft.md", "separate-consents.md"):
+            self.assertIn("仅在接入 T25 画像摘要时额外检查 `contacts`", read("docs/compliance/" + doc))
+
+        work = read("server/internal/training/work.go")
+        self.assertIn(
+            "worker=$3 and valid_until>clock_timestamp()",
+            work,
+        )
+        self.assertIn("type guardedRunner struct", work)
+        self.assertIn("c.Guard = r.guard", work)
+        self.assertIn("return s.Accounts.WithSession(ctx, p, false", work)
+        self.assertIn("return s.allowed(ctx, tx, j.user, j.input)", work)
+        self.assertIn("update activities set state='capped'", work)
+        self.assertIn("delete from practice_messages", work)
+
+        privacy = read("server/internal/training/privacy.go")
+        self.assertIn('case "account", "contacts", "sessions"', privacy)
+        self.assertIn("join practice_work on activity_id=id", privacy)
+        self.assertIn("limit 50", privacy)
+        self.assertIn('json:"setup"', privacy)
+        self.assertIn('json:"source_id"', privacy)
+
+        delivery = read("server/internal/training/delivery.go")
+        self.assertIn("interval '95 seconds'", read("server/internal/training/work.go"))
+        self.assertIn("interval '720 hours'", delivery)
+
+        http = read("server/internal/service/http.go")
+        routes = re.search(r"var accountRoutes = map\[string\]bool\{(.*?)\n\}", http, re.S)
+        self.assertIsNotNone(routes)
+        route_block = routes.group(1)
+        for route in (
+            "GET /v1/levels",
+            "GET /v1/sessions",
+            "POST /v1/sessions",
+            "GET /v1/sessions/:session_id",
+            "POST /v1/sessions/:session_id/messages",
+            "POST /v1/sessions/:session_id/exit",
+            "POST /v1/sessions/:session_id/finish",
+        ):
+            self.assertIn(route, route_block)
+        self.assertNotIn("GET /v1/me/export", route_block)
+        self.assertNotIn("DELETE /v1/me/data/:kind/:id", route_block)
+
+        inventory = read("docs/compliance/data-inventory.md")
+        d38 = re.search(r"^\| D38 \|.*$", inventory, re.M)
+        self.assertIsNotNone(d38, "data-inventory.md must have a D38 practice_work row")
+        for phrase in (
+            "practice_work",
+            "used_tokens",
+            "worker",
+            "valid_until",
+            "settlement_pending",
+            "settlement_outcome",
+            "capped",
+            "ON DELETE CASCADE",
+            "不含正文",
+            "501 not_implemented",
+            "42",
+            "T35",
+            "T19 后端增量",
+        ):
+            self.assertIn(phrase, d38.group(0), phrase)
+
+        self.assertIn("TestPracticeWire", read("docs/compliance/qa.md"))
 
     def test_candidate_evidence_uses_archive_hash_not_working_tree(self) -> None:
         corpus = compliance_corpus()

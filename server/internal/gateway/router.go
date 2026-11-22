@@ -44,6 +44,10 @@ type Call struct {
 	Variables map[string]string
 	Messages  []Message
 	Emit      func(context.Context, Event) error
+	// Guard rechecks authorization before any external review, after moderation,
+	// and before each model call or streamed fragment. It must never be sourced
+	// from client input.
+	Guard func(context.Context) error
 }
 
 // Text is provisional for fragment events. For terminal events replace all fragments with Terminal.
@@ -137,11 +141,17 @@ func (r *Router) Run(parent context.Context, c Call) (Reply, error) {
 		if err != nil {
 			return Reply{}, err
 		}
+		if err := guard(ctx, c.Guard); err != nil {
+			return Reply{}, err
+		}
 		review := reviewer{r: r, c: attempt, p: p}
 		input, _ := json.Marshal(attempt.Messages)
 		if term, err := review.check(ctx, string(input)); term != nil {
 			return r.finish(parent, c, *term, err)
 		} else if err != nil {
+			return Reply{}, err
+		}
+		if err := guard(ctx, c.Guard); err != nil {
 			return Reply{}, err
 		}
 		start := time.Now()
@@ -195,6 +205,13 @@ func (r *Router) log(parent context.Context, c Call, s attemptStat) error {
 	}
 	return nil
 }
+func guard(ctx context.Context, check func(context.Context) error) error {
+	if check == nil {
+		return nil
+	}
+	return check(ctx)
+}
+
 func (r *Router) finish(parent context.Context, c Call, t Terminal, prior error) (Reply, error) {
 	var sendErr error
 	if c.Emit != nil {

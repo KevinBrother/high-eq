@@ -292,6 +292,7 @@ const (
 // Defines values for SessionStatus.
 const (
 	SessionStatusActive                SessionStatus = "active"
+	SessionStatusCapped                SessionStatus = "capped"
 	SessionStatusComplete              SessionStatus = "complete"
 	SessionStatusExited                SessionStatus = "exited"
 	SessionStatusFailed                SessionStatus = "failed"
@@ -1094,7 +1095,7 @@ type SendProfileFeedbackInput struct {
 // SendProfileFeedbackInputSubject defines model for SendProfileFeedbackInput.Subject.
 type SendProfileFeedbackInputSubject string
 
-// Session 已完成会话带 result，供重连或重练对比分数；仅关卡会话带 level_id。messages 只含已保存记录。
+// Session capped 表示预算耗尽但已有完整历史，仍可 finish 评分；已完成会话带 result，供重连或重练对比分数；仅关卡会话带 level_id。messages 只含已保存记录。
 type Session struct {
 	LevelId   *openapi_types.UUID  `json:"level_id,omitempty"`
 	Messages  []Message            `json:"messages"`

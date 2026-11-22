@@ -17,6 +17,7 @@ import (
 	"high-eq/server/internal/marks"
 	"high-eq/server/internal/membership"
 	"high-eq/server/internal/payments"
+	"high-eq/server/internal/training"
 )
 
 func problem(c *gin.Context, status int, code, msg string, retry bool) {
@@ -25,6 +26,7 @@ func problem(c *gin.Context, status int, code, msg string, retry bool) {
 
 // The operation gate keeps unimplemented generated methods unreachable.
 type appAPI struct {
+	training *training.Service
 	app.ServerInterface
 	payments    *payments.Service
 	marks       *marks.Service
@@ -49,6 +51,7 @@ func (a appAPI) CheckHealth(c *gin.Context) {
 // frozen-account permissions from PATCH and POST on the same paths.
 var accountRoutes = map[string]bool{
 	"GET /v1/marks": false, "POST /v1/marks": false, "PATCH /v1/marks/:id": false, "DELETE /v1/marks/:id": false,
+	"GET /v1/levels": false, "GET /v1/sessions": false, "POST /v1/sessions": false, "GET /v1/sessions/:session_id": false, "POST /v1/sessions/:session_id/messages": false, "POST /v1/sessions/:session_id/exit": false, "POST /v1/sessions/:session_id/finish": false,
 	"POST /v1/signal-windows": false, "DELETE /v1/signal-windows": false, "GET /v1/signal-baselines": false,
 	"POST /v1/signal-events": false, "GET /v1/signal-events": false, "PATCH /v1/signal-events/:id": false,
 	"GET /v1/assessments/instrument": false, "GET /v1/assessments": false, "POST /v1/assessments": false,
@@ -96,6 +99,9 @@ func gate(auth *accounts.Service) func(*gin.Context) {
 	}
 }
 func newRouter(markSvc *marks.Service, pay *payments.Service, health func(context.Context) error, auth *accounts.Service, mountAdmin func(gin.IRouter), rights *membership.Service, surveys *assessment.Service, signals ...*emotion.Service) *gin.Engine {
+	return practiceRouter(nil, markSvc, pay, health, auth, mountAdmin, rights, surveys, signals...)
+}
+func practiceRouter(practice *training.Service, markSvc *marks.Service, pay *payments.Service, health func(context.Context) error, auth *accounts.Service, mountAdmin func(gin.IRouter), rights *membership.Service, surveys *assessment.Service, signals ...*emotion.Service) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -115,7 +121,7 @@ func newRouter(markSvc *marks.Service, pay *payments.Service, health func(contex
 	if len(signals) > 0 {
 		signalService = signals[0]
 	}
-	app.RegisterHandlersWithOptions(r, appAPI{marks: markSvc, payments: pay, signals: signalService, health: health, accounts: auth, assessments: surveys, membership: rights}, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(auth)}, ErrorHandler: invalid})
+	app.RegisterHandlersWithOptions(r, appAPI{training: practice, marks: markSvc, payments: pay, signals: signalService, health: health, accounts: auth, assessments: surveys, membership: rights}, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(auth)}, ErrorHandler: invalid})
 	if mountAdmin != nil {
 		mountAdmin(r)
 	} else {

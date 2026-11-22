@@ -67,6 +67,9 @@ func run() error {
 				if e := s.Accounts.PurgeDue(worker); e != nil && worker.Err() == nil {
 					slog.Error("cleanup unavailable", "module", "accounts", "result", "retry")
 				}
+				if e := s.Practice.ReplayPending(worker); e != nil && worker.Err() == nil {
+					slog.Error("completion delivery unavailable", "module", "practice", "result", "retry")
+				}
 				if e := s.Assessments.ReplayPending(worker); e != nil && worker.Err() == nil {
 					slog.Error("completion delivery unavailable", "module", "assessments", "result", "retry")
 				}

@@ -53,6 +53,9 @@ type generation struct {
 }
 
 func (a *generation) approve(ctx context.Context, text string) error {
+	if err := guard(ctx, a.review.c.Guard); err != nil {
+		return err
+	}
 	t, err := a.review.check(ctx, text)
 	if t != nil {
 		a.terminal = t
@@ -73,11 +76,11 @@ func (a *generation) flush(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	a.sent = true
-	if a.review.c.Emit(ctx, Event{Name: "fragment", Text: s}) != nil {
-		return errSink
+	if err := guard(ctx, a.review.c.Guard); err != nil {
+		return err
 	}
-	return nil
+	a.sent = true
+	return a.review.c.Emit(ctx, Event{Name: "fragment", Text: s})
 }
 func (a *generation) run(parent context.Context) (Result, error) {
 	r, c := a.review.r, a.review.c
@@ -138,6 +141,11 @@ func (a *generation) run(parent context.Context) (Result, error) {
 	}
 	if err := ctx.Err(); err != nil {
 		return res, err
+	}
+	if c.Mode != Stream {
+		if err := guard(ctx, c.Guard); err != nil {
+			return res, err
+		}
 	}
 	switch c.Mode {
 	case Text:
