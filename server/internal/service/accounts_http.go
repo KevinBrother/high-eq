@@ -15,8 +15,10 @@ import (
 
 func accountError(c *gin.Context, e error) {
 	switch {
-	case accounts.IsAuth(e), errors.Is(e, privacy.ErrHidden):
+	case accounts.IsAuth(e):
 		problem(c, 401, "unauthenticated", "验证已失效，请重新登录", false)
+	case errors.Is(e, privacy.ErrHidden):
+		problem(c, 503, "service_unavailable", "数据暂时不可用，请稍后重试", true)
 	case errors.Is(e, accounts.ErrInvalid):
 		problem(c, 400, "invalid_argument", "请检查填写内容及授权版本", false)
 	case errors.Is(e, accounts.ErrQuota):

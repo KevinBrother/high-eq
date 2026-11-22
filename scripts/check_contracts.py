@@ -80,6 +80,15 @@ def check(name):
             assert 'safety' in reply['200']['content']['application/json']['examples']
             err = reply['503']['content']['application/json']['example']
             assert err['code'] == 'moderation_unavailable' and err['retryable'] is True
+        for action in (
+            'refreshTokens', 'listMarks', 'createMark', 'editMark', 'deleteMark',
+            'getPurchaseToken', 'createOrder', 'restorePurchase',
+            'receiveAppleNotification', 'receiveWechatNotification', 'receiveAlipayNotification',
+        ):
+            assert ops[action]['responses']['503'] == {'$ref': '#/components/responses/E503ServiceUnavailable'}
+            reply = resolve(ops[action]['responses'])
+            err = reply['503']['content']['application/json']['example']
+            assert err['code'] == 'service_unavailable' and err['retryable'] is True
         for action in ('createReply', 'createReview', 'sendMessage'):
             assert ops[action]['responses']['429'] == {'$ref': '#/components/responses/E429'}
         for action in ('createMark', 'listMarks'):

@@ -22,6 +22,9 @@ type Channels struct {
 	Android  map[string]*AndroidChannel
 	Products Catalog
 }
+
+var ErrClosureGraceExpired = errors.New("account closure grace period expired")
+
 type Service struct {
 	db       *pgxpool.Pool
 	data     *privacy.Coordinator
@@ -161,7 +164,7 @@ func (s *Service) notify(ctx context.Context, v evidence) error {
 			return e
 		}
 		if due {
-			return privacy.ErrHidden
+			return ErrClosureGraceExpired
 		}
 		return s.apply(ctx, tx, user, v)
 	})

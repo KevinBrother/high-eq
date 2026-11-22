@@ -24,6 +24,8 @@ func paymentError(c *gin.Context, e error) {
 		problem(c, 400, "invalid_argument", "未能核验交易或订单，请核对支付信息", false)
 	case errors.Is(e, payments.ErrGateway):
 		problem(c, 500, "internal_error", "暂未取得可验证的支付参数，请重试原订单或刷新会员状态。", true)
+	case errors.Is(e, payments.ErrClosureGraceExpired):
+		problem(c, 401, "unauthenticated", "验证已失效，请重新登录", false)
 	case errors.Is(e, payments.ErrClosed):
 		problem(c, 500, "internal_error", "支付渠道尚未开放，暂不能核验或开通会员", false)
 	default:

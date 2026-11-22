@@ -353,12 +353,53 @@ func TestPaymentNotificationDuringClosureGrace(t *testing.T) {
 	purchase["revocationDate"] = now.UnixMilli()
 	purchase["signedDate"] = now.UnixMilli()
 	notice := pki.Sign(t, testkit.NoticeAt("REFUND", uuid.NewString(), pki.Sign(t, purchase), now))
+
+	// A committed deletion intent is an availability barrier. Reject the
+	// otherwise valid callback before either the notice or refund fact is
+	// recorded, then prove the exact same signed notification settles after the
+	// barrier is cleared.
+	if _, e := s.db.Exec(ctx, `insert into pending_erasure(root_id) select purge_id from users where id=$1`, a.UserId); e != nil {
+		t.Fatal(e)
+	}
+	var unavailable app.Error
+	post("payment-notifications/apple", "", map[string]string{"signedPayload": notice}, 503, &unavailable)
+	if unavailable.Code != "service_unavailable" || !unavailable.Retryable {
+		t.Fatalf("pending payment barrier response = %#v", unavailable)
+	}
+	var noticeCount int
+	var refundedAt *time.Time
+	var orderState string
+	if e := s.db.QueryRow(ctx, `select count(*) from payment_notices where user_id=$1`, a.UserId).Scan(&noticeCount); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.db.QueryRow(ctx, `select f.refunded_at,o.state from payment_facts f join orders o on o.id=f.order_id where f.user_id=$1 and o.platform='apple'`, a.UserId).Scan(&refundedAt, &orderState); e != nil {
+		t.Fatal(e)
+	}
+	if noticeCount != 0 || refundedAt != nil || orderState != "paid" {
+		t.Fatalf("pending barrier recorded payment early: notices=%d refunded_at=%v state=%s", noticeCount, refundedAt, orderState)
+	}
+	if _, e := s.db.Exec(ctx, `delete from pending_erasure where root_id=(select purge_id from users where id=$1)`, a.UserId); e != nil {
+		t.Fatal(e)
+	}
 	post("payment-notifications/apple", "", map[string]string{"signedPayload": notice}, 200, nil)
+	if e := s.db.QueryRow(ctx, `select count(*) from payment_notices where user_id=$1`, a.UserId).Scan(&noticeCount); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.db.QueryRow(ctx, `select f.refunded_at,o.state from payment_facts f join orders o on o.id=f.order_id where f.user_id=$1 and o.platform='apple'`, a.UserId).Scan(&refundedAt, &orderState); e != nil {
+		t.Fatal(e)
+	}
+	if noticeCount != 1 || refundedAt == nil || orderState != "refunded" {
+		t.Fatalf("cleared barrier did not settle payment: notices=%d refunded_at=%v state=%s", noticeCount, refundedAt, orderState)
+	}
 	if _, e := s.db.Exec(ctx, `update users set closure_requested_at=now()-interval '361 hours' where id=$1`, a.UserId); e != nil {
 		t.Fatal(e)
 	}
 	due := pki.Sign(t, testkit.NoticeAt("REFUND", uuid.NewString(), pki.Sign(t, purchase), now))
-	post("payment-notifications/apple", "", map[string]string{"signedPayload": due}, 401, nil)
+	var expired app.Error
+	post("payment-notifications/apple", "", map[string]string{"signedPayload": due}, 401, &expired)
+	if expired.Code != "unauthenticated" || expired.Retryable {
+		t.Fatalf("expired grace response = %#v", expired)
+	}
 	if _, e := s.db.Exec(ctx, `update users set closure_requested_at=now() where id=$1`, a.UserId); e != nil {
 		t.Fatal(e)
 	}

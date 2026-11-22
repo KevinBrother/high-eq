@@ -158,6 +158,69 @@ func (c *Coordinator) DeleteIf(ctx context.Context, d Deletion, eligible func(pg
 	}
 	return c.finish(ctx, d, target)
 }
+
+// DeleteSource is the session-bound variant of DeleteIf. The account lock is
+// acquired before eligible runs, and the same transaction records the durable
+// deletion intent. A retry may cross only the exact pending root it is deleting;
+// every other pending or ledger barrier remains fail-closed.
+func (c *Coordinator) DeleteSource(ctx context.Context, d Deletion, eligible func(pgx.Tx) (bool, error)) (bool, error) {
+	if _, ok := removes[d.Scope]; !ok || d.UserID == uuid.Nil || d.OperationID == uuid.Nil || (d.Scope == "account") != (d.SourceID == uuid.Nil) {
+		return false, errors.New("invalid deletion")
+	}
+	if len(c.registry.modules) == 0 {
+		return false, errors.New("no active data modules")
+	}
+	var target uuid.UUID
+	found := false
+	e := pgx.BeginFunc(ctx, c.db, func(tx pgx.Tx) error {
+		rr, e := roots(ctx, tx, d.UserID)
+		if errors.Is(e, pgx.ErrNoRows) {
+			return nil
+		}
+		if e != nil {
+			return e
+		}
+		var otherIDs []uuid.UUID
+		for _, r := range rr {
+			exact := r.scope == d.Scope && (d.Scope == "account" || r.id == d.SourceID)
+			if r.pending && !exact {
+				return ErrHidden
+			}
+			if !r.pending {
+				otherIDs = append(otherIDs, r.id)
+			}
+		}
+		blocked, e := c.ledger.blocked(ctx, otherIDs)
+		if e != nil {
+			return e
+		}
+		if blocked {
+			return ErrHidden
+		}
+		if eligible != nil {
+			ok, e := eligible(tx)
+			if e != nil || !ok {
+				return e
+			}
+		}
+		for _, r := range rr {
+			if r.scope == d.Scope && (d.Scope == "account" || r.id == d.SourceID) {
+				target, found = r.id, true
+				_, e := tx.Exec(ctx, `insert into pending_erasure values($1) on conflict do nothing`, target)
+				return e
+			}
+		}
+		return nil
+	})
+	if e != nil {
+		return false, e
+	}
+	if target == uuid.Nil {
+		return found, c.ledger.Check(ctx)
+	}
+	return found, c.finish(ctx, d, target)
+}
+
 func (c *Coordinator) finish(ctx context.Context, d Deletion, target uuid.UUID) error {
 	return pgx.BeginFunc(ctx, c.db, func(tx pgx.Tx) error {
 		rr, e := roots(ctx, tx, d.UserID)

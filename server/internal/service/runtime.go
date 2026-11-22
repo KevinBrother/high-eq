@@ -14,6 +14,7 @@ import (
 	"high-eq/server/internal/events"
 	"high-eq/server/internal/fieldcrypt"
 	"high-eq/server/internal/gateway"
+	"high-eq/server/internal/marks"
 	"high-eq/server/internal/membership"
 	"high-eq/server/internal/payments"
 	"high-eq/server/internal/privacy"
@@ -23,6 +24,7 @@ import (
 // Runtime is the composition root. Business cards add module inventory and both hooks here.
 type Runtime struct {
 	Payments             *payments.Service
+	Marks                *marks.Service
 	Emotion              *emotion.Service
 	Assessments          *assessment.Service
 	catalog              *gateway.Catalog
@@ -78,7 +80,7 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	if e != nil {
 		return nil, e
 	}
-	hooks, e := privacy.NewRegistry([]string{"assessments", "payments", "membership", "accounts", "ai_calls", "emotion"}, payments.Hooks(), s.Membership.Hooks(), assessment.Hooks(c.Fields), accounts.Hooks(c.Fields), gateway.Hooks(), emotion.Hooks(c.Fields))
+	hooks, e := privacy.NewRegistry([]string{"assessments", "payments", "membership", "accounts", "ai_calls", "emotion", "manual_marks"}, payments.Hooks(), s.Membership.Hooks(), assessment.Hooks(c.Fields), accounts.Hooks(c.Fields), gateway.Hooks(), emotion.Hooks(c.Fields), marks.Hooks(c.Fields))
 	if e != nil {
 		return nil, e
 	}
@@ -102,6 +104,7 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 		return nil, e
 	}
 	s.Bus = events.New(s.Data, nil)
+	s.Marks = &marks.Service{Fields: c.Fields, DB: s.db, Data: s.Data}
 	s.Emotion = &emotion.Service{DB: s.db, Data: s.Data, Fields: c.Fields, Bus: s.Bus}
 	s.Assessments = assessment.New(bank, s.Accounts, c.Fields, s.Bus, s.db)
 	ok = true

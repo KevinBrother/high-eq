@@ -14,6 +14,7 @@ import (
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/assessment"
 	"high-eq/server/internal/emotion"
+	"high-eq/server/internal/marks"
 	"high-eq/server/internal/membership"
 	"high-eq/server/internal/payments"
 )
@@ -26,6 +27,7 @@ func problem(c *gin.Context, status int, code, msg string, retry bool) {
 type appAPI struct {
 	app.ServerInterface
 	payments    *payments.Service
+	marks       *marks.Service
 	signals     *emotion.Service
 	assessments *assessment.Service
 	health      func(context.Context) error
@@ -46,6 +48,7 @@ func (a appAPI) CheckHealth(c *gin.Context) {
 // Only list implemented methods. GET and DELETE intentionally have different
 // frozen-account permissions from PATCH and POST on the same paths.
 var accountRoutes = map[string]bool{
+	"GET /v1/marks": false, "POST /v1/marks": false, "PATCH /v1/marks/:id": false, "DELETE /v1/marks/:id": false,
 	"POST /v1/signal-windows": false, "DELETE /v1/signal-windows": false, "GET /v1/signal-baselines": false,
 	"POST /v1/signal-events": false, "GET /v1/signal-events": false, "PATCH /v1/signal-events/:id": false,
 	"GET /v1/assessments/instrument": false, "GET /v1/assessments": false, "POST /v1/assessments": false,
@@ -57,6 +60,11 @@ var accountRoutes = map[string]bool{
 	"GET /v1/entitlements": false,
 	"GET /v1/me/consents":  false, "PUT /v1/me/consents/:purpose": false,
 }
+
+// Session-bound deletes perform their own validation after taking the account
+// lock. The generic preflight must not hide an exact pending deletion from its
+// retry transaction.
+var deferredSessionRoutes = map[string]bool{"DELETE /v1/marks/:id": true}
 
 func gate(auth *accounts.Service) func(*gin.Context) {
 	return func(c *gin.Context) {
@@ -73,7 +81,7 @@ func gate(auth *accounts.Service) func(*gin.Context) {
 				return
 			}
 			p, e := auth.Parse(token)
-			if e == nil {
+			if e == nil && !deferredSessionRoutes[c.Request.Method+" "+c.FullPath()] {
 				e = auth.WithSession(c.Request.Context(), p, allowFrozen, nil)
 			}
 			if e != nil {
@@ -87,7 +95,7 @@ func gate(auth *accounts.Service) func(*gin.Context) {
 		}
 	}
 }
-func newRouter(pay *payments.Service, health func(context.Context) error, auth *accounts.Service, mountAdmin func(gin.IRouter), rights *membership.Service, surveys *assessment.Service, signals ...*emotion.Service) *gin.Engine {
+func newRouter(markSvc *marks.Service, pay *payments.Service, health func(context.Context) error, auth *accounts.Service, mountAdmin func(gin.IRouter), rights *membership.Service, surveys *assessment.Service, signals ...*emotion.Service) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -107,7 +115,7 @@ func newRouter(pay *payments.Service, health func(context.Context) error, auth *
 	if len(signals) > 0 {
 		signalService = signals[0]
 	}
-	app.RegisterHandlersWithOptions(r, appAPI{payments: pay, signals: signalService, health: health, accounts: auth, assessments: surveys, membership: rights}, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(auth)}, ErrorHandler: invalid})
+	app.RegisterHandlersWithOptions(r, appAPI{marks: markSvc, payments: pay, signals: signalService, health: health, accounts: auth, assessments: surveys, membership: rights}, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(auth)}, ErrorHandler: invalid})
 	if mountAdmin != nil {
 		mountAdmin(r)
 	} else {

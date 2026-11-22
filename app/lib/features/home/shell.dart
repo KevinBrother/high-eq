@@ -135,6 +135,23 @@ class HomeShell extends StatelessWidget {
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => Navigator.pushNamed(context, '/scene'),
                 ),
+                if (section == Section.live)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.bookmark_add_outlined),
+                    title: const Text('我上头了'),
+                    subtitle: const Text('记下此刻，稍后再想'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () =>
+                        Navigator.pushNamed(context, '/marks', arguments: true),
+                  ),
+                if (section == Section.live || section == Section.growth)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.history),
+                    title: const Text('标记历史'),
+                    onTap: () => Navigator.pushNamed(context, '/marks'),
+                  ),
                 if (section == Section.practice ||
                     section == Section.growth ||
                     section == Section.me)

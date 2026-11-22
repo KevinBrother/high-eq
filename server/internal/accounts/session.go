@@ -77,19 +77,28 @@ func (s *Service) WithSession(ctx context.Context, p Principal, allowFrozen bool
 		if e := s.guard.GuardTx(ctx, tx, p.User); e != nil {
 			return e
 		}
-		var valid bool
-		e := tx.QueryRow(ctx, `select exists(select from auth_sessions a join users u on u.id=a.user_id where a.id=$1 and u.id=$2 and a.expires_at>clock_timestamp() and $4::timestamptz>clock_timestamp() and (u.closure_requested_at is null or ($3 and u.closure_requested_at>clock_timestamp()-interval '360 hours')))`, p.Session, p.User, allowFrozen, p.Expires).Scan(&valid)
-		if e != nil {
+		if e := s.ValidateSessionTx(ctx, tx, p, allowFrozen); e != nil {
 			return e
-		}
-		if !valid {
-			return ErrAuth
 		}
 		if fn == nil {
 			return nil
 		}
 		return fn(tx)
 	})
+}
+
+// ValidateSessionTx rechecks the presented session inside a caller-owned
+// account-locked transaction. Callers must not perform business writes first.
+func (s *Service) ValidateSessionTx(ctx context.Context, tx pgx.Tx, p Principal, allowFrozen bool) error {
+	var valid bool
+	e := tx.QueryRow(ctx, `select exists(select from auth_sessions a join users u on u.id=a.user_id where a.id=$1 and u.id=$2 and a.expires_at>clock_timestamp() and $4::timestamptz>clock_timestamp() and (u.closure_requested_at is null or ($3 and u.closure_requested_at>clock_timestamp()-interval '360 hours')))`, p.Session, p.User, allowFrozen, p.Expires).Scan(&valid)
+	if e != nil {
+		return e
+	}
+	if !valid {
+		return ErrAuth
+	}
+	return nil
 }
 func (s *Service) Refresh(ctx context.Context, rt string) (app.Tokens, error) {
 	var out app.Tokens

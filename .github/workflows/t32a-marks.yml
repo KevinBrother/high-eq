@@ -1,0 +1,21 @@
+name: T32A free manual marks
+on:
+  workflow_dispatch:
+  push:
+    paths: ['server/internal/marks/**', 'server/internal/service/marks*', 'server/internal/service/accounts_http.go', 'server/internal/service/http.go', 'server/internal/service/runtime.go', 'server/internal/accounts/session.go', 'server/internal/privacy/coordinator.go', 'server/migrations/20261122001532_manual_mark_tombstones.*', 'server/cmd/api/main.go', 'app/lib/features/marks/**', 'app/lib/main.dart', 'app/test/marks/**', 'app/lib/features/home/shell.dart', 'server/tests/t32a-verify.sh', '.github/workflows/t32a-marks.yml']
+  pull_request:
+    paths: ['server/**', 'app/**', 'docs/api/app.yaml', '.github/workflows/t32a-marks.yml']
+permissions:
+  contents: read
+jobs:
+  marks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with: {persist-credentials: false}
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with: {flutter-version: '3.38.10', cache: true}
+      - run: flutter pub get --enforce-lockfile
+        working-directory: app
+      - run: server/tests/t32a-verify.sh

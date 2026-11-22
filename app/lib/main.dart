@@ -8,6 +8,7 @@ import 'core/theme.dart';
 import 'features/home/shell.dart';
 import 'features/replies/share_host.dart';
 import 'features/replies/route.dart';
+import 'features/marks/page.dart';
 import 'features/practice/lobby.dart';
 import 'features/contacts/routes.dart';
 import 'features/onboarding/login.dart';
@@ -141,6 +142,16 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
               );
             case '/training':
               return const PracticeRoute();
+            case '/marks':
+              return MarksPage(
+                MarkBook(api!, scope),
+                quick: settings.arguments == true,
+              );
+            case '/marks/review':
+              return MarkReviewDraft(
+                MarkBook(api!, scope),
+                Mark.fromReview(settings.arguments as Map<String, dynamic>),
+              );
             case '/membership':
               return MemberPage(MemberStore(api!, scope));
             case '/logout':

@@ -55,6 +55,9 @@ func run() error {
 			case <-worker.Done():
 				return
 			case <-t.C:
+				if e := s.Marks.PurgeDue(worker, time.Now()); e != nil && worker.Err() == nil {
+					slog.Error("cleanup unavailable", "module", "marks", "result", "retry")
+				}
 				if e := s.Emotion.PurgeDue(worker, time.Now()); e != nil && worker.Err() == nil {
 					slog.Error("cleanup unavailable", "module", "emotion", "result", "retry")
 				}

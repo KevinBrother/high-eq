@@ -105,6 +105,7 @@ paths:
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       x-example-request: POST /v1/auth/refresh
   /v1/auth/logout:
     post:
@@ -482,6 +483,7 @@ paths:
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       x-example-request: POST /v1/purchases/token
   /v1/purchases:
     post:
@@ -510,6 +512,7 @@ paths:
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       x-example-request: POST /v1/purchases
   /v1/purchases/restore:
     post:
@@ -543,6 +546,7 @@ paths:
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
         '409': {$ref: '#/components/responses/E409'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       description: 首次购买和恢复均可提交 Apple 签名交易；验证交易及 appAccountToken 归属，重复提交幂等，绝不按当前登录者改绑。
       x-example-request: POST /v1/purchases/restore
   /v1/payment-notifications/apple:
@@ -570,6 +574,7 @@ paths:
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       x-example-request: POST /v1/payment-notifications/apple
   /v1/payment-notifications/wechat:
     post:
@@ -597,6 +602,7 @@ paths:
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       parameters:
       - name: Wechatpay-Timestamp
         in: header
@@ -649,6 +655,7 @@ paths:
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       description: 对完整表单按渠道规则验签，核对应用、收款方、金额及订单；仅处理成功返回纯文本 success。
       x-example-request: POST /v1/payment-notifications/alipay
   /v1/assessments/instrument:
@@ -1222,6 +1229,7 @@ paths:
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       x-example-request: GET /v1/marks?cursor=after-example&limit=20
     post:
       operationId: createMark
@@ -1249,9 +1257,11 @@ paths:
                 contact_id: null
                 scene: null
         '400': {$ref: '#/components/responses/E400'}
+        '409': {$ref: '#/components/responses/E409'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
-      description: 按账号与 request_id 幂等；按服务端受理时间，距上一条新建 <60 秒复用原 ID 且不延长窗口，满 60 秒可新建。与 AI 配额、基线和传感器权限无关。
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
+      description: 首次写入须已同意 manual_mark 用途；未同意返回 400，不是会员门槛。按账号与 request_id 幂等；同一未删除标记的重试返回原 ID。按服务端受理时间，距上一条新建 <60 秒复用原 ID 且不延长窗口，满 60 秒可新建。原 request_id 对应的标记已删除时返回 409，必须换新 request_id，不得重建已删对象。与 AI 配额、基线和传感器权限无关。
       x-example-request: POST /v1/marks
   /v1/marks/{id}:
     patch:
@@ -1288,6 +1298,7 @@ paths:
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
         '404': {$ref: '#/components/responses/E404'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       x-example-request: PATCH /v1/marks/85b72033-9f07-4bbc-8567-fc31f26508ab
     delete:
       operationId: deleteMark
@@ -1312,6 +1323,7 @@ paths:
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
         '404': {$ref: '#/components/responses/E404'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       x-example-request: DELETE /v1/marks/85b72033-9f07-4bbc-8567-fc31f26508ab
   /v1/emotion-summary:
     get:
@@ -3918,6 +3930,15 @@ components:
           example:
             code: moderation_unavailable
             message: 服务暂不可用，可重试
+            retryable: true
+    E503ServiceUnavailable:
+      description: 数据暂时不可用，可重试
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example:
+            code: service_unavailable
+            message: 数据暂时不可用，请稍后重试
             retryable: true
     E500:
       description: 请稍后再试
