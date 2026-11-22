@@ -22,6 +22,7 @@ import (
 	"high-eq/server/internal/events"
 	"high-eq/server/internal/fieldcrypt"
 	"high-eq/server/internal/gateway"
+	"high-eq/server/internal/growth"
 	"high-eq/server/internal/membership"
 	"high-eq/server/internal/privacy"
 	"high-eq/server/internal/scoring"
@@ -243,14 +244,12 @@ func TestReviewSQLTransactions(t *testing.T) {
 	var event events.Score
 	var votes int
 	fail := true
+	growthSvc := &growth.Service{Fields: f}
+	s.Bus.ScoreCompleted.Subscribe(growthSvc.Consume)
 	s.Bus.ScoreCompleted.Subscribe(func(c context.Context, tx pgx.Tx, v events.Score) error {
 		event = v
 		if v.NVC.Total != 20 || v.ActivityID != r.Id || v.SourceID != r.Score.ScoreId {
 			return errors.New("wrong canonical event")
-		}
-		_, e := tx.Exec(c, `insert into growth_scores values($1,'review','synthetic','synthetic')`, v.SourceID)
-		if e != nil {
-			return e
 		}
 		if fail {
 			return errors.New("subscriber failure")
@@ -262,6 +261,11 @@ func TestReviewSQLTransactions(t *testing.T) {
 		t.Fatal("subscriber failure swallowed")
 	}
 	assertRows(1, 1, 1, 1)
+	var projected int
+	must(db.QueryRow(ctx, `select count(*) from growth_scores where score_id=$1`, r.Score.ScoreId).Scan(&projected))
+	if projected != 0 {
+		t.Fatal("failed subscriber did not roll back growth projection")
+	}
 	fail = false
 	must(s.ReplayPending(ctx))
 	must(s.ReplayPending(ctx))
@@ -269,6 +273,31 @@ func TestReviewSQLTransactions(t *testing.T) {
 		t.Fatal("duplicate delivery")
 	}
 	assertRows(1, 1, 1, 0)
+	var nvcEnc, emotionEnc []byte
+	must(db.QueryRow(ctx, `select nvc_enc,emotion_enc from growth_scores where score_id=$1 and kind='review'`, r.Score.ScoreId).Scan(&nvcEnc, &emotionEnc))
+	raw, e := f.Open(nvcEnc, []byte("growth_scores.nvc_enc/"+r.Score.ScoreId.String()))
+	must(e)
+	var projectedNVC growth.NVCValues
+	must(json.Unmarshal(raw, &projectedNVC))
+	if projectedNVC != (growth.NVCValues{Observation: 15, Request: 5, Total: 20}) {
+		t.Fatalf("invalid encrypted NVC projection: %+v", projectedNVC)
+	}
+	raw, e = f.Open(emotionEnc, []byte("growth_scores.emotion_enc/"+r.Score.ScoreId.String()))
+	must(e)
+	var projectedEmotion growth.EmotionValues
+	must(json.Unmarshal(raw, &projectedEmotion))
+	if projectedEmotion != (growth.EmotionValues{ReadOthers: 2, SelfManagement: 3, Relationship: 2}) {
+		t.Fatalf("invalid encrypted emotion projection: %+v", projectedEmotion)
+	}
+	duplicate := event
+	duplicate.NVC.Observation, duplicate.NVC.Feeling, duplicate.NVC.Need, duplicate.NVC.Request, duplicate.NVC.Total = 25, 25, 25, 25, 100
+	duplicate.Emotion.ReadOthers, duplicate.Emotion.SelfManagement, duplicate.Emotion.Relationship = 5, 5, 5
+	must(pgx.BeginFunc(ctx, db, func(tx pgx.Tx) error { return growthSvc.Consume(ctx, tx, duplicate) }))
+	var replayedNVC, replayedEmotion []byte
+	must(db.QueryRow(ctx, `select nvc_enc,emotion_enc from growth_scores where score_id=$1`, r.Score.ScoreId).Scan(&replayedNVC, &replayedEmotion))
+	if !bytes.Equal(nvcEnc, replayedNVC) || !bytes.Equal(emotionEnc, replayedEmotion) {
+		t.Fatal("duplicate event overwrote encrypted growth projection")
+	}
 	readExport := func(user uuid.UUID) []byte {
 		var buf bytes.Buffer
 		must(dbs.Export(ctx, privacy.ExportRequest{UserID: user, OperationID: uuid.New()}, &buf))

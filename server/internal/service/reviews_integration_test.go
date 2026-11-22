@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -107,12 +108,15 @@ func TestReviewLifecycle(t *testing.T) {
 		if bytes.Contains(data, []byte("reason")) || v.Kind != "review" || v.NVC.Total != 20 {
 			return errors.New("unexpected score projection")
 		}
-		enc, e := s.Fields.Seal(data, []byte("synthetic-t26"))
-		if e != nil {
-			return e
+		// The production T26 subscriber ran first in this transaction. Don't
+		// insert a second test projection; check the numeric source is present,
+		// then inject a downstream failure to prove both projection and ACK roll back.
+		var projected bool
+		if err := tx.QueryRow(c, `select exists(select from growth_scores where score_id=$1 and kind='review')`, v.SourceID).Scan(&projected); err != nil {
+			return err
 		}
-		if _, e = tx.Exec(c, `insert into growth_scores(score_id,kind,nvc_enc,emotion_enc) values($1,'review',$2,$2)`, v.SourceID, enc); e != nil {
-			return e
+		if !projected {
+			return errors.New("growth did not consume the canonical score")
 		}
 		if !ready {
 			return errors.New("synthetic subscriber rollback")
@@ -318,12 +322,46 @@ func TestReviewLifecycle(t *testing.T) {
 	// guard together rather than only the SQL trigger.
 	c := signup()
 	consent(c.AccessToken, true)
+	check(request("PUT", "me/consents/assessment", c.AccessToken, map[string]any{"version": "v1", "granted": true}), 200, nil)
+	var bank app.GetInstrumentResult
+	check(request("GET", "assessments/instrument", c.AccessToken, nil), 200, &bank)
+	answers := make([]int, len(bank.Items))
+	for i := range answers {
+		answers[i] = 4
+	}
+	check(request("POST", "assessments", c.AccessToken, app.SubmitAssessmentInput{Version: bank.Version, Answers: answers}), 200, nil)
+	getReference := func(want int) {
+		var g app.GetGrowthResult
+		check(request("GET", "growth", c.AccessToken, nil), 200, &g)
+		if g.WleisPercent == nil || g.ValidBehaviorCount != want || (g.TrainingReference == nil) != (want == 0) {
+			t.Fatalf("reference availability: WLEIS=%v count=%d ref=%v", g.WleisPercent, g.ValidBehaviorCount, g.TrainingReference)
+		}
+		// Known score fixture: 20 * 0.7 + ((2+3+2)/3 - 1)/4 * 100 * 0.3 = 24.
+		if want == 1 && math.Abs(float64(*g.TrainingReference)-(float64(*g.WleisPercent)+24)/2) > .01 {
+			t.Fatalf("reference from real review: %v", *g.TrainingReference)
+		}
+	}
+	getReference(0)
 	inC := app.ReviewInput{RequestId: uuid.New(), Scene: &sc, Happened: "T23-TOMBSTONE", MyFeeling: "平静", TheirPossibleFeeling: "不确定", MyAction: "我先说完", NextAction: "请对方补充"}
 	postC := func(v app.ReviewInput) reviewResponse { return request("POST", "reviews", c.AccessToken, v) }
 	var created app.Review
 	check(postC(inC), 200, &created)
+	getReference(1)
+	var canonicalAt time.Time
+	must(s.db.QueryRow(ctx, `select occurred_at from scores where id=$1 and activity_id=$2`, created.Score.ScoreId, created.Id).Scan(&canonicalAt))
+	if ex := export(c.UserId, "growth.json"); !strings.Contains(ex, created.Score.ScoreId.String()) || strings.Contains(ex, "合成引文") {
+		t.Fatal("growth export does not match numeric-only source")
+	}
 	pathC := "reviews/" + created.Id.String()
 	check(request("DELETE", pathC, c.AccessToken, nil), 200, nil)
+	if err := s.Bus.PublishScore(ctx, events.Score{ScoreKey: privacy.ScoreKey{UserID: c.UserId, ActivityID: created.Id, SourceID: created.Score.ScoreId, OccurredAt: canonicalAt, Kind: "review"}}); err == nil {
+		t.Fatal("deleted review was accepted by score bus")
+	}
+	getReference(0)
+	if strings.Contains(export(c.UserId, "growth.json"), created.Score.ScoreId.String()) {
+		t.Fatal("growth export kept the erased score")
+	}
+
 	analyses, scores = f.analyses.Load(), f.scores.Load()
 	check(postC(inC), 409, nil)
 	if f.analyses.Load() != analyses || f.scores.Load() != scores {

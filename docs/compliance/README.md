@@ -39,7 +39,7 @@
 | `privacy-policy-draft.md` | 面向用户的隐私政策草案 | 主体信息、供应商、语音/录音及法律依据待补 |
 | `terms-of-service-draft.md` | 用户协议草案 | 商户、退款、责任限制和争议条款待律师复核 |
 | `separate-consents.md` | 各敏感/可选处理的单独同意文案 | 已有功能的文案可先行；语音/录音待 T29 |
-| `data-inventory.md` | 字段、原始记录、副本、加密、留存、删除和导出对表 | 已按 PG17 清单逐名核对 42/42 表/视图；D32–D36 补后台缺口，D39/D40 另列 T25 增量，D41/D42 另列 T21 增量且均不计入 42 项；清理、通用权利接口与真机项待验收 |
+| `data-inventory.md` | 字段、原始记录、副本、加密、留存、删除和导出对表 | 已按 PG17 清单逐名核对 42/42 表/视图；D32–D36 补后台缺口，D39/D40 另列 T25 增量，D41/D42 另列 T21 增量，D43 另列 T26 单项复习调度增量且均不计入 42 项；清理、通用权利接口与真机项待验收 |
 | `sdk-model-review-checklist.md` | 主模型、备用/灰度模型、审核服务及 SDK 证据清单 | 无真实供应商资料，全部待运营提供 |
 | `filings-and-authorizations.md` | 备案、ICP、应用商店、量表授权、健康平台和权限归档 | 无备案号、批准或授权函，不得宣称已完成 |
 | `banned-words-and-examples.md` | 文案禁用词与 10 条改写示例 | 可先行用于文案评审 |
@@ -52,6 +52,7 @@
 
 **T19/T25 后端增量：** `server/internal/training/` 已接入对练路由，T19 已接入 T25 画像摘要，选用关系人时额外检查 `contacts`；`20261122003019_practice_work` 新增活动级元数据，详见 D38。T25 新增 `profile_observations.fact_enc`、`activity_profile_context.context_enc` 和 `profile_inference_requests`，详见 D14/D39/D40；其 `profile_inference` 提示词草稿为 `b935fb60-5a85-4c12-82c0-401afd649325`。42 项仍是 `f60ace3` 的固定盘点，D39/D40 不计入。本批后端实现不等于生产上线。`TestPracticeWire` 和 T25 生命周期测试已在隔离 PG17、双 Redis 与受控上游实跑；不代表客户端首用、真实模型、真机、供应商合同或律师签收。
 **T21 后端增量：** `server/internal/replies/` 已接线 `POST /v1/replies` 与 `POST /v1/replies/:id/feedback`；三个迁移新增 `reply_requests`、`reply_feedback`、`reply_request_keys`、`reply_outcome_receipts`，并安装 `reply_import_guard` 阻止 `chat_imports` 写入回复活动。服务端不持久化源文本与目的，结果与反馈使用 AES-GCM，输入指纹为 32 字节带密钥 HMAC，另存授权及请求关联元数据；删除后以 `activity_id ON DELETE SET NULL` 的 HMAC 键防重放。反馈正文加密保存，普通效果消费另写最小非画像回执，只有显式 `self_report` 进入本人画像观察。以上为当前后端增量，不计入 `f60ace3` 的 42 项；隔离测试不证明真实厂商、日志、备份、生产发布或删除签收。
+**T26 成长计划后端增量：** `20261123010026_growth_plan_delivery.up.sql` 为 `daily_plans` 增加可空 `assessment_id ... ON DELETE CASCADE`，并新增 `growth_drill_schedules`（D43）；分值和档位只存于 AES-GCM `schedule_enc`，表内没有明文 `score`/`band`。`growth_scores` 是固定基线表，T26 新增的是投影消费、计划与调度导出；该表只保存数值投影，账号和发生时间从存活源派生；成长参考按最近 WLEIS 与 720 小时内有效 practice/review 源即时重算，新增或删除有效来源后计数和参考值即时重算，删除低分有效来源时参考值可以上升。T26 只消费 practice/review 完整评分；单项调度使用独立 `schedule_enc`，不覆写 T19 `drill_progress`。生成新计划时，默认场景由账号、计划日和训练重点推导；只有会员权益、有效 `contacts` 同意和可用场景均满足时才采用 T25 最近使用关系人场景，无权益、无授权或无有效场景回退默认路径，会员检查的非拒绝错误不静默回退；生成仍读取到期单项调度和近期已用题卡。内部计划导出排除 `review_activity_id`。隔离组合证据见 `docs/tasks/T26.md` 末段，通用 `GET /v1/me/export` 与 `DELETE /v1/me/data/:kind/:id` 仍返回 `501 not_implemented`，不等于 T35 或生产上线；50 道题与 20 张卡尚未人工审题。
 
 - 首次启动先展示隐私/协议摘要，用户主动勾选后才继续；未同意不发起登录。`[已知]`
 - 新账号登录携带 `privacy_version`、`terms_version`，服务端接受后写入 `privacy` 与 `terms` 同意。当前版本均为 `2026-11`，属开发占位版本。`[已知]`

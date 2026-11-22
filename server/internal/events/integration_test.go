@@ -49,7 +49,7 @@ func TestPublishAfterCommit(t *testing.T) {
 		t.Fatal(e)
 	}
 	bus.AssessmentCompleted.Subscribe(func(ctx context.Context, tx pgx.Tx, v Assessment) error {
-		_, e := tx.Exec(ctx, `insert into daily_plans values($1,current_date,'p',null) on conflict do nothing`, v.UserID)
+		_, e := tx.Exec(ctx, `insert into daily_plans(user_id,plan_day,plan_enc) values($1,current_date,'p') on conflict do nothing`, v.UserID)
 		return e
 	})
 	fail := true

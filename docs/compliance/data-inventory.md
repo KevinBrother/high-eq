@@ -4,7 +4,7 @@
 >
 > 已按主会话在 PG17 空库全量迁移后导出的 `verified-pg17-inventory.jsonl` 对固定基线 42 个 public 表/视图逐名核对（覆盖 42/42；本轮补入 7 个漏项）；后台员工表、平台配置、查询视图与普通用户数据分开列示，视图不计作物理副本。
 > 真实结构以固定基线的 `server/migrations/` 为准。`bytea` 本身不等于加密；本清单中的“AES-GCM”只适用于明确标注 `*_enc` 且由 `server/internal/fieldcrypt/cipher.go` 封装写入的字段。日志、备份、供应商侧和平台侧留存不在本仓库可见范围内，不能据本清单宣称已全部删除。`[待运营填写]` `[待 T35 对表]`
-> `f60ace3` 的 42 项是历史盘点。D14/D39/D40 登记后续 T25 数据；D23 登记 T23 的 `review_requests`、`review_tombstones`；D11/D12/D41/D42 登记 T21 的四张回复请求与反馈表，不回填为旧基线。D37 是 T22 本机分享交接，不是后端留存证据。本批后端不等于生产上线或供应商签收。
+> `f60ace3` 的 42 项是历史盘点。D14/D39/D40 登记后续 T25 数据；D23 登记 T23 的 `review_requests`、`review_tombstones`；D11/D12/D41/D42 登记 T21 的四张回复请求与反馈表，D43 登记 T26 的单项复习调度投影，均不回填为旧基线。D37 是 T22 本机分享交接，不是后端留存证据。本批后端不等于生产上线或供应商签收。
 
 ## 1. 分类与关联原则
 
@@ -34,7 +34,7 @@
 | D13 | 导入聊天原文 | `chat_imports.original_enc`、`received_at` | 源（关系人推断等路径） | AES-GCM；回复类导入触发器 `reply_import_guard` 禁止 `chat_imports` 写入或关联 `kind='reply'` 的活动，并清理旧回复导入行 | T21 回复请求不依赖该表保存原文；其他 `chat_imports` 的设计目标仍为 24 小时内删除，但固定基线未找到自动清理函数、读取期限过滤、失败重试或导出排除的完整实现 | `chat_import` / `2026-11` | T21 回复路径 `[已知]`；其他导入路径 `[待实现/验收]` |
 | D14 | 关系人/本人反馈画像观察 | `profile_observations.fact_enc`、`subject`、`applied`、`occurred_at` | 用户明确反馈形成的画像观察事实 | AES-GCM；`fact_enc` 是用户明确反馈形成的画像观察事实，不是模型推断正文；后端只接受通过校验的七个有界选项并写入 `contacts.profile_enc`，T25 推断链路不持久化聊天原文 | 随活动、信号事件或账号外键 `ON DELETE CASCADE`；删除关系人时相关活动及其反馈随源级联；通用导出/删除未接线 | 关联关系人时检查 `contacts` 与使用权；信号事件的本人确认另验 `health` 与 `voice` | `[已知：本批后端]` `[待 T35 对表]` |
 | D15 | 对练/复盘评分明细 | `scores.detail_enc`、`occurred_at` | 派生源 | AES-GCM | 随活动/关系人/账号删除；导出未接线；删除源后不可回填 | `practice` / `review` | `[已知]` `[待 T35 对表]` |
-| D16 | 成长数值副本 | `growth_scores.nvc_enc`、`emotion_enc`、`score_id`、`kind` | 数值副本 | AES-GCM；只存数值投影，不复制引文或理由 | 随源评分级联；删除源后重算或清除；导出未接线 | 随对应评分用途 | `[已知]` `[待 T35 对表]` |
+| D16 | 成长数值副本 | `growth_scores.score_id`、`kind`、`nvc_enc`、`emotion_enc` | 数值副本（固定基线表 + T26 投影消费） | AES-GCM；只保存四项 NVC 分项/总分与三项情绪等级等数值投影，不复制评分正文、引文、用户轮次、模型理由或改写；不保存独立账号/日期列，账号与发生时间只从仍存活的 `scores`/`activities` 源派生 | 按 `score_id` 幂等并随评分源级联；成长参考值不持久化综合分，每次按最近 WLEIS 与 720 小时（30 天）内存活的 practice/review 源即时重算，新增或删除有效来源后计数和参考值即时重算；删除低分有效来源时参考值可以上升。内部 `growth.json` 包含数值评分记录、计划和单项调度，其中评分记录只导出数值投影；通用 `GET /v1/me/export` 与 `DELETE /v1/me/data/:kind/:id` 仍为 `501 not_implemented`，待 T35 | 随对应 practice/review 评分用途 | `growth_scores` 表属于固定基线 `f60ace3`，T26 新增的是投影消费、计划和调度导出边界，不把该表重复计为 T26 新增表；删除后不得由旧事件回填。 |
 | D17 | AI 调用统计 | `ai_calls` 的模型、任务、提示词版本、耗时、token、成本、状态、`operation_id`、`id`、`activity_id`、`score_id`、`contact_id` | 关联元数据 | 不保存输入/输出正文、评分理由或引文；密钥不入表 | 随活动/评分/关系人/账号级联；通用导出未接线；不导出密钥或提示词模板 | 随对应功能告知 | `[已知]` `[待 T35 对表]` |
 | D18 | 健康 30 秒窗口 | `signal_windows.stats_enc`、`starts_at`、`channel` | 源/聚合 | AES-GCM；只接收 30 秒对齐窗口 | 180 天读取过滤和物理清理；健康窗口专用删除已接线；通用导出未接线 | `health` / `2026-11` | `[已知]` `[待 T35 对表]` |
 | D19 | 健康/语音基线 | `signal_baselines.baseline_enc`、`signal`、`updated_at` | 派生副本 | AES-GCM | 删除源或账号时删除/重算；不延长聚合寿命 | `health` / `voice` | `[已知]`；语音 `[待 T29 对表]` |
@@ -42,8 +42,8 @@
 | D21 | 手动标记 | `manual_marks.mark_enc`、`accepted_at`、`contact_id` | 源 | AES-GCM；不含音频/心率 | 180 天滚动；用户/关系人/账号提前删除；通用导出未接线 | `manual_mark` / `v1` | `[已知]`；客户端版本校验缺口 |
 | D22 | 标记幂等映射 | `mark_requests.request_id`、`mark_id` | 元数据 | 账号内请求键到标记 ID；不跨用户合并 | 随标记/账号级联；不导出为独立数据 | `manual_mark` | `[已知]` |
 | D23 | 文字复盘请求、短期生成检查点与删除墓碑 | `review_requests.activity_id`、`user_id`、`request_id`、`input_mac`、`scene_mac`、`mark_id`、`signal_event_id`、`repair_enc`、`generated_enc`、`generated_task`、`generated_call_id`、`generated_at`、`generated_expired`、`score_pending`；`review_tombstones.user_id`、`request_id`、`input_mac`、`deleted_at` | 请求幂等/来源关联元数据 + 短期生成检查点 + 删除防重放 | `input_mac`/`scene_mac` 为账号绑定 HMAC，不存正文；`repair_enc`（已审核修复短语）和 `generated_enc` 为 AES-GCM；只有成功落库且尚未过期的完整结果才能按原键复审。15 分钟从未审核输出 `generated_enc` 成功落库时起算；单独的已审核短语 `repair_enc` 不按此计时 | 生成期间可在专属列暂存检查点；完成时正文写入 `activities.content_enc`、评分写入 `scores.detail_enc`，清除阶段检查点并设置 `score_pending` 供事件投递。未审核输出超过 15 分钟不再恢复；下次检查或后台定期清扫成功后清空 `repair_enc`/`generated_enc`/`generated_task`/`generated_call_id`/`generated_at`，置 `generated_expired=true`，活动转 `failed` 并释放工作占位；原请求键不可恢复或重算。`mark_id`、`signal_event_id` 删除只 `ON DELETE SET NULL`，复盘保留；活动、关系人或账号删除经外键级联。删除复盘或关系人产生墓碑，账号注销清除墓碑；墓碑含账号、请求键、HMAC 及删除时间，不含正文或来源活动 ID，不导出。`reviews.json` 导出活动 ID、来源 ID、请求 ID、时间、状态、关系人/标记/信号关联、已批准修复短语和完成结果，不输出 `input_mac`/`scene_mac` 或未审核 `generated_enc`；通用 `/v1/me/export` 与 `/v1/me/data/:kind/:id` 仍为 `501 not_implemented` | `review` / `v1`；标记复盘预填是用户人工发起、本人参考，不自动绑定或提交 | T23 后端增量，不计入 `f60ace3` 的 42 项；本批后端实现不等于生产上线。T24 客户端回环、T32A 标记预填和隔离后端测试见交接；T35 公共权利入口仍待验。 |
-| D24a | 每日计划 | `daily_plans.plan_enc`、`user_id` | 派生/源 | AES-GCM；只有用户外键，没有活动外键 | `daily_plans` 仅随账号删除；通用导出未接线 | 计划用途 | `[已知]` `[待 T35 对表]` |
-| D24b | 单项训练进度 | `drill_progress.progress_enc`、`activity_id`、`kind` | 派生/源 | AES-GCM；`(activity_id,kind)` 指向单项活动 | `drill_progress` 随单项活动删除，并随账号清理；通用导出未接线 | 训练用途 | `[已知]` `[待 T35 对表]` |
+| D24a | 每日计划 | `daily_plans.plan_enc`、`user_id`、`plan_day`、`completed_at`、可空 `assessment_id` | 派生/计划副本 | `plan_enc` 为 AES-GCM，计划标题、内容 ID、条目完成标志和精确内部复习源活动 ID 只在该密文中；独立可空列 `completed_at` 记录首次完成时间；T26 迁移新增可空 `assessment_id uuid REFERENCES assessments(id) ON DELETE CASCADE`，固定基线原表只有用户外键；内部导出显式构造计划项，不输出 `review_activity_id` | 随账号删除；T26 后删除对应 assessment 也经 `assessment_id` 级联删除计划，旧测评事件不能回填；测评完成事件按测评发生日生成首份计划，正常账号当天无计划且有可用测评时，`GET /v1/plans/today` 可以幂等补生成；冻结账号被拒绝且不会补生成；内部 `growth.json` 的 `record_type:"plan"` 可输出日期、评估 ID、计划和完成时间，通用导出/删除仍待 T35 接线 | 计划用途；生成新计划时先执行外层 `Membership.Require`，默认场景由账号、计划日和训练重点推导；通过后调用 `Profiles.AuthorizedScene`；该方法再复核会员权益和有效 `contacts` 同意，通过后查询并读取最近使用的关系人。只有返回可用且合法的场景时才采用，否则走默认场景；外层会员检查只有 `ErrForbidden` 回退，其他错误直接返回。生成仍读取到期单项调度和近期已用题卡；不读取健康、语音或聊天原文，也不是自动诊断 | `[已知：基线字段 + T26 增量]`；T26 新增外键关系不计入 `f60ace3` 的 42 项，本批后端不等于生产上线。 |
+| D24b | 单项训练进度 | `drill_progress.progress_enc`、`activity_id`、`kind`、`retry_at` | T19 派生/源密文 | AES-GCM；T19 的 `progress_enc` 是完整单项评分、理由和重练动作的唯一来源，T26 只读取源活动并写独立调度投影，不覆写、不重写、不清空该密文或 `retry_at` | `drill_progress` 随单项活动删除，并随账号清理；删除后旧事件不能重建；通用导出/删除仍待 T35 | 训练用途 | `[已知：T19 源密文 + T26 读取边界]`；不能把 T26 的数值档位当作 T19 完整历史副本。 |
 | D25 | 支付订单与权益 | `orders`、`entitlements`、`payment_facts.checkout_enc`、`payment_notices`、`apple_purchase_chains` | 订单源 + 关联元数据 | 交易指纹/通知 HMAC；`checkout_enc` AES-GCM，五分钟复用 | 订单在注销后可脱敏保留 `user_id=NULL`；支付明细/通知随账号清理；不导出平台收据原文 | 支付平台规则 | `[已知]` `[待商户/平台确认]` |
 | D26 | 额度与用量 | `quota_ledger.charged_day`、`daily_quota_usage.used` | 计量元数据 | 日汇总，不含消息或源 ID | 随账号/活动清理；用于额度重算；通用导出未接线 | 对应 AI 功能 | `[已知]` `[待 T35 对表]` |
 | D27 | 删除协调与防重放 | `pending_erasure`、`erasure_roots` 视图、`ledger_binding`、Redis `deleted:<opaque_id>` | 清理元数据 | 仅随机根 UUID/安装身份；Redis 值为空，TTL 表达期限 | 成功后移除/过期；不导出；不能作为删除历史 | 基础安全 | `[已知：docs/schema.md]` `[待 T34 恢复验收]` |
@@ -62,13 +62,14 @@
 | D40 | 关系人推理请求双同意与幂等 | `profile_inference_requests` 的 `request_id`、`contact_id`、`chat_consent_id`、`contacts_consent_id`、`input_digest`、`state` | 账号级幂等/授权元数据 | 同时绑定 `chat_consent_id` 和 `contacts_consent_id`；`input_digest` 为 32 字节 SHA-256，T25 推断链路不持久化聊天原文；状态仅 `processing`、`complete`、`invalidated`；模型尝试前和最终保存前复核精确同意 ID、摘要、状态与关系人可用性 | 处理中若检查到撤回/重授权或关系人已不可用，旧操作失效、不复活；同键更换材料或关系人返回 409，不改写原记录。完成后在当前仍有权限时重放只读当前画像，不重新外发；关系人、同意和账号删除均 `ON DELETE CASCADE`；提示词草稿 `b935fb60-5a85-4c12-82c0-401afd649325`；`profiles.json` 不输出 D40 请求、同意 ID 或输入摘要；模块内部删除不等于 T35 公共入口，通用 `/v1/me/export` 与 `/v1/me/data/:kind/:id` 仍为 `501 not_implemented` | `chat_import` + `contacts`；本批后端实现不等于生产上线。 | T25 后端增量，不计入 `f60ace3` 的 42 项。 |
 | D41 | 回复删除后防重放键 | `reply_request_keys.user_id`、`request_id`、`input_mac`、`activity_id` | 账号级幂等墓碑 | 32 字节带密钥 HMAC，不含源文本、目的、结果或联系方式；`activity_id` 使用 `ON DELETE SET NULL`，源活动删除后保留账号 ID、请求 ID 和输入 HMAC，活动引用置空，账号删除时随账号级联 | 同请求键重放返回 409；模块导出不输出该表；不回填已删活动、不创建画像，通用权利入口仍待 T35 | `chat_import` / `2026-11` | T21 后端增量，不计入 `f60ace3` 的 42 项；厂商和备份侧留存仍待证据 |
 | D42 | 回复普通效果最小回执 | `reply_outcome_receipts.feedback_id`、`user_id`、`source_id`、`source_kind`、`occurred_at`、`suggestion_index`、`accepted_at` | 非画像消费回执 | 仅保存不透明来源键、时间和建议序号；没有聊天、目的、建议或效果正文，也不保存可用密钥；每条新反馈均可产生此回执，但不复制加密反馈正文；带显式 `self_report` 时还会单独投递本人观察 | 随 `reply_feedback`、用户和源活动级联；不进入 `replies.json` 导出和画像；T35 公共导出/删除未接线 | `chat_import` / `2026-11` | T21 后端增量，不计入 `f60ace3` 的 42 项；仅证明代码与隔离测试边界 |
+| D43 | 单项训练复习调度投影 | `growth_drill_schedules.activity_id`、`target_item`、`level_id`、`schedule_enc`、`occurred_at`、`retry_at`、`closed_at`、`created_at` | 数值调度投影/关联元数据 | `activity_id` 主键且 `REFERENCES activities ON DELETE CASCADE`；分数和档位只在 `schedule_enc`（AES-GCM）中，表内没有明文 `score`/`band`，也不保存评分正文、引述或模型理由；目标项、关卡和时间为不透明调度元数据 | 0/5/9 为 `retry_now`，10/15/24 为 `retry_in_three_days`，25 为 `pass`；10–24 分按真实完成时刻 `occurred_at + 72h` 设置 `retry_at`。`closed_at` 是持久终态，旧完成事件重放不能复活已结清复习；删除 drill 活动级联删除调度，删除后不回填；T19 `drill_progress` 仍是完整单项历史唯一源。内部 `growth.json` 的 `record_type:"drill"` 只输出关卡、目标项、数值分档及发生/重练时间，通用导出/删除仍为 `501 not_implemented` | `practice` | T26 后端增量，不计入 `f60ace3` 的 42 项；合成试题/卡片未人工审题，真实模型、真机、律师和 T34 恢复后重删另验。 |
 
 ## 3. 敏感字段加密核对
 
 在固定基线迁移中可定位的密文信封列（字段级加密算法与读写路径另按各卡测试核验）：
 
 `assessments.answers_enc`、`assessments.scores_enc`、`signal_windows.stats_enc`、`signal_baselines.baseline_enc`、`signal_events.event_enc`、`practice_messages.content_enc`、`scores.detail_enc`、`growth_scores.nvc_enc`、`growth_scores.emotion_enc`、`contacts.profile_enc`、`personal_profiles.profile_enc`、`manual_marks.mark_enc`、`activities.content_enc`、`daily_plans.plan_enc`、`drill_progress.progress_enc`、`payment_facts.checkout_enc`、`login_identities.subject_enc`、`model_configs.api_key_enc`、`[已知]`。`[已知：基线字段]`
-T25 后端增量新增 `profile_observations.fact_enc` 和 `activity_profile_context.context_enc`，二者使用字段加密但不计入固定基线 `f60ace3` 的 42 项。T23 后端增量新增 `review_requests.repair_enc` 与 `review_requests.generated_enc`：前者保存已审核修复短语检查点，后者保存仅用于同请求重试的未审核生成结果，均由业务字段加密封装写入；成功保存后清除；审核故障可保留检查点用于恢复，过期清扫由维护任务或重试触发（不承诺到点即物理擦除）。两者不计入固定基线 42 项，本批后端实现不等于生产上线。T21 以 `reply_feedback.outcome_enc` 加密保存用户主动提交的效果反馈。`[已知：T23 本批后端]`
+T25 后端增量新增 `profile_observations.fact_enc` 和 `activity_profile_context.context_enc`，二者使用字段加密但不计入固定基线 `f60ace3` 的 42 项。T23 后端增量新增 `review_requests.repair_enc` 与 `review_requests.generated_enc`：前者保存已审核修复短语检查点，后者保存仅用于同请求重试的未审核生成结果，均由业务字段加密封装写入；成功保存后清除；审核故障可保留检查点用于恢复，过期清扫由维护任务或重试触发（不承诺到点即物理擦除）。两者不计入固定基线 42 项，本批后端实现不等于生产上线。T21 以 `reply_feedback.outcome_enc` 加密保存用户主动提交的效果反馈。T26 新增 `growth_drill_schedules.schedule_enc`，只加密保存单项分值与档位；T26 不覆写 T19 的 `drill_progress.progress_enc`。上述 T23/T21/T26 字段均为本批后端增量，不计入固定基线 42 项。`[已知：T23/T21/T26 本批后端]`
 
 基线中的 `login_identities.subject_hmac`、`auth_sessions.refresh_hash`、`sms_challenges.phone_hmac`、`sms_challenges.otp_hash` 以及 `ai_calls` 的关联 ID 和计量字段不是加密正文。T23 的 `review_requests.input_mac`、`review_requests.scene_mac` 和 `review_tombstones.input_mac` 同为 HMAC 元数据，不是密文、正文或来源 ID；墓碑存在也不等于 T35 公共删除入口已接线。`[已知：T23 本批后端]` T21 的 `reply_requests.input_mac`、`reply_feedback.input_mac` 及 `reply_request_keys.input_mac` 是带密钥 HMAC，不导出。
 
@@ -79,12 +80,15 @@ T25 后端增量新增 `profile_observations.fact_enc` 和 `activity_profile_con
 | 活动源 | `activities.source_id` | 随机清理键；删除活动后，关联评分、成长投影、调用统计和专项进度不得由旧事件回填。 |
 | 评分源 | `scores.id = activities.source_id` | 评分记录通过该关系指回活动源；不是另造一个不可追踪的评分 ID。 |
 | 评分明细 | `scores.detail_enc` | 引文、用户轮次、评分理由、改写和分项只在该 AES-GCM 密文中；不得复制到 `ai_calls` 或普通日志。 |
-| 数值副本 | `growth_scores.score_id`、`nvc_enc`、`emotion_enc` | 只保存数值投影；随评分源级联，删除源后重算或清除。 |
+| 数值副本 | `growth_scores.score_id`、`nvc_enc`、`emotion_enc` | 只保存数值投影，账号与时间从源派生；随评分源级联，删除源后重算或清除。 |
+| 训练参考 | `growth_scores` + 存活的 `scores`/`activities` | 不持久化综合分；按最近 WLEIS 与 720 小时内有效 practice/review 源即时重算，新增或删除有效来源后计数和参考值即时重算；删除低分有效来源时参考值可以上升。 |
+| 计划派生 | 可空 `daily_plans.assessment_id`、`plan_enc`、独立可空 `completed_at` | 计划随账号及对应 assessment 删除；`plan_enc` 内保存条目完成标志，独立 `completed_at` 记录首次完成时间；加密计划可含精确内部复习源 ID，但内部导出显式排除该链接。 |
+| 调度投影 | `growth_drill_schedules.activity_id`、`schedule_enc`、`occurred_at`、`retry_at`、`closed_at` | 仅保存单项数值档位与重练时间；活动外键级联，`closed_at` 阻止旧事件复活，T19 `drill_progress` 仍是完整历史唯一源。 |
 | 业务操作 | `ai_calls.operation_id` | 串联同一次业务操作的主模型、备用模型和审核尝试；不能拿单次尝试 ID 代替业务操作。 |
 | 单次尝试 | `ai_calls.id` | 区分主备/审核的每一次尝试，保留各自状态、耗时、token 和成本。 |
 | 评分引用 | `ai_calls.score_id` | 仅成功评分尝试由 `LinkScoreTx` 补上评分引用；失败或审核尝试的 `ai_calls.score_id` 可为空，不得为它们补造评分引用。 |
 
-删除与导出验收必须沿上述链路从 `activities` 追到 `scores`、`growth_scores` 和 `ai_calls`，同时保留 `ai_calls.operation_id` 与 `ai_calls.id` 的区别。`[待 T35 对表]`
+删除与导出验收必须沿上述链路从 `activities` 追到 `scores`、`growth_scores`、`growth_drill_schedules`、`daily_plans` 和 `ai_calls`，同时保留 `ai_calls.operation_id` 与 `ai_calls.id` 的区别；删除有效来源后计数减少、参考值即时重算，删除低分有效来源时参考值可以上升，且不能由旧事件回填。`[待 T35 对表]`
 
 ## 5. 留存与删除证据等级
 
@@ -99,8 +103,8 @@ T25 后端增量新增 `profile_observations.fact_enc` 和 `activity_profile_con
 
 ## 6. 导出与删除验收清单
 
-- [ ] 固定基线通用 `GET /v1/me/export` 当前返回 `501 not_implemented`；T35 必须接线后才能验证模块清单覆盖 D01–D42 中应导出的个人数据，并排除密钥、HMAC、平台收据原文和他人数据。D37、D38、T25 的 D14/D39/D40 及 T21 的 D11/D12/D41/D42 均不计入 PG17 42 项，须另验设备端领取、场景冻结、双同意推理、回复删除后防重放和普通效果回执隔离。模块内部导出/删除不等于 T35 公共入口。`[待 T35 对表]`
-- [ ] 固定基线通用 `DELETE /v1/me/data/:kind/:id` 当前返回 `501 not_implemented`；T35 接线后须能从源记录追到 `scores`、`growth_scores`、`ai_calls`、画像观察、计划和关联日志，并验证删除后重算不可回填。`[待 T35 对表]`
+- [ ] 固定基线通用 `GET /v1/me/export` 当前返回 `501 not_implemented`；T35 必须接线后才能验证模块清单覆盖 D01–D43 中应导出的个人数据，并排除密钥、HMAC、平台收据原文和他人数据。D37、D38、T25 的 D14/D39/D40、T21 的 D11/D12/D41/D42 及 T26 的 D43 均不计入 PG17 42 项，须另验设备端领取、场景冻结、双同意推理、回复删除后防重放、普通效果回执隔离和 T26 调度投影。模块内部导出/删除不等于 T35 公共入口。`[待 T35 对表]`
+- [ ] 固定基线通用 `DELETE /v1/me/data/:kind/:id` 当前返回 `501 not_implemented`；T35 接线后须能从源记录追到 `scores`、`growth_scores`、`growth_drill_schedules`、`ai_calls`、画像观察、计划和关联日志，并验证删除后重算不可回填。`[待 T35 对表]`
 - [ ] 注销冻结、15 天冷静期、撤销注销、按根清理和支付订单脱敏，分别核对线上签收。T23 已有账号注销前后显式清理 `review_tombstones` 的触发器与隔离后端断言；T35 仍须验证公共删除/注销入口的实际回执和全链路证明，不能把内部测试写成生产闭环。`[待 T35 对表]`
 - [ ] 健康窗口专用删除保持按账号、渠道和 30 秒起点定位，越权、相邻窗口和其他账号不受影响；该能力与通用单条删除分开验收。`[待 T35 对表]`
 - [ ] `chat_imports` 在 24 小时后不可读、不可导出、不可由旧请求恢复；定时清理失败可重试并告警。`[待实现/验收]`

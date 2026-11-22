@@ -139,11 +139,26 @@ func (b *Bus) PublishAssessment(ctx context.Context, v Assessment) error {
 	})
 }
 func (b *Bus) PublishDrill(ctx context.Context, v Drill) error {
+	if v.UserID == uuid.Nil || v.ActivityID == uuid.Nil || v.LevelID == uuid.Nil {
+		return errors.New("invalid drill event")
+	}
 	return b.guard.Access(ctx, v.UserID, func(tx pgx.Tx) error {
-		var id uuid.UUID
-		if e := tx.QueryRow(ctx, `select id from activities where user_id=$1 and id=$2 and kind='drill' for update`, v.UserID, v.ActivityID).Scan(&id); e != nil {
+		var completedAt time.Time
+		if e := tx.QueryRow(ctx, `select w.completed_at
+from activities a
+join practice_work w on w.activity_id=a.id
+where a.user_id=$1 and a.id=$2 and a.kind='drill' and a.state='complete'
+for update of a,w`, v.UserID, v.ActivityID).Scan(&completedAt); e != nil {
 			return e
 		}
+		// The source owns the occurrence time. Never accept a replayed or
+		// client-supplied timestamp that could move a retry deadline. A drill's
+		// actual completion time is practice_work.completed_at, not activity
+		// creation time, which may be on a previous local day.
+		if completedAt.IsZero() {
+			return errors.New("drill activity has no completion time")
+		}
+		v.OccurredAt = completedAt.UTC()
 		return b.DrillProgressed.dispatch(ctx, tx, v)
 	})
 }

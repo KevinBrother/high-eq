@@ -236,8 +236,18 @@ func TestProfileLifecycle(t *testing.T) {
 		t.Fatal("manual/rhythm misattributed", groups)
 	}
 
-	exec(`insert into scores(id,activity_id,activity_kind,detail_enc) values($1,$2,'review',$3)`, src, activity, []byte{1})
-	exec(`insert into growth_scores values($1,'review',$2,$2)`, src, []byte{1})
+	// The full export now includes growth. Seed a canonical, account-bound T23
+	// score and have T26 produce the encrypted numeric copy just as it does online.
+	detail, err := s.Fields.Seal([]byte(reviewScore), []byte("review/v1/"+u.String()+"/"+src.String()+"/score"))
+	must(err)
+	var scoredAt time.Time
+	must(s.db.QueryRow(ctx, `insert into scores(id,activity_id,activity_kind,detail_enc) values($1,$2,'review',$3) returning occurred_at`, src, activity, detail).Scan(&scoredAt))
+	must(s.Bus.PublishScore(ctx, events.Score{ScoreKey: privacy.ScoreKey{UserID: u, ActivityID: activity, SourceID: src, Kind: "review", OccurredAt: scoredAt}}))
+	var projectionCount int
+	must(s.db.QueryRow(ctx, `select count(*) from growth_scores where score_id=$1`, src).Scan(&projectionCount))
+	if projectionCount != 1 {
+		t.Fatalf("growth subscriber produced %d numeric copies", projectionCount)
+	}
 	export := func() []byte {
 		var buf bytes.Buffer
 		must(s.Data.Export(ctx, privacy.ExportRequest{UserID: u, OperationID: uuid.New()}, &buf))

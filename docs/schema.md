@@ -9,6 +9,7 @@ erDiagram
   users |o--o{ orders : buys
   orders ||--o| entitlements : grants
   users ||--o{ assessments : completes
+  assessments |o--o{ daily_plans : informs
   users ||--o{ contacts : owns
   users ||--o| personal_profiles : owns
   users ||--o{ daily_plans : follows
@@ -19,6 +20,7 @@ erDiagram
   activities ||--o| scores : grades
   activities ||--o| quota_ledger : charges
   activities ||--o| drill_progress : tracks
+  activities ||--o| growth_drill_schedules : schedules
   scores ||--o| growth_scores : projects
   activities |o--o{ ai_calls : traces
   scores |o--o{ ai_calls : traces
@@ -69,9 +71,10 @@ erDiagram
 | `quota_ledger` | 每次成功扣次一行；原时区自然日与退款时间，对练/回复/复盘按源类别分账 | 可导出本人结算，随源删除；已收取的当日额度不因用户删除内容而自动退款。 |
 | `daily_quota_usage` | 每用户/功能/自然日的净扣次，仅数值，不含源 ID，用于 Redis 重建 | 只保留结算与重试所需日汇总，随用户导出/删除；与扣次/退款流水在同一事务变更。 |
 | `scores` | `id=activities.source_id`，同一源最多一份；理由、引文、轮次、改写与分项只在 `detail_enc`；`occurred_at` 是原发生时间 | 随活动级联，可按源导出；重投事件不得刷新时间。评分失败不构造成功评分。 |
-| `growth_scores` | T26 数值投影：仅 NVC 数值与三项情绪等级密文。按 `score_id` 找到日期和账号，不另存原话或理由 | 只允许整场和复盘；随评分删除/导出。按近 30 天有效源重算，不持久化无法追溯的综合分。 |
+| `growth_scores` | 固定基线表；T26 只新增投影消费与导出：仅 NVC 数值与三项情绪等级密文。按 `score_id` 找到日期和账号，不另存原话或理由 | 只允许整场和复盘；随评分删除/导出。按近 30 天有效源重算，不持久化无法追溯的综合分。 |
 | `drill_progress` | 单项目标、加密进度与下次重练时间 | 随单项活动删除/导出；不能作为 T26 算分输入。 |
-| `daily_plans` | 每人每日一份加密训练安排、完成时间 | 随用户导出/删除；仅保存任务安排，不复制评分明细或关系人内容。公共题库由 T26 放 `content/`。 |
+| `growth_drill_schedules` | T26 独立调度投影：`activity_id` 主键、`target_item`、`level_id`、`schedule_enc`（仅精确 score/band）、`occurred_at`、`retry_at`、`closed_at`、`created_at`；不保存明文分数 | `activity_id` 随 `activities` 删除级联，账号删除随源清理；调度行在源存在期间保留，`closed_at` 永久关闭，重复或乱序旧事件不得复活；导出不输出内部调度密文。 |
+| `daily_plans` | 每人每日一份 AES-GCM 训练安排；T26 增量新增可空 `assessment_id`（`REFERENCES assessments ON DELETE CASCADE`）。`plan_enc` 内保存条目完成标志，独立可空 `completed_at` 记录首次完成时间 | 随用户导出/删除，删除对应 assessment 时级联删除计划；仅保存任务安排，不复制评分明细或关系人内容。公共题库由 T26 放 `content/`。 |
 | `profile_observations` | 明确核对的方向绑定账号与源活动/事件，字段加密；同一源/主体一次。画像按现存来源重算，导出 `profiles.json`。关系人或源删除通过外键级联，不保留独立的置信度副本。聊天材料仅在请求内处理，不写库。 | 随源删除；传感器事实随事件 180 天失效。 |
 | `activity_profile_context` | T25：来源活动首次被本人反馈引用时冻结的场景，AES-GCM 信封按账号/活动绑定；同一活动只保留首次场景，重投或关系人后续编辑不改变。 | 随来源活动或账号级联删除；不复制反馈原文。 |
 | `profile_inference_requests` | T25：账号内 `request_id` 的 `processing/complete/invalidated` 状态，绑定关系人、开始时的 `chat_import` 与 `contacts` 授权记录和输入 SHA-256；不保存聊天原文。完成重放只返回当前画像，不再次调用模型。 | 随关系人、授权记录或账号级联；任一授权撤回/重授后旧请求不可落库。 |

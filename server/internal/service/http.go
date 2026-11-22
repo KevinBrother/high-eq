@@ -14,6 +14,7 @@ import (
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/assessment"
 	"high-eq/server/internal/emotion"
+	"high-eq/server/internal/growth"
 	"high-eq/server/internal/marks"
 	"high-eq/server/internal/membership"
 	"high-eq/server/internal/payments"
@@ -38,6 +39,7 @@ type appAPI struct {
 	signals     *emotion.Service
 	replies     *replies.Service
 	assessments *assessment.Service
+	plans       *growth.PlanService
 	health      func(context.Context) error
 	accounts    *accounts.Service
 	membership  *membership.Service
@@ -77,7 +79,10 @@ var accountRoutes = map[string]bool{
 	"GET /v1/contacts/:id/summary": false, "POST /v1/contacts/:id/infer": false, "POST /v1/profiles/feedback": false,
 	"GET /v1/me/profile": false, "GET /v1/emotion-summary": false,
 	"GET /v1/entitlements": false,
-	"GET /v1/me/consents":  false, "PUT /v1/me/consents/:purpose": false,
+	"GET /v1/plans/today":  false, "POST /v1/plans/items/:id/complete": false,
+	"GET /v1/exercises/:id": false, "POST /v1/exercises/:id/answers": false,
+	"GET /v1/cards": false, "GET /v1/cards/:id": false, "GET /v1/growth": false,
+	"GET /v1/me/consents": false, "PUT /v1/me/consents/:purpose": false,
 }
 
 // Session-bound deletes perform their own validation after taking the account
@@ -150,6 +155,7 @@ func newRouterWithHealth(runtime *Runtime, health func(context.Context) error) *
 		api.assessments = runtime.Assessments
 		api.accounts = runtime.Accounts
 		api.membership = runtime.Membership
+		api.plans = runtime.Plans
 	}
 	app.RegisterHandlersWithOptions(r, api, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(api.accounts)}, ErrorHandler: invalid})
 	if runtime != nil {

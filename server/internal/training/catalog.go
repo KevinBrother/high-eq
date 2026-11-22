@@ -2,6 +2,8 @@
 package training
 
 import (
+	"errors"
+
 	"github.com/google/uuid"
 
 	"high-eq/server/internal/accounts"
@@ -42,6 +44,60 @@ func validScene(v string) bool {
 	}
 	return false
 }
+
+func validFocus(v string) bool {
+	switch v {
+	case "observation", "feeling", "need", "request":
+		return true
+	}
+	return false
+}
+
+// PlanLevelIDs resolves the canonical single-skill and full-session levels used
+// by T26. Prefer the requested scene, then fall back across scenes so a sparse
+// catalog never causes T26 to invent an ID.
+func PlanLevelIDs(focus, scene string) (single, full uuid.UUID, err error) {
+	if !validFocus(focus) || !validScene(scene) {
+		return uuid.Nil, uuid.Nil, accounts.ErrInvalid
+	}
+	return planLevelIDs(catalog, focus, scene)
+}
+
+func planLevelIDs(lessons []lesson, focus, scene string) (single, full uuid.UUID, err error) {
+	for _, l := range lessons {
+		if string(l.Scene) == scene && l.Mode == "single_skill" && l.TargetItem != nil && *l.TargetItem == focus {
+			single = l.Id
+			break
+		}
+	}
+	if single == uuid.Nil {
+		for _, l := range lessons {
+			if l.Mode == "single_skill" && l.TargetItem != nil && *l.TargetItem == focus {
+				single = l.Id
+				break
+			}
+		}
+	}
+	for _, l := range lessons {
+		if string(l.Scene) == scene && l.Mode == "full_session" {
+			full = l.Id
+			break
+		}
+	}
+	if full == uuid.Nil {
+		for _, l := range lessons {
+			if l.Mode == "full_session" {
+				full = l.Id
+				break
+			}
+		}
+	}
+	if single == uuid.Nil || full == uuid.Nil || single == full {
+		return uuid.Nil, uuid.Nil, errors.New("training catalog has no usable plan levels")
+	}
+	return single, full, nil
+}
+
 func limit(v *int) (int, error) {
 	if v == nil {
 		return 20, nil

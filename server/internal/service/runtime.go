@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -15,6 +16,7 @@ import (
 	"high-eq/server/internal/events"
 	"high-eq/server/internal/fieldcrypt"
 	"high-eq/server/internal/gateway"
+	"high-eq/server/internal/growth"
 	"high-eq/server/internal/marks"
 	"high-eq/server/internal/membership"
 	"high-eq/server/internal/payments"
@@ -45,7 +47,28 @@ type Runtime struct {
 	Accounts             *accounts.Service
 	Data                 *privacy.Coordinator
 	Bus                  *events.Bus
+	Growth               *growth.Service
+	Plans                *growth.PlanService
 	Fields               *fieldcrypt.Cipher
+}
+
+type startupReplay struct {
+	module string
+	replay func(context.Context) error
+}
+
+// Startup replay is best effort. The minute maintenance loop retries every
+// source-owned outbox, while one account's freeze/deletion fence must not make
+// the whole API unavailable.
+func replayStartupPending(ctx context.Context, replays ...startupReplay) {
+	for _, replay := range replays {
+		if replay.replay == nil {
+			continue
+		}
+		if err := replay.replay(ctx); err != nil {
+			slog.Error("startup delivery pending", "module", replay.module, "result", "retry")
+		}
+	}
 }
 
 func Start(ctx context.Context, c Config) (*Runtime, error) {
@@ -100,9 +123,9 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	}
 	s.Profiles = &profile.Service{Fields: c.Fields, Rights: s.Membership}
 	hooks, e := privacy.NewRegistry(
-		[]string{"training", "profiles", "assessments", "payments", "membership", "accounts", "replies", "ai_calls", "emotion", "manual_marks", "reviews"},
+		[]string{"training", "profiles", "assessments", "payments", "membership", "accounts", "replies", "ai_calls", "emotion", "manual_marks", "reviews", "growth"},
 		payments.Hooks(), s.Membership.Hooks(), assessment.Hooks(c.Fields), accounts.Hooks(c.Fields),
-		training.Hooks(c.Fields), s.Profiles.Hooks(), replies.Hooks(c.Fields), gateway.Hooks(), emotion.Hooks(c.Fields), marks.Hooks(c.Fields), reviews.Hooks(c.Fields),
+		training.Hooks(c.Fields), s.Profiles.Hooks(), replies.Hooks(c.Fields), gateway.Hooks(), emotion.Hooks(c.Fields), marks.Hooks(c.Fields), reviews.Hooks(c.Fields), growth.Hooks(c.Fields),
 	)
 	if e != nil {
 		return nil, e
@@ -144,11 +167,37 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	s.Marks = &marks.Service{Fields: c.Fields, DB: s.db, Data: s.Data}
 	s.Reviews = &reviews.Service{Accounts: s.Accounts, Rights: s.Membership, Data: s.Data, Fields: c.Fields, DB: s.db, Bus: s.Bus, Key: c.authMaster, Router: func(stop gateway.Stop) (scoring.Runner, error) { return s.catalog.NewRouter(s.Data, stop) }}
 	s.Reviews.Profile = s.Profiles
+	s.Growth = &growth.Service{Fields: c.Fields}
+	s.Bus.ScoreCompleted.Subscribe(s.Growth.Consume)
 	s.Emotion = &emotion.Service{DB: s.db, Data: s.Data, Fields: c.Fields, Bus: s.Bus}
 	s.Assessments = assessment.New(bank, s.Accounts, c.Fields, s.Bus, s.db)
+	s.Plans, e = growth.NewPlanService(growth.PlanDependencies{
+		Fields:     c.Fields,
+		Results:    s.Assessments,
+		Levels:     trainingPlanLevels{},
+		Activities: s.Practice,
+		Profiles:   s.Profiles,
+		Membership: s.Membership,
+	})
+	if e != nil {
+		return nil, e
+	}
+	s.Bus.AssessmentCompleted.Subscribe(s.Plans.ConsumeAssessment)
+	s.Bus.DrillProgressed.Subscribe(s.Plans.ConsumeDrill)
+	s.Bus.ScoreCompleted.Subscribe(s.Plans.ConsumeScore)
+	// Attempt every source-owned outbox before the listener opens. Practice and
+	// reviews publish numeric/drill events first, so an assessment replay sees
+	// the same durable scheduling state as an online submission. Failures stay
+	// pending for the minute maintenance loop and never block unrelated users.
+	replayStartupPending(ctx,
+		startupReplay{module: "practice", replay: s.Practice.ReplayPending},
+		startupReplay{module: "reviews", replay: s.Reviews.ReplayPending},
+		startupReplay{module: "assessments", replay: s.Assessments.ReplayPending},
+	)
 	ok = true
 	return s, nil
 }
+
 func instance(ctx context.Context, r *redis.Client) (string, error) {
 	info, e := r.Info(ctx, "server").Result()
 	if e != nil {

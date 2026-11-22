@@ -461,6 +461,365 @@ class DataLineageContract(unittest.TestCase):
         self.assertIn("1 天", t33)
 
 
+class T26GrowthContract(unittest.TestCase):
+    def test_t26_growth_projection_and_drill_schedule_boundaries(self) -> None:
+        migration = read("server/migrations/20261123010026_growth_plan_delivery.up.sql")
+        self.assertIn(
+            "ALTER TABLE daily_plans\n"
+            "  ADD COLUMN assessment_id uuid REFERENCES assessments(id) ON DELETE CASCADE;",
+            migration,
+        )
+
+        schedule = re.search(
+            r"CREATE TABLE growth_drill_schedules \((.*?)\n\);", migration, re.S
+        )
+        self.assertIsNotNone(schedule)
+        schedule_block = schedule.group(1)
+        for column in (
+            "activity_id",
+            "target_item",
+            "level_id",
+            "schedule_enc",
+            "occurred_at",
+            "retry_at",
+            "closed_at",
+            "created_at",
+        ):
+            self.assertRegex(schedule_block, rf"(?m)^\s*{column}\s", f"missing {column}")
+        self.assertIn(
+            "activity_id uuid PRIMARY KEY REFERENCES activities ON DELETE CASCADE",
+            schedule_block,
+        )
+        self.assertNotRegex(schedule_block, r"(?m)^\s*(?:score|band)\s")
+        self.assertIn("schedule_enc bytea NOT NULL", schedule_block)
+
+        projection = read("server/internal/growth/projection.go")
+        consume = projection.split("func (s *Service) Consume(", 1)[1].split(
+            "// Reference", 1
+        )[0]
+        self.assertIn('v.Kind != "practice" && v.Kind != "review"', consume)
+        self.assertIn(
+            "insert into growth_scores(score_id,kind,nvc_enc,emotion_enc)",
+            consume,
+        )
+        self.assertNotIn("insert into growth_scores(score_id,kind,nvc_enc,emotion_enc,user_id", consume)
+
+        delivery = read("server/internal/growth/planning_delivery.go")
+        self.assertIn("insert into growth_drill_schedules", delivery)
+        for forbidden in (
+            "insert into drill_progress",
+            "update drill_progress",
+            "delete from drill_progress",
+        ):
+            self.assertNotIn(forbidden, delivery.lower())
+        self.assertIn("occurredAt.Add(72 * time.Hour)", delivery)
+        self.assertIn("closed_at", delivery)
+        self.assertIn("ReviewThreeDays", delivery)
+
+        schedule_rules = read("server/internal/growth/schedule.go")
+        self.assertIn("case score >= 25:", schedule_rules)
+        self.assertIn("case score >= 10:", schedule_rules)
+
+        inventory = read("docs/compliance/data-inventory.md")
+        baseline_training = read("server/migrations/20261121000200_training.up.sql")
+        self.assertIn("CREATE TABLE growth_scores", baseline_training)
+
+        d16 = re.search(r"^\| D16 \|.*$", inventory, re.M)
+        self.assertIsNotNone(d16)
+        for phrase in (
+            "数值副本（固定基线表 + T26 投影消费）",
+            "`growth_scores` 表属于固定基线 `f60ace3`",
+            "T26 新增的是投影消费",
+            "内部 `growth.json` 包含数值评分记录、计划和单项调度",
+            "其中评分记录只导出数值投影",
+        ):
+            self.assertIn(phrase, d16.group(0))
+
+        baseline_encrypted = inventory.split(
+            "在固定基线迁移中可定位的密文信封列", 1
+        )[1].split("T25 后端增量", 1)[0]
+        self.assertIn("growth_scores.nvc_enc", baseline_encrypted)
+        self.assertNotIn("schedule_enc", baseline_encrypted)
+
+        d43 = re.search(r"^\| D43 \|.*$", inventory, re.M)
+        self.assertIsNotNone(d43)
+        for phrase in (
+            "growth_drill_schedules",
+            "schedule_enc",
+            "REFERENCES activities ON DELETE CASCADE",
+            "closed_at",
+            "72h",
+            "不计入 `f60ace3` 的 42 项",
+            "T19",
+            "drill_progress",
+            "T26 后端增量",
+        ):
+            self.assertIn(phrase, d43.group(0))
+
+        schema = read("docs/schema.md")
+        self.assertIn("assessments |o--o{ daily_plans : informs", schema)
+        daily_plan_row = next(
+            line for line in schema.splitlines() if line.startswith("| `daily_plans` |")
+        )
+        for phrase in (
+            "可空 `assessment_id`",
+            "ON DELETE CASCADE",
+            "`plan_enc` 内保存条目完成标志",
+            "独立可空 `completed_at`",
+        ):
+            self.assertIn(phrase, daily_plan_row)
+        growth_score_row = next(
+            line for line in schema.splitlines() if line.startswith("| `growth_scores` |")
+        )
+        self.assertIn("固定基线表", growth_score_row)
+        self.assertIn("T26 只新增投影消费与导出", growth_score_row)
+
+    def test_t26_reference_and_plan_scene_recompute_from_authorized_sources(self) -> None:
+        projection = read("server/internal/growth/projection.go")
+        self.assertIn("const behaviorWindow = 720 * time.Hour", projection)
+        reference = projection.split("func (s *Service) Reference(", 1)[1].split(
+            "func (s *Service) export(", 1
+        )[0]
+        self.assertIn("now.Add(-behaviorWindow)", reference)
+        self.assertIn("s.occurred_at>$2 and s.occurred_at<=$3", reference)
+        self.assertIn("sum += BehaviorScore", reference)
+        self.assertIn("TrainingReference(out.WLEISPercent, &average)", reference)
+        self.assertIn("out.ValidBehaviorCount++", reference)
+
+        planning = read("server/internal/growth/planning.go")
+        plan_scene = planning.split("func (s *PlanService) planScene(", 1)[1].split(
+            "func (s *PlanService) dueReview(", 1
+        )[0]
+        self.assertIn("scene := sceneFor(user, day, focus)", plan_scene)
+        membership_pos = plan_scene.index("s.Membership.Require")
+        profiles_pos = plan_scene.index("s.Profiles.AuthorizedScene")
+        self.assertLess(membership_pos, profiles_pos)
+
+        outer_membership = plan_scene[membership_pos:profiles_pos]
+        self.assertIn("errors.Is(err, membership.ErrForbidden)", outer_membership)
+        self.assertIn("return scene, false, nil", outer_membership)
+        self.assertIn('return "", false, err', outer_membership)
+
+        adoption = plan_scene[profiles_pos:]
+        self.assertIn("if err != nil || !ok || !validScene(authorized)", adoption)
+        self.assertIn("return scene, false, nil", adoption)
+        self.assertIn("return authorized, true, nil", adoption)
+
+        contacts = read("server/internal/profile/contacts.go")
+        authorized_scene = contacts.split(
+            "func (s *Service) AuthorizedScene(", 1
+        )[1].split("func (s *Service) ForModel(", 1)[0]
+        rights_pos = authorized_scene.index("s.Rights.Require")
+        consent_pos = authorized_scene.index('consent(ctx, tx, u, "contacts")')
+        contact_query_pos = authorized_scene.index("select id from contacts")
+        contact_read_pos = authorized_scene.index("s.read(ctx, tx, u, id)")
+        self.assertLess(rights_pos, consent_pos)
+        self.assertLess(consent_pos, contact_query_pos)
+        self.assertLess(contact_query_pos, contact_read_pos)
+
+        inventory = read("docs/compliance/data-inventory.md")
+        for phrase in (
+            "720 小时（30 天）",
+            "新增或删除有效来源后计数和参考值即时重算",
+            "删除低分有效来源时参考值可以上升",
+        ):
+            self.assertIn(phrase, inventory)
+
+        scene_phrases = (
+            "默认场景由账号、计划日和训练重点推导",
+            "通过后调用 `Profiles.AuthorizedScene`",
+            "该方法再复核会员权益和有效 `contacts` 同意",
+            "通过后查询并读取最近使用的关系人",
+            "只有返回可用且合法的场景时才采用，否则走默认场景",
+            "外层会员检查只有 `ErrForbidden` 回退，其他错误直接返回",
+            "生成仍读取到期单项调度和近期已用题卡",
+        )
+        for document in (inventory, read("docs/tasks/T33.md")):
+            for phrase in scene_phrases:
+                self.assertIn(phrase, document)
+
+        generate_plan = planning.split(
+            "func (s *PlanService) generatePlan(", 1
+        )[1].split("func (s *PlanService) planScene(", 1)[0]
+        self.assertIn("s.dueReview(ctx, tx, user, at)", generate_plan)
+        self.assertIn("s.usedContent(ctx, tx, user, day)", generate_plan)
+
+    def test_t26_exports_are_numeric_and_hide_internal_review_links(self) -> None:
+        projection = read("server/internal/growth/projection.go")
+        export_record = projection.split("type ExportRecord struct {", 1)[1].split(
+            "type PlanItemExportRecord struct {", 1
+        )[0]
+        self.assertEqual(
+            set(re.findall(r"^\s+(\w+)\s+", export_record, re.M)),
+            {"RecordType", "SourceID", "Kind", "OccurredAt", "NVC", "Emotion"},
+        )
+
+        plan_item = projection.split("type PlanItemExportRecord struct {", 1)[1].split(
+            "type PlanExportRecord struct {", 1
+        )[0]
+        self.assertEqual(
+            set(re.findall(r"^\s+(\w+)\s+", plan_item, re.M)),
+            {"ID", "Kind", "Title", "ContentID", "Completed"},
+        )
+        self.assertNotIn("ReviewActivityID", plan_item)
+        self.assertNotIn("review_activity_id", plan_item)
+
+        plan_export = projection.split("type PlanExportRecord struct {", 1)[1].split(
+            "type DrillExportRecord struct {", 1
+        )[0]
+        self.assertNotIn("ReviewActivityID", plan_export)
+        self.assertNotIn("review_activity_id", plan_export)
+
+        planning = read("server/internal/growth/planning.go")
+        export_plans = planning.split("func (s *PlanService) exportPlans(", 1)[1].split(
+            "func (s *PlanService) exportDrills(", 1
+        )[0]
+        self.assertIn("PlanItemExportRecord{", export_plans)
+        self.assertIn(
+            "ID: item.ID, Kind: item.Kind, Title: item.Title, ContentID: item.ContentID, Completed: item.Completed",
+            export_plans,
+        )
+        self.assertNotIn("ReviewActivityID:", export_plans)
+        export_drills = planning.split("func (s *PlanService) exportDrills(", 1)[1].split(
+            "func utcTimePointer(", 1
+        )[0]
+        self.assertIn('RecordType: "drill"', export_drills)
+        self.assertIn("Score:      score", export_drills)
+        self.assertIn("Band:       band", export_drills)
+
+        http = read("server/internal/service/http.go")
+        routes = re.search(r"var accountRoutes = map\[string\]bool\{(.*?)\n\}", http, re.S)
+        self.assertIsNotNone(routes)
+        self.assertNotIn("GET /v1/me/export", routes.group(1))
+        self.assertNotIn("DELETE /v1/me/data/:kind/:id", routes.group(1))
+        self.assertIn('problem(c, 501, "not_implemented"', http)
+
+        inventory = read("docs/compliance/data-inventory.md")
+        for phrase in (
+            "内部 `growth.json` 包含数值评分记录、计划和单项调度",
+            "其中评分记录只导出数值投影",
+            "不输出 `review_activity_id`",
+            "通用 `GET /v1/me/export` 与 `DELETE /v1/me/data/:kind/:id` 仍为 `501 not_implemented`",
+        ):
+            self.assertIn(phrase, inventory)
+
+    def test_t26_compliance_evidence_and_nonclaims_are_registered(self) -> None:
+        inventory = read("docs/compliance/data-inventory.md")
+        qa = read("docs/compliance/qa.md")
+        t33 = read("docs/tasks/T33.md")
+
+        qa34 = re.search(r"^\| QA-34 \|.*$", qa, re.M)
+        self.assertIsNotNone(qa34)
+        for phrase in (
+            "PG17",
+            "普通 Redis",
+            "独立 AOF Redis",
+            "Flutter 实际 HTTP",
+            "member-plan-http.log",
+            "final-storage.log",
+            "t04-server.log",
+            "t27-latest/client.log",
+            "首次 `GET` 前测评事件已生成计划",
+            "免费、会员和撤回 `contacts` 后的路径",
+            "正常账号",
+            "可以幂等补生成",
+            "冻结账号才被拒绝",
+            "失败回滚",
+            "删除后重算",
+            "乱序原日补记",
+            "原日已有匹配关卡",
+            "不补建历史计划",
+            "不给今天打卡",
+            "不复活已关闭排期",
+            "手动完成接口不是历史补打卡入口",
+            "不是前两类服务端断言的客户端证据",
+            "冻结账号",
+            "GET",
+            "NVC 20",
+            "情绪 2/3/2",
+            "行为分 24",
+            "0→1",
+            "(WLEIS 百分制分 + 24)/2",
+            "恢复 0",
+            "无训练参考",
+            "导出没有该分数",
+            "T34",
+            "50 道题",
+            "20 张卡",
+            "未人工审校",
+        ):
+            self.assertIn(phrase, qa34.group(0))
+
+        t26_section = re.search(r"### 4\.10 T26.*?(?=\n## 5\.)", t33, re.S)
+        self.assertIsNotNone(t26_section)
+        self.assertIn("不计入", t26_section.group(0))
+        self.assertIn("42 项", t26_section.group(0))
+        self.assertIn("T34 恢复后重删", t26_section.group(0))
+        self.assertIn("50 道读人题", t26_section.group(0))
+        self.assertIn("20 张知识卡片", t26_section.group(0))
+        self.assertRegex(t26_section.group(0), r"合成材料.*未.*人工审")
+        for phrase in (
+            "首次 `GET` 前测评事件已生成计划",
+            "免费、会员和撤回 `contacts` 后的路径",
+            "正常账号",
+            "可以幂等补生成",
+            "冻结账号才被拒绝",
+            "失败回滚",
+            "删除后重算",
+            "乱序原日补记",
+            "不补建历史计划",
+            "不给今天打卡",
+            "不复活已关闭排期",
+            "手动完成接口不是历史补打卡入口",
+        ):
+            self.assertIn(phrase, t26_section.group(0))
+
+        evidence = re.search(r"### T26 合装证据.*$", t33, re.S)
+        self.assertIsNotNone(evidence)
+        for phrase in (
+            "PG17",
+            "普通 Redis",
+            "独立 AOF Redis",
+            "Flutter 实际 HTTP",
+            "member-plan-http.log",
+            "final-storage.log",
+            "t04-server.log",
+            "t27-latest/client.log",
+            "首次 `GET` 前测评事件已生成计划",
+            "免费、会员和撤回 `contacts` 后的路径",
+            "可以幂等补生成",
+            "冻结账号才被拒绝",
+            "失败回滚",
+            "删除后重算",
+            "原日已有匹配关卡",
+            "不补建历史计划",
+            "不给今天打卡",
+            "不复活已关闭排期",
+            "手动完成接口不是历史补打卡入口",
+            "冻结账号",
+            "NVC 20",
+            "情绪 2/3/2",
+            "行为分 24",
+            "0→1",
+            "(WLEIS 百分制分 + 24)/2",
+            "恢复 0",
+            "无训练参考",
+            "导出没有该分数",
+            "T34",
+            "50 道读人题",
+            "20 张知识卡片",
+            "人工审校",
+        ):
+            self.assertIn(phrase, evidence.group(0))
+
+        for doc in (inventory, qa, t33):
+            self.assertIn("T26", doc)
+            self.assertIn("42 项", doc)
+            self.assertIn("501 not_implemented", doc)
+        self.assertIn("D43", inventory)
+        self.assertIn("QA-34", qa)
+
+
 class ReviewInventoryContract(unittest.TestCase):
     def test_recovery_and_tombstone_have_separate_lifetimes(self) -> None:
         migration = read("server/migrations/20261122120023_review_requests.up.sql")
@@ -484,7 +843,7 @@ class ReviewInventoryContract(unittest.TestCase):
         self.assertIn("未审核输出不展示、不导出", read("docs/compliance/separate-consents.md"))
         self.assertIn("成功落库时起算", row)
         self.assertIn("单独的已审核短语", row)
-        self.assertIn("T26 真实下游消费待验", read("docs/compliance/qa.md"))
+        self.assertIn("真实 T26 订阅者写数值投影", read("docs/compliance/qa.md"))
 
 
 class ProfileEvidenceContract(unittest.TestCase):
@@ -653,9 +1012,9 @@ class ProfileEvidenceContract(unittest.TestCase):
         self.assertIn('problem(c, 501, "not_implemented"', http)
 
         inventory = read("docs/compliance/data-inventory.md")
-        self.assertIn("D01–D42", inventory)
+        self.assertIn("D01–D43", inventory)
         self.assertRegex(inventory, r"模块内部导出/删除[^\n]*不等于[^\n]*T35")
-        self.assertRegex(inventory, r"D37[^\n]*D39[^\n]*D40[^\n]*D41[^\n]*D42[^\n]*不计入")
+        self.assertRegex(inventory, r"D37[^\n]*D39[^\n]*D40[^\n]*D41[^\n]*D42[^\n]*D43[^\n]*不计入")
         self.assertIn("chat_imports", inventory)
         self.assertRegex(inventory, r"chat_imports[^\n]*24 小时[^\n]*(?:待实现/验收|待验收)")
 

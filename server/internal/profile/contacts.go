@@ -139,6 +139,37 @@ func (s *Service) Choose(ctx context.Context, tx pgx.Tx, u, id uuid.UUID) (app.C
 	return s.Contact(ctx, tx, u, id)
 }
 
+// AuthorizedScene returns the scene of the most recently used contact for the
+// personal plan. The membership gate must run before consent or profile access;
+// this read never selects a contact or refreshes last_used_at.
+func (s *Service) AuthorizedScene(ctx context.Context, tx pgx.Tx, u uuid.UUID) (string, bool, error) {
+	if s == nil || s.Rights == nil || s.Fields == nil || tx == nil || u == uuid.Nil {
+		return "", false, accounts.ErrInvalid
+	}
+	if err := s.Rights.Require(ctx, tx, u, membership.PersonalPlan); err != nil {
+		return "", false, err
+	}
+	if err := consent(ctx, tx, u, "contacts"); err != nil {
+		return "", false, err
+	}
+	var id uuid.UUID
+	err := tx.QueryRow(ctx, `select id from contacts
+where user_id=$1 and last_used_at is not null
+order by last_used_at desc, id
+limit 1`, u).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	d, err := s.read(ctx, tx, u, id)
+	if err != nil {
+		return "", false, err
+	}
+	return string(d.Scene), true, nil
+}
+
 // ForModel authorizes actual training use, unlike a historical detail read. Call in the activity's transaction.
 func (s *Service) ForModel(ctx context.Context, tx pgx.Tx, u, id uuid.UUID) (app.Profile, error) {
 	if e := s.write(ctx, tx, u, &id); e != nil {
