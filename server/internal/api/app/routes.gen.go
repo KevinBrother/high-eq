@@ -1225,6 +1225,9 @@ type E500 = Error
 // E503 defines model for E503.
 type E503 = Error
 
+// E503ServiceUnavailable defines model for E503ServiceUnavailable.
+type E503ServiceUnavailable = Error
+
 // ListAssessmentsParams defines parameters for ListAssessments.
 type ListAssessmentsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
