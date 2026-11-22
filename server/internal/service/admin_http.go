@@ -7,6 +7,6 @@ import (
 
 // Router mounts both independent authentication domains on the same HTTP server.
 func (s *Runtime) Router() *gin.Engine {
-	return newRouter(s.Practice, s.Marks, s.Payments, s.Profiles, s.Reviews, s.Health, s.Accounts, s.mountAdmin, s.Membership, s.Assessments, s.Emotion)
+	return newRouter(s)
 }
 func (s *Runtime) mountAdmin(r gin.IRouter) { adminops.RegisterDashboard(r, s.db, s.catalog, s.Fields) }

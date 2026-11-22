@@ -57,6 +57,17 @@ type Feedback struct {
 	ContactID  *uuid.UUID `json:"contact_id,omitempty"`
 	OccurredAt time.Time  `json:"occurred_at"`
 }
+
+// ReplyOutcome is the non-profile handoff for a recorded suggestion outcome.
+// It carries only opaque keys and timing; chat and effect prose stay encrypted
+// in the source module and must be read there by an authorized consumer.
+type ReplyOutcome struct {
+	FeedbackID uuid.UUID `json:"feedback_id"`
+	UserID     uuid.UUID `json:"user_id"`
+	SourceID   uuid.UUID `json:"source_id"`
+	SourceKind string    `json:"source_kind"`
+	OccurredAt time.Time `json:"occurred_at"`
+}
 type Score struct {
 	privacy.ScoreKey
 	ScoreValues
@@ -82,6 +93,7 @@ type Bus struct {
 	AssessmentCompleted Topic[Assessment]
 	DrillProgressed     Topic[Drill]
 	ProfileFeedback     Topic[Feedback]
+	ReplyOutcome        Topic[ReplyOutcome]
 }
 
 // decode is supplied by the trusted score owner, not by subscribers. Without

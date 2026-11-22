@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type Task string
@@ -71,6 +72,44 @@ type Call struct {
 	// Generated replays an already persisted output. It still repeats all
 	// moderation, but never dispatches a model or calls OnGenerated.
 	Generated *Generated
+	// Authorize wraps the actual external dispatch. The owning module must call
+	// send only while its authorization/lock scope is still active, so a
+	// withdrawal cannot commit between the check and the provider request. The
+	// transaction passed to send must be reused by every database-backed step of
+	// the dispatch, including revision lookup, to avoid borrowing a second pool
+	// connection while the authorization transaction holds its own.
+	Authorize func(context.Context, pgx.Tx, func(context.Context, pgx.Tx) error) error
+}
+
+type authorizedDispatchKey struct{}
+type authorizedScope struct{ tx pgx.Tx }
+
+func authorizedTx(ctx context.Context) pgx.Tx {
+	if v, ok := ctx.Value(authorizedDispatchKey{}).(authorizedScope); ok {
+		return v.tx
+	}
+	return nil
+}
+
+// dispatchAuthorized marks nested dispatches made from inside send. Those
+// dispatches run under the same owning-module transaction and must not start a
+// second account session (which would self-lock on the users row).
+func (r *Router) dispatchAuthorized(ctx context.Context, c Call, send func(context.Context, pgx.Tx) error) error {
+	if v, ok := ctx.Value(authorizedDispatchKey{}).(authorizedScope); ok {
+		return send(ctx, v.tx)
+	}
+	if c.Authorize == nil {
+		return send(ctx, nil)
+	}
+	sent := false
+	err := c.Authorize(ctx, nil, func(sendCtx context.Context, tx pgx.Tx) error {
+		sent = true
+		return send(context.WithValue(sendCtx, authorizedDispatchKey{}, authorizedScope{tx}), tx)
+	})
+	if err == nil && !sent {
+		return errAuthorizationSkipped
+	}
+	return err
 }
 
 // Text is provisional for fragment events. For terminal events replace all fragments with Terminal.
@@ -105,6 +144,7 @@ var unavailable = Terminal{Code: "moderation_unavailable", Message: UnavailableM
 var errSink = errors.New("downstream unavailable")
 var errAudit = errors.New("attempt accounting unavailable")
 var errStopped = errors.New("generation stopped")
+var errAuthorizationSkipped = errors.New("authorization skipped dispatch")
 
 // Stop must idempotently cancel scoring and release/refund this operation on its original ledger day.
 // A failed settlement is returned to the caller for durable retry, never converted to success.

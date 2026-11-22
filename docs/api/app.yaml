@@ -1891,7 +1891,7 @@ paths:
                 request_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
                 status: in_progress
         '403': {$ref: '#/components/responses/E403'}
-      description: 同一 request_id 及相同内容返回已保存结果；仍在处理中返回 202，稍后用原请求重试；同键不同输入为 409。审核故障可用原 ID 重试。 指定只读关系人不可用于新训练或画像反馈。
+      description: 同一 request_id 及相同内容返回已保存结果；仍在处理中返回 202，稍后用原请求重试；同键不同输入或对应回复已删除后重放为 409。审核故障可用原 ID 重试。每次外部发送前重新核验聊天导入同意与关系人权限。指定只读关系人不可用于新训练或画像反馈。
       x-example-request: POST /v1/replies
   /v1/replies/{id}/feedback:
     post:
@@ -1925,8 +1925,9 @@ paths:
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
         '404': {$ref: '#/components/responses/E404'}
+        '409': {$ref: '#/components/responses/E409'}
         '403': {$ref: '#/components/responses/E403'}
-      description: ' 指定只读关系人不可用于新训练或画像反馈。'
+      description: 选择下标从 0 开始。效果说明不作本人情绪证据；仅显式 self_report 转给画像服务，同一回复最多确认一次，原样重试不重复投递。只读关系人不可反馈。
       x-example-request: POST /v1/replies/85b72033-9f07-4bbc-8567-fc31f26508ab/feedback
   /v1/reviews:
     post:
@@ -3632,6 +3633,10 @@ components:
       properties:
         index: {type: integer, minimum: 0, maximum: 2}
         outcome: {type: string, minLength: 1}
+        self_report:
+          type: string
+          enum: [overwhelmed, not_overwhelmed]
+          description: 可选，用户亲自确认自己当时上头或没有上头；不用对方反应或建议效果推断。
     ReviewInput:
       type: object
       additionalProperties: false

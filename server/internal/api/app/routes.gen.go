@@ -257,6 +257,12 @@ const (
 	PlanItemKindLevel    PlanItemKind = "level"
 )
 
+// Defines values for RateReplyInputSelfReport.
+const (
+	RateReplyInputSelfReportNotOverwhelmed RateReplyInputSelfReport = "not_overwhelmed"
+	RateReplyInputSelfReportOverwhelmed    RateReplyInputSelfReport = "overwhelmed"
+)
+
 // Defines values for ReviewInputScene.
 const (
 	ReviewInputSceneFamily  ReviewInputScene = "family"
@@ -973,7 +979,13 @@ type Profile struct {
 type RateReplyInput struct {
 	Index   int    `json:"index"`
 	Outcome string `json:"outcome"`
+
+	// SelfReport 可选，用户亲自确认自己当时上头或没有上头；不用对方反应或建议效果推断。
+	SelfReport *RateReplyInputSelfReport `json:"self_report,omitempty"`
 }
+
+// RateReplyInputSelfReport 可选，用户亲自确认自己当时上头或没有上头；不用对方反应或建议效果推断。
+type RateReplyInputSelfReport string
 
 // ReceiveAlipayNotificationInput defines model for ReceiveAlipayNotificationInput.
 type ReceiveAlipayNotificationInput struct {

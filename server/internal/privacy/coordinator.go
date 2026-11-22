@@ -51,6 +51,18 @@ func roots(ctx context.Context, tx pgx.Tx, user uuid.UUID) ([]root, error) {
 	return roots, rows.Err()
 }
 
+// accountAccessTx carries the identity actually guarded by Access. It is
+// deliberately unexported: event keys alone do not authorize a source read.
+type accountAccessTx struct {
+	pgx.Tx
+	owner uuid.UUID
+}
+
+func AccessOwnedBy(tx pgx.Tx, owner uuid.UUID) bool {
+	guarded, ok := tx.(*accountAccessTx)
+	return ok && guarded != nil && owner != uuid.Nil && guarded.owner == owner
+}
+
 // Access conservatively hides the whole account while any source is pending:
 // derived rows may not themselves carry the deleted source key.
 func (c *Coordinator) Access(ctx context.Context, user uuid.UUID, fn func(pgx.Tx) error) error {
@@ -65,7 +77,7 @@ func (c *Coordinator) Access(ctx context.Context, user uuid.UUID, fn func(pgx.Tx
 		if frozen {
 			return ErrHidden
 		}
-		return fn(tx)
+		return fn(&accountAccessTx{Tx: tx, owner: user})
 	})
 }
 

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
@@ -142,5 +143,107 @@ func TestGatewayHotUpdate(t *testing.T) {
 	must(err)
 	if _, err := chat.Chat(ctx, "scoring", req); !errors.Is(err, ErrConfig) || calls.Load() != 2 {
 		t.Fatal("stale config contacted provider")
+	}
+}
+
+type countingAdapter struct{ calls atomic.Int32 }
+
+func (a *countingAdapter) chat(context.Context, target, Request) (Result, error) {
+	a.calls.Add(1)
+	return Result{Text: "fixture"}, nil
+}
+
+func TestCatalogLookupAtRecoversMissedNotificationWithSinglePoolConnection(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	poolConfig, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
+	must(err)
+	poolConfig.MaxConns = 1
+	db, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	must(err)
+	defer db.Close()
+	opt, err := redis.ParseURL(os.Getenv("REDIS_URL"))
+	must(err)
+	cache := redis.NewClient(opt)
+	defer cache.Close()
+	key := make([]byte, 32)
+	_, err = rand.Read(key)
+	must(err)
+	fields, err := fieldcrypt.New(1, map[uint32][]byte{1: key})
+	must(err)
+	catalog, err := Start(ctx, db, cache, fields)
+	must(err)
+	defer catalog.Close()
+	// Make the lost-notification condition deterministic: no watcher may publish
+	// the direct database update below.
+	must(catalog.sub.Close())
+	select {
+	case <-catalog.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("catalog watcher did not stop")
+	}
+	counted := &countingAdapter{}
+	catalog.adapters["openai_compatible"] = counted
+
+	id, ref := uuid.New(), uuid.NewString()
+	endpoint := "https://provider.invalid"
+	defer func() {
+		clean, done := context.WithTimeout(context.Background(), 3*time.Second)
+		defer done()
+		_, _ = db.Exec(clean, `delete from model_configs where id=$1`, id)
+		_, _ = db.Exec(clean, `delete from provider_admissions where ref=$1`, ref)
+	}()
+	_, err = db.Exec(ctx, `insert into provider_admissions(ref,provider,endpoint,model_scope,kind,purpose,sent_fields,processing_country,storage_country,cross_border,max_retention_days,deletion_method,terms_evidence) values($1,'fake',$2,'*','model','synthetic test',ARRAY['model','messages.role','messages.content','stream','response_format.type'],'CN','CN',false,0,'auto','fixture-terms')`, ref, endpoint)
+	must(err)
+	cfg := Config{ID: id, Name: "fixture", Provider: "fake", Endpoint: endpoint, ModelName: "one", AdmissionRef: ref, Enabled: true, Kind: Model, Protocol: "openai_compatible"}
+	must(catalog.Save(ctx, cfg, []byte("key-only-one")))
+	must(catalog.refresh(ctx))
+	var versionA uuid.UUID
+	must(db.QueryRow(ctx, `select version from gateway_revision where singleton`).Scan(&versionA))
+	if catalog.version() != versionA {
+		t.Fatalf("initial cache version=%s want %s", catalog.version(), versionA)
+	}
+	_, err = db.Exec(ctx, `update model_configs set model_name='two' where id=$1`, id)
+	must(err)
+	var versionB uuid.UUID
+	must(db.QueryRow(ctx, `select version from gateway_revision where singleton`).Scan(&versionB))
+	if versionB == versionA {
+		t.Fatal("configuration update did not bump revision")
+	}
+	must(pgx.BeginFunc(ctx, db, func(tx pgx.Tx) error {
+		a, target, err := catalog.lookupAt(ctx, tx, id, Model, versionB)
+		if err != nil {
+			return err
+		}
+		if target.model != "two" {
+			return fmt.Errorf("stale model %q", target.model)
+		}
+		_, err = a.chat(ctx, target, Request{Messages: []Message{{Role: "user", Content: "synthetic"}}})
+		return err
+	}))
+	if counted.calls.Load() != 1 {
+		t.Fatalf("provider calls=%d want 1", counted.calls.Load())
+	}
+	err = pgx.BeginFunc(ctx, db, func(tx pgx.Tx) error {
+		a, _, err := catalog.lookupAt(ctx, tx, id, Model, versionA)
+		if a != nil {
+			return errors.New("stale revision returned an adapter")
+		}
+		return err
+	})
+	if !errors.Is(err, ErrConfig) {
+		t.Fatalf("stale revision err=%v want ErrConfig", err)
+	}
+	if counted.calls.Load() != 1 {
+		t.Fatalf("stale revision reached provider: calls=%d", counted.calls.Load())
+	}
+	if catalog.version() != versionB {
+		t.Fatalf("cache version=%s want %s", catalog.version(), versionB)
 	}
 }

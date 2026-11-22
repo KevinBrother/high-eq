@@ -87,58 +87,125 @@ func (c *Catalog) version() uuid.UUID {
 func (c *Catalog) refresh(ctx context.Context) error {
 	c.refreshMu.Lock()
 	defer c.refreshMu.Unlock()
+	observed := c.state.Load()
 	var next snapshot
 	err := pgx.BeginTxFunc(ctx, c.db, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `select version from gateway_revision where singleton`).Scan(&next.version); err != nil {
+		var version uuid.UUID
+		if err := tx.QueryRow(ctx, `select version from gateway_revision where singleton`).Scan(&version); err != nil {
 			return err
 		}
-		if next.version == c.version() {
+		if observed != nil && observed.version == version {
 			return nil
 		}
-		rows, err := tx.Query(ctx, `select m.id,m.endpoint,m.model_name,m.protocol,m.kind,m.api_key_enc
- from model_configs m join provider_admissions a
- on (a.ref,a.provider,a.endpoint,a.kind)=(m.active_ref,m.provider,m.endpoint,m.kind)
- where m.enabled`)
+		var err error
+		next, err = loadSnapshot(ctx, tx)
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		next.entries = make(map[uuid.UUID]entry)
-		for rows.Next() {
-			var id uuid.UUID
-			var e entry
-			if err := rows.Scan(&id, &e.endpoint, &e.model, &e.protocol, &e.kind, &e.envelope); err != nil {
-				return err
-			}
-			next.entries[id] = e
+		if next.version != version {
+			return pgx.ErrTxClosed
 		}
-		return rows.Err()
+		return nil
 	})
 	if err != nil {
 		return ErrConfig
 	}
-	if next.entries != nil {
-		c.state.Store(&next)
-	}
+	c.publishIfUnchanged(observed, &next)
 	return nil
 }
-func (c *Catalog) lookup(ctx context.Context, id uuid.UUID, kind Kind) (adapter, target, error) {
-	return c.lookupAt(ctx, id, kind, uuid.Nil)
-}
 
-func (c *Catalog) lookupAt(ctx context.Context, id uuid.UUID, kind Kind, revision uuid.UUID) (adapter, target, error) {
-	// Redis Pub/Sub is a hint; a lost notification cannot extend approval.
-	var v uuid.UUID
-	if err := c.db.QueryRow(ctx, `select version from gateway_revision where singleton`).Scan(&v); err != nil {
-		return nil, target{}, ErrConfig
+// loadSnapshot reads the revision and every enabled, admitted row in one
+// statement. The caller must reuse its transaction for both the row returned
+// for that revision and the subsequent provider call.
+func loadSnapshot(ctx context.Context, tx pgx.Tx) (snapshot, error) {
+	rows, err := tx.Query(ctx, `select v.version,
+ coalesce(m.id,'00000000-0000-0000-0000-000000000000'::uuid),
+ coalesce(m.endpoint,''),coalesce(m.model_name,''),coalesce(m.protocol,''),coalesce(m.kind,''),coalesce(m.api_key_enc,''::bytea)
+ from gateway_revision v
+ left join (
+   select m.id,m.endpoint,m.model_name,m.protocol,m.kind,m.api_key_enc
+   from model_configs m join provider_admissions a
+   on (a.ref,a.provider,a.endpoint,a.kind)=(m.active_ref,m.provider,m.endpoint,m.kind)
+   where m.enabled
+ ) m on true
+ where v.singleton`)
+	if err != nil {
+		return snapshot{}, err
 	}
-	if v != c.version() {
-		if err := c.refresh(ctx); err != nil {
-			return nil, target{}, err
+	defer rows.Close()
+	s := snapshot{entries: make(map[uuid.UUID]entry)}
+	for rows.Next() {
+		var id uuid.UUID
+		var e entry
+		var kind string
+		if err := rows.Scan(&s.version, &id, &e.endpoint, &e.model, &e.protocol, &kind, &e.envelope); err != nil {
+			return snapshot{}, err
+		}
+		e.kind = Kind(kind)
+		if id != uuid.Nil {
+			s.entries[id] = e
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return snapshot{}, err
+	}
+	if s.version == uuid.Nil {
+		return snapshot{}, pgx.ErrNoRows
+	}
+	return s, nil
+}
+
+func (c *Catalog) publishIfUnchanged(observed *snapshot, next *snapshot) {
+	if next == nil || next.entries == nil {
+		return
+	}
+	// A slower refresh must not replace a snapshot published from a different
+	// revision while it was loading. The caller can still use its local copy.
+	c.state.CompareAndSwap(observed, next)
+}
+
+func (c *Catalog) lookup(ctx context.Context, id uuid.UUID, kind Kind) (adapter, target, error) {
+	return c.lookupAt(ctx, nil, id, kind, uuid.Nil)
+}
+
+// lookupAt reuses the authorization transaction when supplied. It must never
+// refresh through the pool in that case: the caller still holds the account
+// lock on the same connection, and a strict pool may have no second connection.
+func (c *Catalog) lookupAt(ctx context.Context, tx pgx.Tx, id uuid.UUID, kind Kind, revision uuid.UUID) (adapter, target, error) {
+	// Redis Pub/Sub is a hint; a lost notification cannot extend approval.
+	var v uuid.UUID
+	var err error
+	if tx != nil {
+		err = tx.QueryRow(ctx, `select version from gateway_revision where singleton`).Scan(&v)
+	} else {
+		err = c.db.QueryRow(ctx, `select version from gateway_revision where singleton`).Scan(&v)
+	}
+	if err != nil {
+		return nil, target{}, ErrConfig
+	}
+	if tx != nil && (revision == uuid.Nil || v != revision) {
+		return nil, target{}, ErrConfig
+	}
+	if revision != uuid.Nil && v != revision {
+		return nil, target{}, ErrConfig
+	}
 	state := c.state.Load()
-	if revision != uuid.Nil && (v != revision || state.version != revision) {
+	if state == nil || state.version != v {
+		if tx == nil {
+			if err := c.refresh(ctx); err != nil {
+				return nil, target{}, err
+			}
+			state = c.state.Load()
+		} else {
+			next, err := loadSnapshot(ctx, tx)
+			if err != nil || next.version != v {
+				return nil, target{}, ErrConfig
+			}
+			c.publishIfUnchanged(state, &next)
+			state = &next
+		}
+	}
+	if state == nil || state.version != v || revision != uuid.Nil && state.version != revision {
 		return nil, target{}, ErrConfig
 	}
 	e, ok := state.entries[id]

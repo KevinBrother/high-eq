@@ -2,6 +2,7 @@
 x-env: &runtime-env
   APP_ENV: development
   DATABASE_URL: postgres://postgres:${HEQ_PG_PASSWORD:?use server/dev.sh}@db:5432/postgres?sslmode=disable
+  DATABASE_POOL_MAX_CONNS: ${DATABASE_POOL_MAX_CONNS:-16}
   REDIS_URL: redis://cache:6379/0
   LEDGER_URL: redis://ledger:6379/0
   FIELD_KEY_BASE64: ${HEQ_FIELD_KEY:?use server/dev.sh}

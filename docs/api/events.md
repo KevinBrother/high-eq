@@ -7,7 +7,8 @@
 | `assessment.completed` | T08 → T26 | `user_id, assessment_id, occurred_at`。按 assessment_id 去重；从仍属该用户的测评读数生成计划，免费计划不读画像。 |
 | `score.completed` | T19（整场）、T23（完整复盘）→ T26 | 下例为完整字段。`activity_id` 为会话/请求 ID，`source_id` 为活动建立时服务端已预分配且永不复用的 `activities.source_id = scores.id`；不是投递 ID。`kind` 仅 `practice/review`。不得有单项成绩、文本或评分解释。 |
 | `drill.progressed` | T19 → T26 | `user_id, activity_id, level_id, occurred_at, target_item, score`。按活动去重；仅调度单项目标（25 过关、10–24 三天后重练、0–9 当场再试），不写成长评分副本。 |
-| `profile.feedback` | T21（建议使用及效果）、T23（复盘反馈）、T30（本人核对）→ T25 | `feedback_id, user_id, source_id, source_kind, subject, contact_id?, occurred_at`。source_kind 为 `reply/review/self_event`，subject 为 `contact/self`。按 feedback_id 去重；在源模块内按所属账号读取必要反馈，不复制聊天/复盘。只读关系人拒绝写入；T30 只转本人明确核对，区分肯定与否定；未核对、对话节奏与单纯手动标记不自动更新画像。 |
+| `profile.feedback` | T21（仅本人明确 `self_report`）、T23（复盘反馈）、T30（本人核对）→ T25 | `feedback_id, user_id, source_id, source_kind, subject, contact_id?, occurred_at`。source_kind 为 `reply/review/self_event`，subject 为 `contact/self`。按 feedback_id 去重；在源模块内按所属账号读取必要反馈，不复制聊天/复盘。只读关系人拒绝写入；T21 不把普通建议效果推断成本人画像；T30 只转本人明确核对，区分肯定与否定；未核对、对话节奏与单纯手动标记不自动更新画像。 |
+| `reply.outcome` | T21（普通建议使用及效果）→ T25 非画像消费 | `feedback_id, user_id, source_id, source_kind, occurred_at`，`source_kind` 为 `reply`。T25 生产订阅在原账号锁/授权事务内调用 T21 `ReadOutcomeTx` 读取必要反馈，并以 `reply_outcome_receipts` 按 feedback_id 去重；回执只保存源键、原时间、建议下标和处理时间，不存聊天、效果正文或建议内容。只读关系人或已删除源不得消费，删除后重投不得复活；该事件不是画像证据。 |
 | `data.delete`（必须完成的钩子） | T04 协调；T05 冻结期满 / T35 单源删除及相关模块 → 所有持有源数据、衍生数据或关联日志的模块 | `operation_id, user_id, scope, source_id?`。scope 为 `account` 或源类别；单源须传不透明清理 ID，恢复/注销按 schema 的 purge_id、source_id 等逐一登记。按 operation_id/源幂等，不是发出通知即算删除完成。 |
 | `data.export`（按请求执行的钩子） | T35 → T04 协调 → 各数据模块 | `operation_id, user_id`。钩子流式写入本账号命名的 JSON 分区，由协调器输出 ZIP；遍历仍存在的源、副本、手动标记及可关联调用记录。任一必需模块失败不是成功导出。不上传本地录音，不导出平台密钥或删除登记。 |
 

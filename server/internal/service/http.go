@@ -18,6 +18,7 @@ import (
 	"high-eq/server/internal/membership"
 	"high-eq/server/internal/payments"
 	"high-eq/server/internal/profile"
+	"high-eq/server/internal/replies"
 	"high-eq/server/internal/reviews"
 	"high-eq/server/internal/training"
 )
@@ -35,6 +36,7 @@ type appAPI struct {
 	profiles    *profile.Service
 	reviews     *reviews.Service
 	signals     *emotion.Service
+	replies     *replies.Service
 	assessments *assessment.Service
 	health      func(context.Context) error
 	accounts    *accounts.Service
@@ -44,6 +46,10 @@ type appAPI struct {
 func (a appAPI) CheckHealth(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
+	if a.health == nil {
+		problem(c, 500, "internal_error", "服务暂不可用，可重试", true)
+		return
+	}
 	if e := a.health(ctx); e != nil {
 		problem(c, 500, "internal_error", "服务暂不可用，可重试", true)
 		return
@@ -59,6 +65,7 @@ var accountRoutes = map[string]bool{
 	"GET /v1/levels": false, "GET /v1/sessions": false, "POST /v1/sessions": false, "GET /v1/sessions/:session_id": false, "POST /v1/sessions/:session_id/messages": false, "POST /v1/sessions/:session_id/exit": false, "POST /v1/sessions/:session_id/finish": false,
 	"POST /v1/signal-windows": false, "DELETE /v1/signal-windows": false, "GET /v1/signal-baselines": false,
 	"POST /v1/signal-events": false, "GET /v1/signal-events": false, "PATCH /v1/signal-events/:id": false,
+	"POST /v1/replies": false, "POST /v1/replies/:id/feedback": false,
 	"GET /v1/assessments/instrument": false, "GET /v1/assessments": false, "POST /v1/assessments": false,
 	"POST /v1/auth/sms": false, "POST /v1/auth/login": false, "POST /v1/auth/refresh": false,
 	"POST /v1/auth/logout": true, "POST /v1/auth/switch": false, "GET /v1/me": true, "PATCH /v1/me": false,
@@ -107,7 +114,15 @@ func gate(auth *accounts.Service) func(*gin.Context) {
 		}
 	}
 }
-func newRouter(practice *training.Service, markSvc *marks.Service, pay *payments.Service, profiles *profile.Service, reviewsSvc *reviews.Service, health func(context.Context) error, auth *accounts.Service, mountAdmin func(gin.IRouter), rights *membership.Service, surveys *assessment.Service, signals ...*emotion.Service) *gin.Engine {
+func newRouter(runtime *Runtime) *gin.Engine {
+	var health func(context.Context) error
+	if runtime != nil {
+		health = runtime.Health
+	}
+	return newRouterWithHealth(runtime, health)
+}
+
+func newRouterWithHealth(runtime *Runtime, health func(context.Context) error) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -123,13 +138,22 @@ func newRouter(practice *training.Service, markSvc *marks.Service, pay *payments
 		c.Next()
 	})
 	invalid := func(c *gin.Context, _ error, _ int) { problem(c, 400, "invalid_argument", "请求参数无效", false) }
-	var signalService *emotion.Service
-	if len(signals) > 0 {
-		signalService = signals[0]
+	api := appAPI{health: health}
+	if runtime != nil {
+		api.training = runtime.practiceService()
+		api.marks = runtime.Marks
+		api.payments = runtime.Payments
+		api.profiles = runtime.Profiles
+		api.reviews = runtime.Reviews
+		api.signals = runtime.Emotion
+		api.replies = runtime.replyService()
+		api.assessments = runtime.Assessments
+		api.accounts = runtime.Accounts
+		api.membership = runtime.Membership
 	}
-	app.RegisterHandlersWithOptions(r, appAPI{training: practice, marks: markSvc, payments: pay, profiles: profiles, reviews: reviewsSvc, signals: signalService, health: health, accounts: auth, assessments: surveys, membership: rights}, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(auth)}, ErrorHandler: invalid})
-	if mountAdmin != nil {
-		mountAdmin(r)
+	app.RegisterHandlersWithOptions(r, api, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(api.accounts)}, ErrorHandler: invalid})
+	if runtime != nil {
+		runtime.mountAdmin(r)
 	} else {
 		adminops.Register(r, nil)
 	}

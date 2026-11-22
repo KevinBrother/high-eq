@@ -77,25 +77,111 @@ class BaselineSourceFactsContract(unittest.TestCase):
         self.assertRegex(corpus, r"Android.*Manifest.*仅.*INTERNET")
         self.assertRegex(corpus, r"iOS.*(?:没有|未包含|不存在).*NSHealthShareUsageDescription")
 
-    def test_candidate_modules_are_not_described_as_baseline(self) -> None:
+    def test_incremental_modules_are_not_counted_as_baseline(self) -> None:
         profile_files = {
             path.name for path in (ROOT / "server/internal/profile").glob("*.go")
         }
         for name in ("contacts.go", "feedback.go", "infer.go", "inference_request.go"):
             self.assertIn(name, profile_files, "T25 profile implementation is present")
-        self.assertEqual(
-            list((ROOT / "server/migrations").glob("*reply_requests*")), []
+
+        reply_requests = read("server/migrations/20261123000021_reply_requests.up.sql")
+        reply_keys = read("server/migrations/20261123000022_reply_request_keys.up.sql")
+        receipts = read("server/migrations/20261123000023_reply_outcome_receipts.up.sql")
+        migrations = "\n".join((reply_requests, reply_keys, receipts))
+        for table in (
+            "reply_requests",
+            "reply_feedback",
+            "reply_request_keys",
+            "reply_outcome_receipts",
+        ):
+            self.assertIn(f"CREATE TABLE {table}", migrations)
+        self.assertIn("chat_consent_id uuid NOT NULL REFERENCES consents", reply_requests)
+        self.assertIn("contacts_consent_id uuid REFERENCES consents", reply_requests)
+        self.assertIn("binding.chat", read("server/internal/replies/consent.go"))
+        self.assertIn("QA-33 | T21", read("docs/compliance/qa.md"))
+        inventory_rows = read("docs/compliance/data-inventory.md").splitlines()
+        request_row = next(line for line in inventory_rows if line.startswith("| D11 |"))
+        self.assertIn("不重查原用途授权、不重读画像、不外发、不再次扣次", request_row)
+        self.assertIn("每条新反馈", next(line for line in inventory_rows if line.startswith("| D12 |")))
+        self.assertIn("CREATE TRIGGER reply_import_guard", reply_requests)
+        self.assertIn("BEFORE INSERT OR UPDATE ON chat_imports", reply_requests)
+        self.assertIn(
+            "DELETE FROM chat_imports c USING activities a WHERE a.id=c.activity_id AND a.kind='reply'",
+            reply_requests,
+        )
+        self.assertEqual(reply_requests.count("CHECK(octet_length(input_mac)=32)"), 2)
+        self.assertIn("outcome_enc bytea NOT NULL", reply_requests)
+        self.assertIn(
+            "activity_id uuid UNIQUE REFERENCES activities ON DELETE SET NULL",
+            reply_keys,
         )
 
-        corpus = compliance_corpus()
-        self.assertRegex(
-            corpus,
-            r"reply_requests[^\n]*(?:候选|待对表|不存在)",
-            "reply_requests must remain candidate/pending",
+        request_sql = re.search(
+            r"CREATE TABLE reply_requests \((.*?)\n\);", reply_requests, re.S
         )
+        feedback_sql = re.search(
+            r"CREATE TABLE reply_feedback \((.*?)\n\);", reply_requests, re.S
+        )
+        receipt_sql = re.search(
+            r"CREATE TABLE reply_outcome_receipts \((.*?)\n\);", receipts, re.S
+        )
+        self.assertIsNotNone(request_sql)
+        self.assertIsNotNone(feedback_sql)
+        self.assertIsNotNone(receipt_sql)
+        for body in (request_sql.group(1), feedback_sql.group(1)):
+            self.assertNotRegex(body, r"chat_text|goal|destination|input_text")
+        for forbidden in (
+            "outcome_enc",
+            "chat_text",
+            "goal",
+            "destination",
+            "suggestion_text",
+            "effect_text",
+        ):
+            self.assertNotIn(forbidden, receipt_sql.group(1))
+
+        service = read("server/internal/replies/service.go")
+        feedback = read("server/internal/replies/feedback.go")
+        reply_privacy = read("server/internal/replies/privacy.go")
+        profile_outcome = read("server/internal/profile/outcome.go")
+        http = read("server/internal/service/http.go")
+        self.assertIn('"POST /v1/replies": false', http)
+        self.assertIn('"POST /v1/replies/:id/feedback": false', http)
+        self.assertIn('in.ChatText, in.Goal, summary', service)
+        self.assertIn('s.cipher.Seal(b, aad(p.User, fid, "outcome"))', feedback)
+        self.assertIn('s.cipher.Open(encrypted, aad(v.UserID, v.FeedbackID, "outcome"))', feedback)
+        self.assertIn("insert into reply_outcome_receipts", profile_outcome)
+        self.assertIn("does not create a profile observation", profile_outcome)
+        self.assertNotIn("reply_outcome_receipts", reply_privacy)
+
+        self_reports = feedback.split('select a.source_id,a.contact_id,f.occurred_at,f.outcome_enc', 1)
+        self.assertEqual(len(self_reports), 2)
+        self.assertIn("f.pending and f.self_report", self_reports[1])
+        self.assertIn("s.recorder.RecordActivity", self_reports[1])
+        outcome_delivery = feedback.split("func (s *Service) deliverOutcome", 1)[1]
+        self.assertNotIn("RecordActivity", outcome_delivery)
+
+        inventory = read("docs/compliance/data-inventory.md")
+        for needle in (
+            "T21 后端增量",
+            "reply_request_keys",
+            "reply_outcome_receipts",
+            "服务端不持久化源文本与目的",
+            "ON DELETE SET NULL",
+            "32 字节带密钥 HMAC",
+            "普通效果不写本人画像",
+            "只有显式 `self_report`",
+            "不计入 `f60ace3` 的 42 项",
+        ):
+            self.assertIn(needle, inventory)
+
+        corpus = compliance_corpus()
+        self.assertNotRegex(corpus, r"reply_requests[^\n]*(?:候选|待对表|不存在)")
+        self.assertNotIn("T21 服务端仍未合入", corpus)
         self.assertIn("T25 后端增量", corpus)
         self.assertIn("客户端仍未写入", read("docs/compliance/separate-consents.md"))
-        self.assertNotRegex(corpus, r"回复类.*触发器.*禁止写入")
+        self.assertIn("回复类导入触发器", corpus)
+        self.assertRegex(corpus, r"回复.*触发器.*禁止.*chat_imports")
 
     def test_t19_practice_contract_is_substantive(self) -> None:
         migration = read("server/migrations/20261122003019_practice_work.up.sql")
@@ -224,7 +310,8 @@ class BaselineSourceFactsContract(unittest.TestCase):
         filings = read("docs/compliance/filings-and-authorizations.md")
         separate = read("docs/compliance/separate-consents.md")
 
-        self.assertNotIn("20261123000021_reply_requests.up.sql", privacy)
+        self.assertIn("20261123000021_reply_requests.up.sql", privacy)
+        self.assertIn("T21 后端增量", privacy)
         self.assertNotRegex(privacy, r"服务端存在导出能力|存在单条删除")
         self.assertRegex(privacy, r"/v1/me/export[^\n]*501 not_implemented")
         self.assertRegex(privacy, r"/v1/me/data/:kind/:id[^\n]*501 not_implemented")
@@ -493,9 +580,9 @@ class ProfileEvidenceContract(unittest.TestCase):
         self.assertIn('problem(c, 501, "not_implemented"', http)
 
         inventory = read("docs/compliance/data-inventory.md")
-        self.assertIn("D01–D40", inventory)
+        self.assertIn("D01–D42", inventory)
         self.assertRegex(inventory, r"模块内部导出/删除[^\n]*不等于[^\n]*T35")
-        self.assertRegex(inventory, r"D37[^\n]*D39[^\n]*D40[^\n]*不计入")
+        self.assertRegex(inventory, r"D37[^\n]*D39[^\n]*D40[^\n]*D41[^\n]*D42[^\n]*不计入")
         self.assertIn("chat_imports", inventory)
         self.assertRegex(inventory, r"chat_imports[^\n]*24 小时[^\n]*(?:待实现/验收|待验收)")
 
@@ -565,7 +652,8 @@ class SharingHandoffContract(unittest.TestCase):
             "未分析不上传",
             "提交前不上传",
             "T21",
-            "未合入",
+            "后端增量",
+            "服务端不持久化源文本与目的",
         )
         for name, section in sections.items():
             for phrase in required:

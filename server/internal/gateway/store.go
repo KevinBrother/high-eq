@@ -16,14 +16,21 @@ func (c *Catalog) NewRouter(data *privacy.Coordinator, stop Stop) (*Router, erro
 		return nil, ErrConfig
 	}
 	s := routingStore{data.Access}
-	return &Router{resolvePrompt: databasePrompts(c.db), load: s.load, record: s.record, stop: stop, first: 10 * time.Second, total: 60 * time.Second, review: 10 * time.Second, dispatch: func(ctx context.Context, rev uuid.UUID, e endpoint, k Kind, r Request) (Result, error) {
-		a, t, err := c.lookupAt(ctx, e.id, k, rev)
+	return &Router{resolvePrompt: databasePrompts(c.db), load: s.load, record: s.record, stop: stop, first: 10 * time.Second, total: 60 * time.Second, review: 10 * time.Second, dispatch: routedDispatch(c.lookupAt)}, nil
+}
+
+// routedDispatch is the production provider-dispatch closure. Keeping the
+// revision lookup and the network call in one function makes the authorization
+// boundary explicit: Router.dispatchAuthorized must wrap both.
+func routedDispatch(lookup func(context.Context, pgx.Tx, uuid.UUID, Kind, uuid.UUID) (adapter, target, error)) func(context.Context, uuid.UUID, endpoint, Kind, Request) (Result, error) {
+	return func(ctx context.Context, rev uuid.UUID, e endpoint, k Kind, r Request) (Result, error) {
+		a, t, err := lookup(ctx, authorizedTx(ctx), e.id, k, rev)
 		if err != nil {
 			return Result{}, err
 		}
 		r.includeUsage = e.includeUsage
 		return a.chat(ctx, t, r)
-	}}, nil
+	}
 }
 
 type routingStore struct {

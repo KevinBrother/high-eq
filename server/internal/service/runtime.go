@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
@@ -19,6 +20,7 @@ import (
 	"high-eq/server/internal/payments"
 	"high-eq/server/internal/privacy"
 	"high-eq/server/internal/profile"
+	"high-eq/server/internal/replies"
 	"high-eq/server/internal/reviews"
 	"high-eq/server/internal/scoring"
 	"high-eq/server/internal/training"
@@ -33,6 +35,7 @@ type Runtime struct {
 	Profiles             *profile.Service
 	Reviews              *reviews.Service
 	Emotion              *emotion.Service
+	Replies              *replies.Service
 	Assessments          *assessment.Service
 	catalog              *gateway.Catalog
 	db                   *pgxpool.Pool
@@ -46,10 +49,18 @@ type Runtime struct {
 }
 
 func Start(ctx context.Context, c Config) (*Runtime, error) {
-	if e := migrations.Up(ctx, c.DatabaseURL); e != nil {
+	if c.DatabasePoolMaxConns < 1 || c.DatabasePoolMaxConns > 256 {
+		return nil, errors.New("invalid DATABASE_POOL_MAX_CONNS")
+	}
+	poolConfig, e := pgxpool.ParseConfig(c.DatabaseURL)
+	if e != nil {
 		return nil, e
 	}
-	db, e := pgxpool.New(ctx, c.DatabaseURL)
+	poolConfig.MaxConns = c.DatabasePoolMaxConns
+	if e = migrations.Up(ctx, c.DatabaseURL); e != nil {
+		return nil, e
+	}
+	db, e := pgxpool.NewWithConfig(ctx, poolConfig)
 	if e != nil {
 		return nil, e
 	}
@@ -89,9 +100,9 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	}
 	s.Profiles = &profile.Service{Fields: c.Fields, Rights: s.Membership}
 	hooks, e := privacy.NewRegistry(
-		[]string{"training", "profiles", "assessments", "payments", "membership", "accounts", "ai_calls", "emotion", "manual_marks", "reviews"},
+		[]string{"training", "profiles", "assessments", "payments", "membership", "accounts", "replies", "ai_calls", "emotion", "manual_marks", "reviews"},
 		payments.Hooks(), s.Membership.Hooks(), assessment.Hooks(c.Fields), accounts.Hooks(c.Fields),
-		training.Hooks(c.Fields), s.Profiles.Hooks(), gateway.Hooks(), emotion.Hooks(c.Fields), marks.Hooks(c.Fields), reviews.Hooks(c.Fields),
+		training.Hooks(c.Fields), s.Profiles.Hooks(), replies.Hooks(c.Fields), gateway.Hooks(), emotion.Hooks(c.Fields), marks.Hooks(c.Fields), reviews.Hooks(c.Fields),
 	)
 	if e != nil {
 		return nil, e
@@ -123,11 +134,17 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	}
 	s.Bus = events.New(s.Data, training.Decoder(c.Fields, reviews.Decoder(c.Fields)))
 	s.Bus.ProfileFeedback.Subscribe(s.Profiles.Consume)
+	s.Replies = replies.New(s.Accounts, s.Membership, s.Data, c.Fields, s.db, s.Bus, c.authMaster, func(stop gateway.Stop) (replies.Runner, error) { return s.catalog.NewRouter(s.Data, stop) })
+	s.Replies.AttachFeedback(s.Profiles)
+	s.Replies.AttachProfiles(s.Profiles)
+	s.Bus.ReplyOutcome.Subscribe(func(ctx context.Context, tx pgx.Tx, v events.ReplyOutcome) error {
+		return s.Profiles.ConsumeReplyOutcome(ctx, tx, v, s.Replies)
+	})
+	s.initPractice()
 	s.Marks = &marks.Service{Fields: c.Fields, DB: s.db, Data: s.Data}
 	s.Reviews = &reviews.Service{Accounts: s.Accounts, Rights: s.Membership, Data: s.Data, Fields: c.Fields, DB: s.db, Bus: s.Bus, Key: c.authMaster, Router: func(stop gateway.Stop) (scoring.Runner, error) { return s.catalog.NewRouter(s.Data, stop) }}
 	s.Reviews.Profile = s.Profiles
 	s.Emotion = &emotion.Service{DB: s.db, Data: s.Data, Fields: c.Fields, Bus: s.Bus}
-	s.initPractice()
 	s.Assessments = assessment.New(bank, s.Accounts, c.Fields, s.Bus, s.db)
 	ok = true
 	return s, nil

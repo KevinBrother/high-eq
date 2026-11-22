@@ -13,14 +13,15 @@ import (
 )
 
 type Config struct {
-	PaymentChannels     payments.Channels
-	Listen, DatabaseURL string
-	InstrumentPath      string
-	Environment         string
-	authMaster          []byte
-	Cache, Ledger       *redis.Options
-	BackupDays          int
-	Fields              *fieldcrypt.Cipher
+	PaymentChannels      payments.Channels
+	Listen, DatabaseURL  string
+	DatabasePoolMaxConns int32
+	InstrumentPath       string
+	Environment          string
+	authMaster           []byte
+	Cache, Ledger        *redis.Options
+	BackupDays           int
+	Fields               *fieldcrypt.Cipher
 }
 
 func LoadConfig() (Config, error) {
@@ -28,12 +29,20 @@ func LoadConfig() (Config, error) {
 	if c.Listen == "" {
 		c.Listen = ":8080"
 	}
+	poolMax := os.Getenv("DATABASE_POOL_MAX_CONNS")
+	if poolMax == "" {
+		poolMax = "16"
+	}
+	n, e := strconv.ParseInt(poolMax, 10, 32)
+	if e != nil || n < 1 || n > 256 {
+		return c, errors.New("invalid DATABASE_POOL_MAX_CONNS")
+	}
+	c.DatabasePoolMaxConns = int32(n)
 	c.InstrumentPath = os.Getenv("WLEIS_CONFIG_PATH")
 	c.Environment = os.Getenv("APP_ENV")
 	if c.Environment != "development" {
 		return c, errors.New("development key provider disabled outside development; configure KMS first")
 	}
-	var e error
 	c.PaymentChannels, e = paymentChannels()
 	if e != nil {
 		return c, e

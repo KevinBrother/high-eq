@@ -15,17 +15,31 @@ func TestRouter(t *testing.T) {
 		code         int
 		body         string
 	}{{"GET", "/v1/health", false, 200, `"ok":true`}, {"GET", "/v1/health", true, 500, "internal_error"}, {"GET", "/v1/me", false, 401, "unauthenticated"}, {"GET", "/admin/v1/audit-logs", false, 401, "unauthenticated"}, {"POST", "/v1/auth/login", false, 501, "not_implemented"}, {"GET", "/unknown", false, 404, "not_found"}} {
-		router := newRouter(nil, nil, nil, nil, nil, func(context.Context) error {
+		router := newRouterWithHealth(nil, func(context.Context) error {
 			if tt.down {
 				return errors.New("private connection detail")
 			}
 			return nil
-		}, nil, nil, nil, nil)
+		})
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(tt.method, tt.path, nil)
 		r.Header.Set("Authorization", "Bearer arbitrary")
 		router.ServeHTTP(w, r)
 		if w.Code != tt.code || !strings.Contains(w.Body.String(), tt.body) || strings.Contains(w.Body.String(), "private") {
+			t.Errorf("%s: %d %s", tt.path, w.Code, w.Body)
+		}
+	}
+}
+
+func TestRouterWithoutRuntimeFailsClosed(t *testing.T) {
+	router := newRouter(nil)
+	for _, tt := range []struct {
+		path, body string
+		code       int
+	}{{"/v1/health", "internal_error", 500}, {"/unknown", "not_found", 404}} {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest("GET", tt.path, nil))
+		if w.Code != tt.code || !strings.Contains(w.Body.String(), tt.body) {
 			t.Errorf("%s: %d %s", tt.path, w.Code, w.Body)
 		}
 	}
