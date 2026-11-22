@@ -3,6 +3,25 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:high_eq/core/api.dart';
 import 'package:high_eq/core/transport.dart';
 import 'package:high_eq/features/marks/page.dart';
+import 'package:high_eq/features/reviews/model.dart';
+import 'package:high_eq/features/reviews/page.dart';
+
+class ReviewBook extends Fake implements ReviewRepository {
+  ReviewDraft? stored;
+
+  @override
+  Future<ReviewDraft?> loadDraft() async => stored;
+
+  @override
+  Future<void> saveDraft(ReviewDraft draft) async {
+    stored = draft;
+  }
+
+  @override
+  Future<List<ReviewPerson>> people() async => const [
+    ReviewPerson(id: 'p', name: '合成对象'),
+  ];
+}
 
 class Book extends Fake implements MarkBook {
   bool granted = false, fail = false, saved = false, peopleError = false;
@@ -106,6 +125,7 @@ void main() {
   });
   testWidgets('历史不创建；补对象场景、复盘参数、本机草稿与删除', (t) async {
     final b = Book()..granted = true;
+    final reviews = ReviewBook();
     await b.create('prior');
     Json? seed;
     await t.pumpWidget(
@@ -115,7 +135,8 @@ void main() {
           expect(s.name, '/marks/review');
           seed = s.arguments as Json;
           return MaterialPageRoute(
-            builder: (_) => MarkReviewDraft(b, Mark.fromReview(seed!)),
+            builder: (_) =>
+                ReviewPage(reviews, prefill: ReviewPrefill.tryFromRoute(seed)),
           );
         },
       ),
@@ -134,9 +155,14 @@ void main() {
       'contact_id': 'p',
       'scene': 'work',
     });
-    expect(find.text('对象：合成对象'), findsOneWidget);
-    await tap(t, '保存草稿起点');
-    expect(b.saved, isTrue);
+    expect(find.text('复盘与踩坑本'), findsOneWidget);
+    expect(find.text('从标记开始'), findsOneWidget);
+    expect(find.textContaining('合成对象'), findsOneWidget);
+    expect(find.textContaining('职场'), findsWidgets);
+    expect(reviews.stored?.markId, 'm');
+    expect(reviews.stored?.occurredAt, DateTime.parse('2026-11-21T10:45:00Z'));
+    expect(reviews.stored?.contactId, 'p');
+    expect(reviews.stored?.scene?.name, 'work');
     await t.pageBack();
     await t.pumpAndSettle();
     await t.tap(find.byTooltip('删除标记'));

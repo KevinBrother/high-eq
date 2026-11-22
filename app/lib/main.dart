@@ -9,6 +9,7 @@ import 'features/home/shell.dart';
 import 'features/replies/share_host.dart';
 import 'features/replies/route.dart';
 import 'features/marks/page.dart';
+import 'features/reviews/page.dart';
 import 'features/practice/lobby.dart';
 import 'features/contacts/routes.dart';
 import 'features/onboarding/login.dart';
@@ -147,10 +148,12 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
                 MarkBook(api!, scope),
                 quick: settings.arguments == true,
               );
+            case '/reviews':
+              return ReviewPage(ApiReviews(api!, scope));
             case '/marks/review':
-              return MarkReviewDraft(
-                MarkBook(api!, scope),
-                Mark.fromReview(settings.arguments as Map<String, dynamic>),
+              return ReviewPage(
+                ApiReviews(api!, scope),
+                prefill: ReviewPrefill.tryFromRoute(settings.arguments),
               );
             case '/membership':
               return MemberPage(MemberStore(api!, scope));

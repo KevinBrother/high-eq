@@ -152,6 +152,15 @@ class HomeShell extends StatelessWidget {
                     title: const Text('标记历史'),
                     onTap: () => Navigator.pushNamed(context, '/marks'),
                   ),
+                if (section == Section.live || section == Section.growth)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.menu_book_outlined),
+                    title: const Text('复盘与踩坑本'),
+                    subtitle: const Text('把一次摩擦，变成下一次的准备'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.pushNamed(context, '/reviews'),
+                  ),
                 if (section == Section.practice ||
                     section == Section.growth ||
                     section == Section.me)
