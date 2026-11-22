@@ -190,13 +190,10 @@ int _readFailurePriority(Object error) {
 /// One repository survives tab replacement, so demo completion and training
 /// state do not disappear while switching between practice and growth. It is
 /// rebuilt when the active account changes.
-final growthRepositoryProvider = Provider<GrowthRepository>((ref) {
+final growthRepositoryProvider = Provider<GrowthRepository?>((ref) {
   final api = ref.watch(apiProvider).requireValue;
-  final identity = api.sessions.identity;
-  identity.addListener(ref.invalidateSelf);
-  ref.onDispose(() => identity.removeListener(ref.invalidateSelf));
-  final scope = identity.value;
-  if (scope == null) throw StateError('账号尚未就绪');
+  final scope = ref.watch(accountScopeProvider);
+  if (scope == null) return null;
   if (api.transport is ExampleTransport) {
     final practice = ref.watch(demoPracticeProvider);
     return DemoGrowthRepository(practice: practice);

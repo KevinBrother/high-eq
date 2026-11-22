@@ -252,3 +252,44 @@ class HomeShell extends StatelessWidget {
     );
   }
 }
+
+/// A neutral frame while an account-scoped page is being replaced after a
+/// logout or identity change. It deliberately contains no repository or data
+/// captured from the previous account.
+class SessionTransitionPane extends StatelessWidget {
+  const SessionTransitionPane({required this.label, super.key});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Semantics(
+          liveRegion: true,
+          label: label,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

@@ -6,6 +6,7 @@ import '../contacts/models.dart';
 import '../contacts/repository.dart';
 import '../contacts/routes.dart';
 import '../contacts/scene.dart';
+import '../home/shell.dart';
 import 'chat.dart';
 import 'providers.dart';
 import 'repository.dart';
@@ -16,8 +17,15 @@ class PracticeRoute extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final space = ref.watch(contactSpaceProvider);
     final argument = ModalRoute.of(context)?.settings.arguments;
+    final repository = ref.watch(practiceRepositoryProvider);
+    if (repository == null) {
+      return const HomeShell(
+        Section.practice,
+        content: SessionTransitionPane(label: '正在重新载入练习空间…'),
+      );
+    }
     return PracticeLobby(
-      repo: ref.watch(practiceRepositoryProvider),
+      repo: repository,
       scene: space.scene,
       contacts: space.repo,
       demo: space.demo,

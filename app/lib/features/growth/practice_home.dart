@@ -13,10 +13,15 @@ class PracticeHomeRoute extends ConsumerWidget {
   const PracticeHomeRoute({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => HomeShell(
-    Section.practice,
-    content: PracticeHomePage(repository: ref.watch(growthRepositoryProvider)),
-  );
+  Widget build(BuildContext context, WidgetRef ref) {
+    final repository = ref.watch(growthRepositoryProvider);
+    return HomeShell(
+      Section.practice,
+      content: repository == null
+          ? const SessionTransitionPane(label: '正在重新载入练习首页…')
+          : PracticeHomePage(repository: repository),
+    );
+  }
 }
 
 class PracticeHomePage extends StatefulWidget {

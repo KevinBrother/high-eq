@@ -12,10 +12,7 @@ import 'workspace.dart';
 /// scene and demo data even when a form is open; old network work stays scoped.
 final contactSpaceProvider = Provider((ref) {
   final api = ref.watch(apiProvider).requireValue;
-  final identity = api.sessions.identity;
-  identity.addListener(ref.invalidateSelf);
-  ref.onDispose(() => identity.removeListener(ref.invalidateSelf));
-  final scope = identity.value;
+  final scope = ref.watch(accountScopeProvider);
   final demo = api.transport is ExampleTransport;
   final ContactsRepository? repo = demo
       ? DemoContacts()

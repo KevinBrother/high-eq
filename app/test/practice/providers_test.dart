@@ -36,13 +36,13 @@ void main() {
     addTearDown(container.dispose);
     await container.read(apiProvider.future);
 
-    final oldRepo = container.read(practiceRepositoryProvider) as ApiPractice;
+    final oldRepo = container.read(practiceRepositoryProvider)! as ApiPractice;
     expect(oldRepo.scope, same(a));
     final lateWrite = oldRepo.remember('draft', {'text': 'A draft'});
 
     await sessions.clear();
     final b = await sessions.activate(tokens('B', 'access-b'));
-    final newRepo = container.read(practiceRepositoryProvider) as ApiPractice;
+    final newRepo = container.read(practiceRepositoryProvider)! as ApiPractice;
     expect(newRepo, isNot(same(oldRepo)));
     expect(newRepo.scope, same(b));
 
@@ -65,13 +65,13 @@ void main() {
     addTearDown(container.dispose);
     await container.read(apiProvider.future);
 
-    final oldRepo = container.read(practiceRepositoryProvider) as ApiPractice;
+    final oldRepo = container.read(practiceRepositoryProvider)! as ApiPractice;
     expect(oldRepo.scope, same(first));
     final lateWrite = oldRepo.remember('draft', {'text': 'old session'});
 
     await sessions.clear();
     final next = await sessions.activate(tokens('A', 'access-new'));
-    final newRepo = container.read(practiceRepositoryProvider) as ApiPractice;
+    final newRepo = container.read(practiceRepositoryProvider)! as ApiPractice;
     expect(newRepo, isNot(same(oldRepo)));
     expect(newRepo.scope, same(next));
     expect(newRepo.scope, isNot(same(first)));
@@ -85,5 +85,18 @@ void main() {
 
     await expectLater(lateWrite, throwsA(isA<SessionChanged>()));
     expect(await newRepo.read('draft'), isNull);
+  });
+
+  test('登出过渡帧返回空练习仓库而不是抛未捕获异常', () async {
+    await sessions.activate(tokens('A'));
+    final container = ProviderContainer(
+      overrides: [apiProvider.overrideWith((_) async => api)],
+    );
+    addTearDown(container.dispose);
+    await container.read(apiProvider.future);
+
+    expect(container.read(practiceRepositoryProvider), isNotNull);
+    await sessions.clear();
+    expect(container.read(practiceRepositoryProvider), isNull);
   });
 }

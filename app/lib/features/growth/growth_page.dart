@@ -13,10 +13,15 @@ class GrowthRoute extends ConsumerWidget {
   const GrowthRoute({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => HomeShell(
-    Section.growth,
-    content: GrowthPage(repository: ref.watch(growthRepositoryProvider)),
-  );
+  Widget build(BuildContext context, WidgetRef ref) {
+    final repository = ref.watch(growthRepositoryProvider);
+    return HomeShell(
+      Section.growth,
+      content: repository == null
+          ? const SessionTransitionPane(label: '正在重新载入成长档案…')
+          : GrowthPage(repository: repository),
+    );
+  }
 }
 
 class GrowthPage extends StatefulWidget {

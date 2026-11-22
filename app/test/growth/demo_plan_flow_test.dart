@@ -37,7 +37,7 @@ void main() {
     addTearDown(container.dispose);
     await container.read(apiProvider.future);
 
-    final growth = container.read(growthRepositoryProvider);
+    final growth = container.read(growthRepositoryProvider)!;
     final practice = container.read(demoPracticeProvider);
     expect(growth, isA<DemoGrowthRepository>());
     expect(practice, isA<DemoPractice>());

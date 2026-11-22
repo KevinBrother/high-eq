@@ -18,12 +18,12 @@ final demoPracticeProvider = Provider<DemoPractice>((ref) {
   return DemoPractice(contacts: space.repo);
 });
 
-final practiceRepositoryProvider = Provider<PracticeRepository>((ref) {
+final practiceRepositoryProvider = Provider<PracticeRepository?>((ref) {
+  final scope = ref.watch(accountScopeProvider);
+  if (scope == null) return null;
   final api = ref.watch(apiProvider).requireValue;
   if (api.transport is ExampleTransport) {
     return ref.watch(demoPracticeProvider);
   }
-  final space = ref.watch(contactSpaceProvider);
-  if (space.repo == null) throw StateError('请先登录');
-  return ApiPractice(api, api.sessions.active!);
+  return ApiPractice(api, scope);
 });
