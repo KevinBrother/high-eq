@@ -39,7 +39,7 @@
 | `privacy-policy-draft.md` | 面向用户的隐私政策草案 | 主体信息、供应商、语音/录音及法律依据待补 |
 | `terms-of-service-draft.md` | 用户协议草案 | 商户、退款、责任限制和争议条款待律师复核 |
 | `separate-consents.md` | 各敏感/可选处理的单独同意文案 | 已有功能的文案可先行；语音/录音待 T29 |
-| `data-inventory.md` | 字段、原始记录、副本、加密、留存、删除和导出对表 | 已按 PG17 清单逐名核对 42/42 表/视图，D32–D36 补后台员工数据、查询视图、平台配置和额度尝试；清理、通用权利接口与真机项待验收 |
+| `data-inventory.md` | 字段、原始记录、副本、加密、留存、删除和导出对表 | 已按 PG17 清单逐名核对 42/42 表/视图；D32–D36 补后台缺口，D39/D40 另列 T25 增量且不计入 42 项；清理、通用权利接口与真机项待验收 |
 | `sdk-model-review-checklist.md` | 主模型、备用/灰度模型、审核服务及 SDK 证据清单 | 无真实供应商资料，全部待运营提供 |
 | `filings-and-authorizations.md` | 备案、ICP、应用商店、量表授权、健康平台和权限归档 | 无备案号、批准或授权函，不得宣称已完成 |
 | `banned-words-and-examples.md` | 文案禁用词与 10 条改写示例 | 可先行用于文案评审 |
@@ -48,7 +48,7 @@
 
 ## 4. 已核对的产品事实摘要
 
-**基线之后的 T19 后端增量：** `server/internal/training/` 已接入对练路由，`20261122003019_practice_work` 新增活动级元数据，详见清单 D38。42 项是 `f60ace3` 的固定盘点，不是当前库的总数。`TestPracticeWire` 已在隔离 PG17、双 Redis 与受控上游实跑；不代表客户端已写入同意、真人 20 轮质量已签收或产品已上线。
+**T19/T25 后端增量：** `server/internal/training/` 已接入对练路由，T19 已接入 T25 画像摘要，选用关系人时额外检查 `contacts`；`20261122003019_practice_work` 新增活动级元数据，详见 D38。T25 新增 `profile_observations.fact_enc`、`activity_profile_context.context_enc` 和 `profile_inference_requests`，详见 D14/D39/D40；其 `profile_inference` 提示词草稿为 `b935fb60-5a85-4c12-82c0-401afd649325`。42 项仍是 `f60ace3` 的固定盘点，D39/D40 不计入。本批后端实现不等于生产上线。`TestPracticeWire` 和 T25 生命周期测试已在隔离 PG17、双 Redis 与受控上游实跑；不代表客户端首用、真实模型、真机、供应商合同或律师签收。
 
 - 首次启动先展示隐私/协议摘要，用户主动勾选后才继续；未同意不发起登录。`[已知]`
 - 新账号登录携带 `privacy_version`、`terms_version`，服务端接受后写入 `privacy` 与 `terms` 同意。当前版本均为 `2026-11`，属开发占位版本。`[已知]`
@@ -57,7 +57,9 @@
 - Android Manifest 在固定基线仅声明 `INTERNET`；没有 `ACTIVITY_RECOGNITION`、Health Connect 读取或麦克风权限。`[已知]`
 - iOS 在固定基线没有 HealthKit entitlement，也没有 `NSHealthShareUsageDescription` 或 `NSMicrophoneUsageDescription`。`[已知]`
 - 对练消息、评分明细、成长数值副本、复盘、关系人画像和手动标记的目标是使用 `*_enc` AES-GCM 字段保存；具体候选实现须按模块对表。`[已知：字段与加密封装]` `[候选待对表：候选模块]`
-- 回复助手、关系人推断和 `reply_requests` 属于候选/目标材料：固定基线 `server/internal/training/`、`server/internal/profile/` 只有 `.gitkeep`，且不存在 `*reply_requests*` 迁移；不得写成基线已实现。`[候选待对表]`
+- T25 后端已把用户明确反馈形成的画像观察事实写入 `profile_observations`，后端只接受通过校验的七个有界选项并合并到 `contacts.profile_enc`，T25 推断链路不持久化聊天原文；推理请求同时绑定 `chat_import` 与 `contacts` 的精确同意记录和 32 字节 SHA-256 输入摘要，处理中复核发现授权变化或关系人不可用时，旧推断失效、不再外发或保存；同键换材料或关系人返回 409，不改写原记录；已完成请求须有当前权限，重放只读当前画像。`[已知：本批后端]` `[待 T35 对表]`
+- `reply_requests` 仍为候选/待对表，仓库当前不存在其迁移；固定基线 `f60ace3` 的清单不能据此改写。
+- T25 在 `profile_inference` 路由排除登记留存超过 1 天的主、备、灰度与审核端点；备用/灰度仍不得弱于主线路。此检查约束配置选择，不证明供应商实际留存或删除；供应商合同、执行记录仍待验收。
 - `chat_imports.original_enc` 仍存在 24 小时清理设计，但固定基线未找到自动清理函数或读取期限过滤。`[待实现/验收]`
 - 服务端 `provider_admissions` 强制境内处理、境内存储、不出境，并要求留存天数、删除方法和条款证据字段；数据库未预置真实供应商。`[已知]`；供应商证据 `[待运营填写]`
 - 通用 `GET /v1/me/export` 和 `DELETE /v1/me/data/:kind/:id` 未接线，返回 `501 not_implemented`；注销冻结/撤销注销和健康窗口专用删除另列为已接线能力。`[已知]` `[待 T35 对表]`

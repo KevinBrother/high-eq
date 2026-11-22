@@ -69,6 +69,23 @@ func (c *Coordinator) Access(ctx context.Context, user uuid.UUID, fn func(pgx.Tx
 	})
 }
 
+// DiscardProfileInference removes only this account's abandoned processing
+// reservation. It deliberately bypasses the freeze check (a frozen account
+// still needs failed inference cleanup) while retaining the deletion barrier,
+// account lock, and account-scoped predicate.
+func (c *Coordinator) DiscardProfileInference(ctx context.Context, user, request uuid.UUID) error {
+	if user == uuid.Nil || request == uuid.Nil {
+		return errors.New("invalid inference cleanup")
+	}
+	return pgx.BeginFunc(ctx, c.db, func(tx pgx.Tx) error {
+		if err := c.GuardTx(ctx, tx, user); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `delete from profile_inference_requests where user_id=$1 and request_id=$2 and state='processing'`, user, request)
+		return err
+	})
+}
+
 // GuardTx extends the deletion barrier to caller-owned login/recovery transactions.
 // Locks remain held through its commit. Never perform business reads before this check.
 func (c *Coordinator) GuardTx(ctx context.Context, tx pgx.Tx, user uuid.UUID) error {

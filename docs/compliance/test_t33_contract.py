@@ -78,21 +78,22 @@ class BaselineSourceFactsContract(unittest.TestCase):
         self.assertRegex(corpus, r"iOS.*(?:没有|未包含|不存在).*NSHealthShareUsageDescription")
 
     def test_candidate_modules_are_not_described_as_baseline(self) -> None:
-        self.assertEqual(
-            sorted(p.name for p in (ROOT / "server/internal/profile").iterdir()),
-            [".gitkeep"],
-        )
+        profile_files = {
+            path.name for path in (ROOT / "server/internal/profile").glob("*.go")
+        }
+        for name in ("contacts.go", "feedback.go", "infer.go", "inference_request.go"):
+            self.assertIn(name, profile_files, "T25 profile implementation is present")
         self.assertEqual(
             list((ROOT / "server/migrations").glob("*reply_requests*")), []
         )
 
         corpus = compliance_corpus()
-        for term in ("server/internal/profile/", "reply_requests"):
-            self.assertRegex(
-                corpus,
-                rf"{re.escape(term)}[^\n]*(?:候选|待对表|不存在)",
-                f"{term} must be marked as candidate/pending, not baseline",
-            )
+        self.assertRegex(
+            corpus,
+            r"reply_requests[^\n]*(?:候选|待对表|不存在)",
+            "reply_requests must remain candidate/pending",
+        )
+        self.assertIn("T25 后端增量", corpus)
         self.assertIn("客户端仍未写入", read("docs/compliance/separate-consents.md"))
         self.assertNotRegex(corpus, r"回复类.*触发器.*禁止写入")
 
@@ -120,7 +121,7 @@ class BaselineSourceFactsContract(unittest.TestCase):
             r'accounts\.Granted\(ctx, tx, u, "contacts"\).*?return membership\.ErrForbidden'
             r'\s+\}\s+\}\s+return s\.Rights\.RequireContact\(ctx, tx, u, in\.Contact\)', re.S))
         for doc in ("data-inventory.md", "privacy-policy-draft.md", "separate-consents.md"):
-            self.assertIn("仅在接入 T25 画像摘要时额外检查 `contacts`", read("docs/compliance/" + doc))
+            self.assertIn("T19 已接入 T25 画像摘要，选用关系人时额外检查 `contacts`", read("docs/compliance/" + doc))
 
         work = read("server/internal/training/work.go")
         self.assertIn(
@@ -283,7 +284,7 @@ class DataLineageContract(unittest.TestCase):
         self.assertRegex(inventory, r"drill_progress[^\n]*随单项活动删除")
         self.assertNotRegex(inventory, r"daily_plans[^\n]*随账号或相关活动删除")
 
-    def test_one_day_retention_is_pending_not_claimed_enforced(self) -> None:
+    def test_one_day_provider_admission_is_not_proof_of_actual_retention(self) -> None:
         admission = read("server/migrations/20261121000600_gateway_admission.up.sql")
         self.assertIn("max_retention_days >= 0", admission)
         self.assertNotRegex(admission, r"max_retention_days\s*<=\s*1")
@@ -291,11 +292,203 @@ class DataLineageContract(unittest.TestCase):
         checklist = read("docs/compliance/sdk-model-review-checklist.md")
         qa = read("docs/compliance/qa.md")
         t33 = read("docs/tasks/T33.md")
-        self.assertNotRegex(checklist, r"(?:代码上限|代码约束).*1 天")
-        self.assertNotRegex(qa, r"代码有 1 天准入约束")
-        self.assertRegex(checklist, r"1 天.*(?:待实现|待验收)")
-        self.assertRegex(qa, r"QA-18[^\n]*(?:待实现/验收|待实现|待验收)")
-        self.assertRegex(t33, r"1 天.*(?:待实现|待验收)")
+        routing = read("server/internal/gateway/store.go")
+        self.assertIn("c.Task == ProfileInference && a.retention > 1", routing)
+        self.assertIn("b.retention > a.retention", routing)
+        for doc in [checklist, qa]:
+            self.assertIn("不证明供应商实际留存或删除", doc)
+            self.assertIn("1 天", doc)
+        self.assertIn("1 天", t33)
+
+
+class ProfileEvidenceContract(unittest.TestCase):
+    PROMPT_ID = "b935fb60-5a85-4c12-82c0-401afd649325"
+
+    def test_profile_evidence_schema_freezes_sources_and_binds_both_consents(self) -> None:
+        migration = read("server/migrations/20261122010025_profile_evidence.up.sql")
+        for needle in (
+            "CREATE TABLE profile_observations",
+            "subject text NOT NULL CHECK(subject IN ('contact','self'))",
+            "fact_enc bytea NOT NULL",
+            "FOREIGN KEY(user_id,event_id) REFERENCES signal_events(user_id,id) ON DELETE CASCADE",
+            "FOREIGN KEY(user_id,activity_id) REFERENCES activities(user_id,id) ON DELETE CASCADE",
+            "CREATE TABLE activity_profile_context",
+            "context_enc bytea NOT NULL",
+            "PRIMARY KEY(user_id,activity_id)",
+            "CREATE TABLE profile_inference_requests",
+            "chat_consent_id uuid NOT NULL REFERENCES consents ON DELETE CASCADE",
+            "contacts_consent_id uuid NOT NULL REFERENCES consents ON DELETE CASCADE",
+            "CHECK(octet_length(input_digest)=32)",
+            "CHECK(state IN ('processing','complete','invalidated'))",
+            "FOREIGN KEY(user_id,contact_id) REFERENCES contacts(user_id,id) ON DELETE CASCADE",
+        ):
+            self.assertIn(needle, migration)
+        self.assertIn("digest avoids", migration)
+        self.assertIn("persisting chat text", migration)
+        self.assertNotRegex(migration, r"(?:chat_text|input_text|message_text)")
+        self.assertIn(self.PROMPT_ID, migration)
+        self.assertIn("'profile_inference'", migration)
+        self.assertIn("七个整数", migration)
+        self.assertIn("不复述原文", migration)
+
+        feedback = read("server/internal/profile/feedback.go")
+        self.assertIn("Direction comes from the user's explicit judgment", feedback)
+        self.assertIn("func (s *Service) bindActivityContext", feedback)
+        self.assertIn("freezes the source scene, including a verified null", feedback)
+        self.assertIn("insert into activity_profile_context", feedback)
+        self.assertIn("return \"\", membership.ErrConflict", feedback)
+
+    def test_profile_inference_revalidates_exact_consents_and_fails_closed(self) -> None:
+        contacts = read("server/internal/profile/contacts.go")
+        write = contacts.split("func (s *Service) write(", 1)[1].split("\nfunc ", 1)[0]
+        self.assertLess(
+            write.index('consent(ctx, tx, u, "contacts")'),
+            write.index("RequireContact(ctx, tx, u, id)"),
+        )
+        for_model = contacts.split("func (s *Service) ForModel(", 1)[1].split("\nfunc ", 1)[0]
+        self.assertIn("s.write(ctx, tx, u, &id)", for_model)
+
+        infer = read("server/internal/profile/infer.go")
+        request = read("server/internal/profile/inference_request.go")
+        for needle in (
+            'activeConsent(ctx, tx, u, "chat_import")',
+            'activeConsent(ctx, tx, u, "contacts")',
+            "reserveInference(ctx, tx, u, id, in.RequestId, chatConsent, contactsConsent, digest)",
+            "call.BeforeAttempt = func(attemptCtx context.Context) error",
+            "checkInferenceAttempt(attemptCtx, session, u, id, in.RequestId, reserved.chatConsent, reserved.contactsConsent, digest",
+            "chatConsent != reserved.chatConsent",
+            "contactsConsent != reserved.contactsConsent",
+            "stored.state != \"processing\"",
+            "invalidateInference(ctx, tx, u, in.RequestId)",
+            "if reserved.state == \"complete\"",
+            "len(x.Choices) != len(axes)",
+            'i == 6 && sc != "partner"',
+        ):
+            self.assertIn(needle, infer)
+        for needle in (
+            "func inputDigest(text string) []byte",
+            "sha256.Sum256([]byte(text))",
+            "case \"invalidated\":",
+            "return inferenceReservation{}, membership.ErrConflict",
+            "a later regrant must not revive it",
+            "set state='invalidated'",
+        ):
+            self.assertIn(needle, request)
+
+        runtime = read("server/internal/service/training_runtime.go")
+        self.assertIn("Summary: s.Profiles.ForModel", runtime)
+        store = read("server/internal/training/store.go")
+        allowed = store.split("func (s *Service) allowed(", 1)[1].split("\nfunc ", 1)[0]
+        self.assertRegex(
+            allowed,
+            re.compile(
+                r'if s\.Summary != nil \{.*?'
+                r'accounts\.Granted\(ctx, tx, u, "contacts"\).*?'
+                r'membership\.ErrForbidden.*?\}\s*\}'
+                r'\s+return s\.Rights\.RequireContact\(ctx, tx, u, in\.Contact\)',
+                re.S,
+            ),
+        )
+
+    def test_profile_inventory_docs_distinguish_feedback_from_model_material(self) -> None:
+        inventory = read("docs/compliance/data-inventory.md")
+        d14 = re.search(r"^\| D14 \|.*$", inventory, re.M)
+        d39 = re.search(r"^\| D39 \|.*$", inventory, re.M)
+        d40 = re.search(r"^\| D40 \|.*$", inventory, re.M)
+        self.assertIsNotNone(d14, "data-inventory.md must have D14")
+        self.assertIsNotNone(d39, "data-inventory.md must have D39")
+        self.assertIsNotNone(d40, "data-inventory.md must have D40")
+
+        d14_text = d14.group(0)
+        for phrase in (
+            "profile_observations.fact_enc",
+            "用户明确反馈",
+            "不是模型推断",
+            "contacts.profile_enc",
+            "七个有界选项",
+            "随活动、信号事件或账号",
+        ):
+            self.assertIn(phrase, d14_text)
+
+        self.assertIn("关联关系人时检查 `contacts`", d14_text)
+        self.assertIn("`health` 与 `voice`", d14_text)
+        self.assertIn("仅导入聊天做推断时另需 `chat_import`", inventory)
+        d39_text = d39.group(0)
+        self.assertIn("仅回复或复盘的本人反馈", d39_text)
+        self.assertIn("不单列 D39", d39_text)
+        for phrase in (
+            "activity_profile_context.context_enc",
+            "冻结来源活动场景",
+            "已验证的 null",
+            "ON DELETE CASCADE",
+            "42",
+            "T25 后端增量",
+        ):
+            self.assertIn(phrase, d39_text)
+
+        d40_text = d40.group(0)
+        self.assertIn("不输出 D40 请求、同意 ID 或输入摘要", d40_text)
+        self.assertIn("不改写原记录", d40_text)
+        for phrase in (
+            "profile_inference_requests",
+            "chat_consent_id",
+            "contacts_consent_id",
+            "32 字节 SHA-256",
+            "processing",
+            "complete",
+            "invalidated",
+            "撤回/重授权",
+            "不复活",
+            "ON DELETE CASCADE",
+            "501 not_implemented",
+            "T35",
+            "42",
+        ):
+            self.assertIn(phrase, d40_text)
+
+        # The supplier register identifies the prompt/evidence, while user-facing
+        # material explains consent and retention without copying internal IDs.
+        self.assertIn(self.PROMPT_ID, read("docs/compliance/sdk-model-review-checklist.md"))
+        self.assertIn("供应商", read("docs/compliance/privacy-policy-draft.md"))
+        self.assertIn("T25", read("docs/compliance/qa.md"))
+
+    def test_profile_delete_is_internal_and_public_rights_stay_not_implemented(self) -> None:
+        profile_http = read("server/internal/service/profile_http.go")
+        self.assertIn('Scope: "contacts"', profile_http)
+        self.assertIn("a.profiles.Data.Delete", profile_http)
+
+        http = read("server/internal/service/http.go")
+        routes = re.search(r"var accountRoutes = map\[string\]bool\{(.*?)\n\}", http, re.S)
+        self.assertIsNotNone(routes)
+        route_block = routes.group(1)
+        self.assertIn('"DELETE /v1/contacts/:id": false', route_block)
+        self.assertNotIn("GET /v1/me/export", route_block)
+        self.assertNotIn("DELETE /v1/me/data/:kind/:id", route_block)
+        self.assertIn('problem(c, 501, "not_implemented"', http)
+
+        inventory = read("docs/compliance/data-inventory.md")
+        self.assertIn("D01–D40", inventory)
+        self.assertRegex(inventory, r"模块内部导出/删除[^\n]*不等于[^\n]*T35")
+        self.assertRegex(inventory, r"D37[^\n]*D39[^\n]*D40[^\n]*不计入")
+        self.assertIn("chat_imports", inventory)
+        self.assertRegex(inventory, r"chat_imports[^\n]*24 小时[^\n]*(?:待实现/验收|待验收)")
+
+        qa = read("docs/compliance/qa.md")
+        t33 = read("docs/tasks/T33.md")
+        evidence = qa + "\n" + t33
+        for needle in (
+            "TestProfileLifecycle",
+            "TestProfileInferenceReviewRegressions",
+            "TestPracticeWire",
+            "TestProfileReviewSourceLifecycle",
+            "work",
+            "null_scene",
+            "build/t25/with-practice/live.log",
+            "build/t25/joint-review-live.log",
+            "本批后端实现不等于生产上线。",
+        ):
+            self.assertIn(needle, evidence)
+        self.assertRegex(evidence, r"真实模型[^\n]*(?:不替代|不代表|仍待)")
 
 
 class SharingHandoffContract(unittest.TestCase):

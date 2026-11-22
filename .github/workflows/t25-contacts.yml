@@ -1,0 +1,21 @@
+name: Contacts live contract
+on:
+  push:
+    paths: ['server/internal/profile/**', 'server/internal/service/profile*', 'server/internal/service/runtime.go', 'server/internal/service/http.go', 'server/internal/membership/contacts.go', 'server/migrations/**', 'app/lib/features/contacts/**', 'app/test/contacts/t25_live_test.dart', 'server/tests/t25-t18.sh', '.github/workflows/t25-contacts.yml']
+  pull_request:
+    paths: ['server/internal/profile/**', 'server/internal/service/profile*', 'server/internal/service/runtime.go', 'server/internal/service/http.go', 'server/internal/membership/contacts.go', 'server/migrations/**', 'app/lib/features/contacts/**', 'app/test/contacts/t25_live_test.dart', 'server/tests/t25-t18.sh', '.github/workflows/t25-contacts.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  t18-t25:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with: {persist-credentials: false}
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with: {flutter-version: '3.38.10', cache: true}
+      - run: flutter pub get --enforce-lockfile
+        working-directory: app
+      - run: server/tests/t25-t18.sh

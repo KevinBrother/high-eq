@@ -5,6 +5,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -75,6 +76,45 @@ func TestRoutingStore(t *testing.T) {
 	if p.backup.id != backup {
 		t.Fatal("eligible backup missing")
 	}
+	// Imported chat has a stricter <=24h retention boundary than other tasks.
+	profileCall := c
+	profileCall.Task = ProfileInference
+	profileCall.PromptVersion = uuid.Nil
+	exec(`update model_routes set canary_percent=0 where task=$1`, ProfileInference)
+	exec(`update provider_admissions set max_retention_days=2 where ref=$1`, backup.String())
+	p, err = store.load(ctx, profileCall)
+	must(err)
+	if p.primary.id != primary || p.backup.id != uuid.Nil {
+		t.Fatal("profile inference accepted a >24h backup")
+	}
+	exec(`update provider_admissions set max_retention_days=1 where ref=$1`, backup.String())
+	p, err = store.load(ctx, profileCall)
+	must(err)
+	if p.backup.id != uuid.Nil {
+		t.Fatal("one-day fallback is weaker than a zero-day primary")
+	}
+	exec(`update provider_admissions set max_retention_days=1 where ref=$1`, primary.String())
+	p, err = store.load(ctx, profileCall)
+	must(err)
+	if p.backup.id != backup {
+		t.Fatal("profile inference rejected a 24h backup with an equally strict primary")
+	}
+	exec(`update provider_admissions set max_retention_days=2 where ref=$1`, primary.String())
+	if _, err = store.load(ctx, profileCall); !errors.Is(err, ErrConfig) {
+		t.Fatalf("profile inference accepted a >24h primary: %v", err)
+	}
+	exec(`update provider_admissions set max_retention_days=0 where ref=$1`, primary.String())
+	exec(`update provider_admissions set max_retention_days=2 where ref=$1`, mod.String())
+	p, err = store.load(ctx, profileCall)
+	must(err)
+	if p.moderator.id != uuid.Nil {
+		t.Fatal("profile inference accepted a >24h moderator")
+	}
+	exec(`update provider_admissions set max_retention_days=0 where ref=$1`, mod.String())
+	// Restore the original scoring route before exercising accounting below.
+	exec(`update provider_admissions set max_retention_days=0 where ref=$1`, backup.String())
+	p, err = store.load(ctx, c)
+	must(err)
 	now := time.Now()
 	id := uuid.New()
 	must(store.record(ctx, c, attemptStat{uuid.New(), p.primary, now, 30 * time.Millisecond, Result{}, "failed"}))

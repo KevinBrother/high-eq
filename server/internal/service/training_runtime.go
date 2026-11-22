@@ -13,5 +13,5 @@ func (s *Runtime) practiceService() *training.Service {
 	return s.Practice
 }
 func (s *Runtime) initPractice() {
-	s.Practice = &training.Service{Accounts: s.Accounts, Rights: s.Membership, Fields: s.Fields, Data: s.Data, DB: s.db, Bus: s.Bus, Router: func(stop gateway.Stop) (scoring.Runner, error) { return s.catalog.NewRouter(s.Data, stop) }}
+	s.Practice = &training.Service{Accounts: s.Accounts, Rights: s.Membership, Fields: s.Fields, Data: s.Data, DB: s.db, Bus: s.Bus, Router: func(stop gateway.Stop) (scoring.Runner, error) { return s.catalog.NewRouter(s.Data, stop) }, Summary: s.Profiles.ForModel}
 }

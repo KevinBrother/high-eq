@@ -86,6 +86,10 @@ func (s routingStore) load(ctx context.Context, c Call) (p plan, err error) {
 			if err := rows.Scan(&p.rev, &pct, &slot, &a.id, &a.inputPrice, &a.outputPrice, &a.purpose, &a.deletion, &a.retention, &a.fields); err != nil {
 				return ErrConfig
 			}
+			// Imported chat may only reach model / review endpoints with a <=24h retention agreement.
+			if c.Task == ProfileInference && a.retention > 1 {
+				continue
+			}
 			a.includeUsage = slices.Contains(a.fields, "stream_options.include_usage")
 			models[slot] = a
 		}

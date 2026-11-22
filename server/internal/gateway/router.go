@@ -48,6 +48,9 @@ type Call struct {
 	// and before each model call or streamed fragment. It must never be sourced
 	// from client input.
 	Guard func(context.Context) error
+	// BeforeAttempt runs immediately before each provider dispatch, including
+	// moderation and fallback attempts. Returning an error aborts the dispatch.
+	BeforeAttempt func(context.Context) error
 }
 
 // Text is provisional for fragment events. For terminal events replace all fragments with Terminal.
@@ -86,6 +89,10 @@ var errStopped = errors.New("generation stopped")
 // Stop must idempotently cancel scoring and release/refund this operation on its original ledger day.
 // A failed settlement is returned to the caller for durable retry, never converted to success.
 type Stop func(context.Context, Scope, Terminal) error
+type attemptRejected struct{ error }
+
+func (e attemptRejected) Unwrap() error { return e.error }
+
 type endpoint struct {
 	id                      uuid.UUID
 	inputPrice, outputPrice string
@@ -110,6 +117,24 @@ type Router struct {
 	record               func(context.Context, Call, attemptStat) error
 	stop                 Stop
 	first, total, review time.Duration
+}
+
+func (r *Router) beforeAttempt(ctx context.Context, c Call) error {
+	if c.BeforeAttempt == nil {
+		return nil
+	}
+	if err := c.BeforeAttempt(ctx); err != nil {
+		return attemptRejected{err}
+	}
+	return nil
+}
+
+func rejected(err error) error {
+	var rejected attemptRejected
+	if errors.As(err, &rejected) {
+		return rejected.error
+	}
+	return nil
 }
 
 func (r *Router) Run(parent context.Context, c Call) (Reply, error) {
@@ -149,6 +174,9 @@ func (r *Router) Run(parent context.Context, c Call) (Reply, error) {
 		if term, err := review.check(ctx, string(input)); term != nil {
 			return r.finish(parent, c, *term, err)
 		} else if err != nil {
+			if rejection := rejected(err); rejection != nil {
+				return Reply{}, rejection
+			}
 			return Reply{}, err
 		}
 		if err := guard(ctx, c.Guard); err != nil {
@@ -157,6 +185,9 @@ func (r *Router) Run(parent context.Context, c Call) (Reply, error) {
 		start := time.Now()
 		a := generation{review: &review, model: model}
 		result, err := a.run(ctx)
+		if err := rejected(err); err != nil {
+			return Reply{}, err
+		}
 		id := uuid.New()
 		audit := r.log(parent, attempt, attemptStat{id, model, start, time.Since(start), result, outcome(err, a.terminal)})
 		if a.terminal != nil {

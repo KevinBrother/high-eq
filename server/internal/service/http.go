@@ -17,6 +17,7 @@ import (
 	"high-eq/server/internal/marks"
 	"high-eq/server/internal/membership"
 	"high-eq/server/internal/payments"
+	"high-eq/server/internal/profile"
 	"high-eq/server/internal/training"
 )
 
@@ -30,6 +31,7 @@ type appAPI struct {
 	app.ServerInterface
 	payments    *payments.Service
 	marks       *marks.Service
+	profiles    *profile.Service
 	signals     *emotion.Service
 	assessments *assessment.Service
 	health      func(context.Context) error
@@ -60,6 +62,10 @@ var accountRoutes = map[string]bool{
 	"POST /v1/me/bindings": false, "POST /v1/me/closure": false, "DELETE /v1/me/closure": true,
 	"POST /v1/purchases/token": false, "POST /v1/purchases": false, "POST /v1/purchases/restore": false,
 	"POST /v1/payment-notifications/apple": false, "POST /v1/payment-notifications/wechat": false, "POST /v1/payment-notifications/alipay": false,
+	"GET /v1/contact-questions": false, "GET /v1/contacts": false, "POST /v1/contacts": false,
+	"PATCH /v1/contacts/:id": false, "DELETE /v1/contacts/:id": false, "POST /v1/contacts/:id/activate": false,
+	"GET /v1/contacts/:id/summary": false, "POST /v1/contacts/:id/infer": false, "POST /v1/profiles/feedback": false,
+	"GET /v1/me/profile": false, "GET /v1/emotion-summary": false,
 	"GET /v1/entitlements": false,
 	"GET /v1/me/consents":  false, "PUT /v1/me/consents/:purpose": false,
 }
@@ -98,10 +104,7 @@ func gate(auth *accounts.Service) func(*gin.Context) {
 		}
 	}
 }
-func newRouter(markSvc *marks.Service, pay *payments.Service, health func(context.Context) error, auth *accounts.Service, mountAdmin func(gin.IRouter), rights *membership.Service, surveys *assessment.Service, signals ...*emotion.Service) *gin.Engine {
-	return practiceRouter(nil, markSvc, pay, health, auth, mountAdmin, rights, surveys, signals...)
-}
-func practiceRouter(practice *training.Service, markSvc *marks.Service, pay *payments.Service, health func(context.Context) error, auth *accounts.Service, mountAdmin func(gin.IRouter), rights *membership.Service, surveys *assessment.Service, signals ...*emotion.Service) *gin.Engine {
+func newRouter(practice *training.Service, markSvc *marks.Service, pay *payments.Service, profiles *profile.Service, health func(context.Context) error, auth *accounts.Service, mountAdmin func(gin.IRouter), rights *membership.Service, surveys *assessment.Service, signals ...*emotion.Service) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -121,7 +124,7 @@ func practiceRouter(practice *training.Service, markSvc *marks.Service, pay *pay
 	if len(signals) > 0 {
 		signalService = signals[0]
 	}
-	app.RegisterHandlersWithOptions(r, appAPI{training: practice, marks: markSvc, payments: pay, signals: signalService, health: health, accounts: auth, assessments: surveys, membership: rights}, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(auth)}, ErrorHandler: invalid})
+	app.RegisterHandlersWithOptions(r, appAPI{training: practice, marks: markSvc, payments: pay, profiles: profiles, signals: signalService, health: health, accounts: auth, assessments: surveys, membership: rights}, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(auth)}, ErrorHandler: invalid})
 	if mountAdmin != nil {
 		mountAdmin(r)
 	} else {

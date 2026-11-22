@@ -70,6 +70,89 @@ func TestPrivacyProtocol(t *testing.T) {
 	reg, e := NewRegistry([]string{"training"}, module)
 	must(t, e)
 	c := NewCoordinator(db, l, reg)
+
+	t.Run("discard profile inference keeps deletion barriers", func(t *testing.T) {
+		seedUser := func(frozen bool) (uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) {
+			t.Helper()
+			var user, contact, chatConsent, contactsConsent, purge uuid.UUID
+			if frozen {
+				must(t, db.QueryRow(ctx, `insert into users(age_confirmed_at,closure_requested_at) values(now(),now()) returning id,purge_id`).Scan(&user, &purge))
+			} else {
+				must(t, db.QueryRow(ctx, `insert into users(age_confirmed_at) values(now()) returning id,purge_id`).Scan(&user, &purge))
+			}
+			must(t, db.QueryRow(ctx, `insert into contacts(user_id,profile_enc) values($1,$2) returning id`, user, []byte("synthetic profile")).Scan(&contact))
+			must(t, db.QueryRow(ctx, `insert into consents(user_id,purpose,version) values($1,'chat_import','v1') returning id`, user).Scan(&chatConsent))
+			must(t, db.QueryRow(ctx, `insert into consents(user_id,purpose,version) values($1,'contacts','v1') returning id`, user).Scan(&contactsConsent))
+			return user, contact, chatConsent, contactsConsent, purge
+		}
+		seedRequest := func(user, contact, chatConsent, contactsConsent, request uuid.UUID, state string) {
+			t.Helper()
+			_, e := db.Exec(ctx, `insert into profile_inference_requests(user_id,request_id,contact_id,chat_consent_id,contacts_consent_id,input_digest,state) values($1,$2,$3,$4,$5,$6,$7)`, user, request, contact, chatConsent, contactsConsent, bytes.Repeat([]byte{0x25}, 32), state)
+			must(t, e)
+		}
+		exists := func(user, request uuid.UUID) bool {
+			t.Helper()
+			var ok bool
+			must(t, db.QueryRow(ctx, `select exists(select 1 from profile_inference_requests where user_id=$1 and request_id=$2)`, user, request).Scan(&ok))
+			return ok
+		}
+
+		userA, contactA, chatA, contactsA, purgeA := seedUser(true)
+		userB, contactB, chatB, contactsB, _ := seedUser(false)
+		target, sibling, complete, other := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+		seedRequest(userA, contactA, chatA, contactsA, target, "processing")
+		seedRequest(userA, contactA, chatA, contactsA, sibling, "processing")
+		seedRequest(userA, contactA, chatA, contactsA, complete, "complete")
+		seedRequest(userB, contactB, chatB, contactsB, other, "processing")
+
+		if e := c.Access(ctx, userA, func(pgx.Tx) error {
+			t.Fatal("frozen account read through cleanup path")
+			return nil
+		}); !errors.Is(e, ErrHidden) {
+			t.Fatalf("frozen account remained readable: %v", e)
+		}
+		must(t, c.DiscardProfileInference(ctx, userA, target))
+		if exists(userA, target) || !exists(userA, sibling) || !exists(userA, complete) || !exists(userB, other) {
+			t.Fatal("cleanup was not the exact frozen, account-scoped processing row")
+		}
+		must(t, c.DiscardProfileInference(ctx, userA, other))
+		if !exists(userB, other) {
+			t.Fatal("cleanup crossed the account boundary")
+		}
+
+		blocked := uuid.New()
+		seedRequest(userA, contactA, chatA, contactsA, blocked, "processing")
+		_, e := db.Exec(ctx, `insert into pending_erasure(root_id) values($1)`, purgeA)
+		must(t, e)
+		if e := c.DiscardProfileInference(ctx, userA, blocked); !errors.Is(e, ErrHidden) {
+			t.Fatalf("cleanup crossed the deletion barrier: %v", e)
+		}
+		if !exists(userA, blocked) {
+			t.Fatal("cleanup deleted a row under a pending erasure")
+		}
+		if e := c.Access(ctx, userA, func(pgx.Tx) error {
+			t.Fatal("pending account read through cleanup path")
+			return nil
+		}); !errors.Is(e, ErrHidden) {
+			t.Fatalf("pending account remained readable: %v", e)
+		}
+		_, e = db.Exec(ctx, `delete from pending_erasure where root_id=$1`, purgeA)
+		must(t, e)
+		must(t, c.DiscardProfileInference(ctx, userA, blocked))
+		if exists(userA, blocked) {
+			t.Fatal("cleanup did not resume after the deletion barrier cleared")
+		}
+		if e := c.Access(ctx, userA, func(pgx.Tx) error {
+			t.Fatal("cleanup cleared the freeze check")
+			return nil
+		}); !errors.Is(e, ErrHidden) {
+			t.Fatalf("cleanup opened frozen-account reads: %v", e)
+		}
+
+		_, e = db.Exec(ctx, `delete from users where id=any($1::uuid[])`, []uuid.UUID{userA, userB})
+		must(t, e)
+	})
+
 	var srcCalls int
 	consume := func(ctx context.Context, tx pgx.Tx, s ScoreSource) error {
 		srcCalls++

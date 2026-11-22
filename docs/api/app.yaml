@@ -1191,12 +1191,30 @@ paths:
                   value:
                     safety: true
                     message: 听起来你现在可能正经历很难受的事。这里不适合继续练习，建议你马上联系专业的人：全国心理援助热线 12356；如果有人身危险，请立即拨打 110 或 120。
+        '202':
+          description: 同一请求仍在推断，稍后用原请求编号重试
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - request_id
+                - status
+                properties:
+                  request_id: {type: string, format: uuid}
+                  status: {type: string, enum: [in_progress]}
+              example:
+                request_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                status: in_progress
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
         '403': {$ref: '#/components/responses/E403'}
         '404': {$ref: '#/components/responses/E404'}
+        '409': {$ref: '#/components/responses/E409'}
         '503': {$ref: '#/components/responses/E503'}
+      description: 同一 request_id 和相同材料只调用一次模型并返回当前画像；处理中返回 202；执行时检测到用途授权记录变化会使在途请求失效。完成后仍须具备当前权限，重放只读当前画像、不再外发；已失效或同键不同材料或关系人返回 409。
       x-example-request: POST /v1/contacts/85b72033-9f07-4bbc-8567-fc31f26508ab/infer
   /v1/marks:
     get:
