@@ -43,6 +43,13 @@ class BaselineAndScopeContract(unittest.TestCase):
         self.assertRegex(t33, r"主会话.*(?:提取|生成).*补丁")
         self.assertRegex(t33, r"本轮.*不.*(?:生成|创建).*补丁")
 
+    def test_t33_does_not_freeze_static_contract_count(self) -> None:
+        t33 = read("docs/tasks/T33.md")
+        self.assertNotIn("29 项", t33)
+        self.assertNotRegex(t33, r"当前 T33 已扩展为 \d+ 项")
+        self.assertIn("实际总数以命令输出为准", t33)
+        self.assertIn("不在交接中重复抄写", t33)
+
     def test_cross_card_changes_are_appended_not_denied(self) -> None:
         t33 = read("docs/tasks/T33.md")
         changes = read("docs/CHANGES.md")
@@ -56,26 +63,40 @@ class BaselineSourceFactsContract(unittest.TestCase):
     def test_android_and_ios_permissions_are_not_inflated(self) -> None:
         manifest = read("app/android/app/src/main/AndroidManifest.xml")
         permissions = re.findall(r'android:name="android\.permission\.([^"]+)"', manifest)
-        self.assertEqual(permissions, ["INTERNET"])
+        self.assertEqual(permissions, ["INTERNET", "RECORD_AUDIO"])
         for forbidden in (
             "ACTIVITY_RECOGNITION",
             "READ_HEART_RATE",
             "READ_HEART_RATE_VARIABILITY",
             "READ_STEPS",
             "READ_EXERCISE",
-            "RECORD_AUDIO",
+            "health.READ",
         ):
             self.assertNotIn(forbidden, manifest)
 
         plist = read("app/ios/Runner/Info.plist")
         entitlements = read("app/ios/Runner/Runner.entitlements")
         self.assertNotIn("NSHealthShareUsageDescription", plist)
-        self.assertNotIn("NSMicrophoneUsageDescription", plist)
+        self.assertIn("NSMicrophoneUsageDescription", plist)
         self.assertNotIn("com.apple.developer.healthkit", entitlements)
 
         corpus = compliance_corpus()
-        self.assertRegex(corpus, r"Android.*Manifest.*仅.*INTERNET")
-        self.assertRegex(corpus, r"iOS.*(?:没有|未包含|不存在).*NSHealthShareUsageDescription")
+        self.assertRegex(
+            corpus,
+            r"固定基线[^\n]*Manifest[^\n]*仅[^\n]*INTERNET",
+        )
+        self.assertRegex(
+            corpus,
+            r"T29 归档[^\n]*(?:RECORD_AUDIO|麦克风)",
+        )
+        self.assertRegex(
+            corpus,
+            r"iOS[^\n]*(?:NSMicrophoneUsageDescription|麦克风用途说明)",
+        )
+        self.assertRegex(
+            corpus,
+            r"iOS[^\n]*(?:没有|未包含|不存在)[^\n]*NSHealthShareUsageDescription",
+        )
 
     def test_incremental_modules_are_not_counted_as_baseline(self) -> None:
         profile_files = {
@@ -389,7 +410,12 @@ class BaselineSourceFactsContract(unittest.TestCase):
         self.assertRegex(privacy, r"/v1/me/export[^\n]*501 not_implemented")
         self.assertRegex(privacy, r"/v1/me/data/:kind/:id[^\n]*501 not_implemented")
 
-        self.assertRegex(filings, r"Android.*Manifest.*仅.*INTERNET")
+        self.assertRegex(filings, r"固定基线[^\n]*Manifest[^\n]*仅[^\n]*INTERNET")
+        self.assertRegex(filings, r"T29 归档[^\n]*(?:RECORD_AUDIO|麦克风)")
+        self.assertRegex(
+            filings,
+            r"iOS[^\n]*(?:NSMicrophoneUsageDescription|麦克风用途说明)",
+        )
         self.assertRegex(filings, r"iOS.*(?:没有|未包含|不存在).*NSHealthShareUsageDescription")
         self.assertNotRegex(filings, r"ACTIVITY_RECOGNITION[^\n]*Manifest 已声明")
         self.assertNotRegex(filings, r"HealthKit[^\n]*entitlement 和[^\n]*存在")
@@ -1012,9 +1038,12 @@ class ProfileEvidenceContract(unittest.TestCase):
         self.assertIn('problem(c, 501, "not_implemented"', http)
 
         inventory = read("docs/compliance/data-inventory.md")
-        self.assertIn("D01–D43", inventory)
+        self.assertIn("D01–D44", inventory)
         self.assertRegex(inventory, r"模块内部导出/删除[^\n]*不等于[^\n]*T35")
-        self.assertRegex(inventory, r"D37[^\n]*D39[^\n]*D40[^\n]*D41[^\n]*D42[^\n]*D43[^\n]*不计入")
+        self.assertRegex(
+            inventory,
+            r"D37[^\n]*D39[^\n]*D40[^\n]*D41[^\n]*D42[^\n]*D43[^\n]*D44[^\n]*不计入",
+        )
         self.assertIn("chat_imports", inventory)
         self.assertRegex(inventory, r"chat_imports[^\n]*24 小时[^\n]*(?:待实现/验收|待验收)")
 
@@ -1209,6 +1238,329 @@ class Pg17InventoryCoverageContract(unittest.TestCase):
         self.assertIn("REFERENCES activities ON DELETE CASCADE", quota_sql)
 
 
+class T29VoiceStaticContract(unittest.TestCase):
+    def test_voice_capture_static_contract_and_inventory_are_explicit(self) -> None:
+        manifest = read("app/android/app/src/main/AndroidManifest.xml")
+        plist = read("app/ios/Runner/Info.plist")
+        self.assertIn('android:name="android.permission.RECORD_AUDIO"', manifest)
+        self.assertIn("NSMicrophoneUsageDescription", plist)
+
+        android_entry = read(
+            "app/android/app/src/main/kotlin/cn/higheq/high_eq/MainActivity.kt"
+        )
+        self.assertIn("VoiceCapture(this)", android_entry)
+        self.assertIn("voiceCapture.install", android_entry)
+        self.assertIn("handlePermissionResult", android_entry)
+        ios_entry = read("app/ios/Runner/AppDelegate.swift")
+        self.assertIn("VoiceCapture()", ios_entry)
+        self.assertIn("voiceCapture.install", ios_entry)
+
+        kotlin = read("app/android/app/src/main/kotlin/cn/higheq/high_eq/VoiceCapture.kt")
+        swift = read("app/ios/Runner/VoiceCapture.swift")
+        self.assertIn("no file, transcription, or network path", kotlin)
+        for native in (kotlin, swift):
+            self.assertNotIn("URLSession", native)
+            self.assertNotIn("SpeechRecognizer", native)
+            self.assertNotIn("SFSpeech", native)
+
+        controller = read("app/lib/features/voice/controller.dart")
+        start = controller.split("Future<bool> start()", 1)[1].split(
+            "void _onIdentityChanged", 1
+        )[0]
+        ordered = (
+            "access.hasConsent(scope, CollectionPurpose.voice)",
+            "access.memberExpiry(scope)",
+            "CollectionPurpose.audioRetention",
+            "_memberActive",
+            "platform.checkPermission()",
+            "platform.requestPermission()",
+            "access.readIfAllowed(",
+            "platform.start()",
+        )
+        positions = [start.index(item) for item in ordered]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("bool _retentionConsent = false", controller)
+        self.assertIn("bool _retainAudio = false", controller)
+        self.assertIn("Future<bool> enableRetention()", controller)
+        self.assertIn("语音特征分析不受影响", controller)
+
+        aggregator = read("app/lib/features/voice/aggregator.dart")
+        for needle in (
+            "complete UTC-aligned 30-second windows",
+            "leading fragment",
+            "partial windows are never",
+            "windowWidth = Duration(seconds: 30)",
+            "_discardPartial()",
+            "_floorWindow(",
+        ):
+            self.assertIn(needle, aggregator)
+
+        features = read("app/lib/features/voice/features.dart")
+        wire = re.search(
+            r"class VoiceWindow.*?Map<String, dynamic> toWire\(\) => \{(.*?)\n  \};",
+            features,
+            re.S,
+        )
+        self.assertIsNotNone(wire)
+        wire_block = wire.group(1)
+        for field in (
+            "'channel': 'voice'",
+            "'starts_at'",
+            "'duration_seconds': 30",
+            "'exercise': false",
+            "'voiced_seconds'",
+            "'speech_rate'",
+            "'volume'",
+            "'pitch'",
+        ):
+            self.assertIn(field, wire_block)
+        for forbidden in ("pcm", "transcript", "samples", "per_second"):
+            self.assertNotIn(forbidden, wire_block)
+        self.assertIn("enum TranscriptionStatus { unavailable }", features)
+        self.assertIn("requiresCloudTranscription => false", features)
+        self.assertIn("syllable-peak proxy", features)
+        self.assertIn("speechRateLabel => '声学音节速率代理'", controller)
+
+        sessions = read("app/lib/core/session.dart")
+        self.assertIn("AesGcm.with256bits()", sessions)
+        self.assertIn(
+            "aad: utf8.encode('${scope.account}:${kind.name}:$id')", sessions
+        )
+        self.assertIn("entry.path.endsWith('.new')", sessions)
+        self.assertIn("entry.path.endsWith('.audio')", sessions)
+        self.assertIn("const Duration(days: 3)", sessions)
+
+        store = read("app/lib/features/voice/store.dart")
+        self.assertIn("startsAt.add(const Duration(days: 3))", store)
+        self.assertIn("!at.isBefore(parsed.expiresAt)", store)
+        self.assertIn("Future<void> purgeExpired", store)
+        janitor = read("app/lib/features/voice/retention_janitor.dart")
+        self.assertIn("Duration(minutes: 1)", janitor)
+        self.assertIn("AppLifecycleState.resumed", janitor)
+        self.assertIn("purgeExpired(now: now().toUtc())", janitor)
+
+        cleanup = read("app/lib/features/voice/cleanup.dart")
+        cleanup_order = (
+            "store.setVoiceRevoked(true)",
+            "platform.stop()",
+            "store.clearPending()",
+            "store.deleteAllRecordings()",
+            "access.setConsent(scope, CollectionPurpose.voice, false)",
+        )
+        cleanup_positions = [cleanup.index(item) for item in cleanup_order]
+        self.assertEqual(cleanup_positions, sorted(cleanup_positions))
+        self.assertIn("本机不会恢复采集或补传旧窗口", controller)
+        self.assertIn("撤回标记保留，不会补传", controller)
+        self.assertIn("续费后不会补传", controller)
+
+        inventory = read("docs/compliance/data-inventory.md")
+        d44 = next(
+            line for line in inventory.splitlines() if line.startswith("| D44 |")
+        )
+        for needle in (
+            "本机队列",
+            "录音索引",
+            "PCM",
+            "完整 30 秒窗口",
+            "AES-GCM 256",
+            "账号",
+            "kind",
+            "id",
+            "本机队列不含 PCM",
+            "3 天",
+            "不可读",
+            "尽力删除",
+            "janitor",
+            "restore",
+            "撤回",
+            "不补传",
+            "不计入旧 42 项",
+        ):
+            self.assertIn(needle, d44)
+        self.assertIn("D01–D44", inventory)
+
+        status = "T29 归档静态实现、未合入固定基线、真机待验"
+        for path in (
+            "docs/compliance/README.md",
+            "docs/compliance/data-inventory.md",
+            "docs/compliance/separate-consents.md",
+            "docs/compliance/filings-and-authorizations.md",
+            "docs/compliance/qa.md",
+            "docs/compliance/privacy-policy-draft.md",
+            "docs/compliance/banned-words-and-examples.md",
+            "docs/compliance/terms-of-service-draft.md",
+            "docs/tasks/T33.md",
+        ):
+            self.assertIn(status, read(path), path)
+
+        self.assertNotIn("ACTIVITY_RECOGNITION", manifest)
+        self.assertNotIn("NSHealthShareUsageDescription", plist)
+        self.assertNotIn(
+            "com.apple.developer.healthkit",
+            read("app/ios/Runner/Runner.entitlements"),
+        )
+
+    def test_voice_and_retention_revocation_docs_are_separate(self) -> None:
+        text = read("docs/compliance/separate-consents.md")
+        c05_row = next(
+            line for line in text.splitlines() if line.startswith("| C05 |")
+        )
+        c06_row = next(
+            line for line in text.splitlines() if line.startswith("| C06 |")
+        )
+        c05_section = re.search(r"### C05 .*?(?=\n### C06)", text, re.S)
+        c06_section = re.search(r"### C06 .*?(?=\n### C07)", text, re.S)
+        self.assertIsNotNone(c05_section)
+        self.assertIsNotNone(c06_section)
+
+        for prefix in ("| C04 |", "| C05 |", "| C06 |", "| C07 |"):
+            row = next(
+                line for line in text.splitlines() if line.startswith(prefix)
+            )
+            self.assertEqual(7, len(row.strip("|").split("|")), prefix)
+
+        for needle in (
+            "拒绝系统麦克风权限只停止本次采集",
+            "不撤回同意",
+            "不写撤回标记",
+            "撤回 `voice`",
+            "清空待传旧统计队列",
+            "尝试删除本机录音和索引",
+            "同步撤回 `voice` 与 `audio_retention`",
+            "服务端既有按账号保存的 30 秒聚合统计（不含音频、PCM、逐秒数组或转写）不会因客户端撤回自动删除",
+            "180 天",
+            "专用时间删除",
+            "删除后清除基线物化结果并从存活窗口重算",
+        ):
+            self.assertIn(needle, c05_row)
+        self.assertNotIn("匿名", c05_row)
+        self.assertNotIn("不补传旧窗口", c06_row)
+        for needle in (
+            "撤回 `audio_retention` 停止回听",
+            "尝试删除本机录音和索引",
+            "仅同步撤回该用途",
+            "不清待传旧统计队列",
+            "不撤回 `voice`",
+            "旧待传窗口仍可按原授权发送",
+            "服务端既有按账号保存的 30 秒聚合统计（不含音频、PCM、逐秒数组或转写）继续存在并参与基线",
+            "不受录音保留撤回影响",
+        ):
+            self.assertIn(needle, c06_row)
+        self.assertNotIn("匿名", c06_row)
+
+        c05 = c05_section.group(0)
+        c06 = c06_section.group(0)
+        for needle in (
+            "拒绝系统麦克风权限只关闭本次语音采集，不写撤回标记、不清待发统计队列",
+            "清空待传旧统计队列、尝试删除本机录音和索引",
+            "同步撤回 `voice` 与 `audio_retention`",
+            "恢复联网也不会补传撤回前窗口",
+            "服务端既有按账号保存的 30 秒聚合统计（不含音频、PCM、逐秒数组或转写）不会因客户端撤回 `voice` 自动删除",
+            "DELETE /v1/signal-windows?starts_at=...&channel=voice",
+            "`signal_baselines` 物化结果",
+            "基线从存活窗口重算",
+            "清理器逐项记录结果，失败时保持关闭并提示重试",
+        ):
+            self.assertIn(needle, c05)
+        self.assertNotIn("匿名", c05)
+        for needle in (
+            "撤回或关闭录音保留只停止本机录音与回听",
+            "尝试删除本机录音和索引并仅同步 `audio_retention` 撤回",
+            "不清待传旧统计队列、不撤回 `voice`",
+            "已授权的 30 秒统计特征分析仍可继续",
+            "旧待传窗口仍可按原授权发送",
+            "服务端既有按账号保存的 30 秒聚合统计（不含音频、PCM、逐秒数组或转写）继续存在并参与基线",
+            "不受录音保留撤回影响",
+            "删除失败时回听保持关闭并提示重试，不显示为已删除",
+        ):
+            self.assertIn(needle, c06)
+        self.assertNotIn("匿名", c06)
+        self.assertNotIn("不补传", c06)
+
+        task = read("docs/tasks/T29.md")
+        self.assertIn(
+            "只有 `recordingsCleared` 等结果确认成功才显示“已删除”",
+            task,
+        )
+        self.assertIn("删除失败时回听保持关闭并提示重试", task)
+
+    def test_t29_live_evidence_uses_archived_log_and_marks_ci_unverified(self) -> None:
+        log_path = "build/t29/live-published.ToeY3h/t30-live.log"
+        run_tree = "33149cab1d768881c2b6d9b24c62e294fafa0811"
+        frozen_tree = "2825621d921f40b44248f9c1a7ef79c24b5a91de"
+        for path in ("docs/tasks/T29.md", "docs/tasks/T33.md"):
+            text = read(path)
+            self.assertNotIn("../real-grant.log", text, path)
+            self.assertIn(log_path, text, path)
+            self.assertIn(run_tree, text, path)
+            self.assertIn(frozen_tree, text, path)
+            self.assertIn("CI 未核验", text, path)
+            self.assertIn(
+                "`app/`、`server/` 和 `docker-compose.yml` 一致",
+                text,
+                path,
+            )
+
+        t29 = read("docs/tasks/T29.md")
+        self.assertIn("宿主实跑通过，CI 未核验", t29)
+        self.assertNotRegex(t29, r"CI 已(?:实际)?执行通过")
+        self.assertNotRegex(
+            read("docs/tasks/T33.md"),
+            r"CI 已(?:实际)?执行通过",
+        )
+
+    def test_d18_inventory_records_server_voice_aggregation(self) -> None:
+        inventory = read("docs/compliance/data-inventory.md")
+        row = next(
+            line for line in inventory.splitlines() if line.startswith("| D18 |")
+        )
+        for prefix in ("| D17 |", "| D18 |", "| D19 |"):
+            adjacent = next(
+                line
+                for line in inventory.splitlines()
+                if line.startswith(prefix)
+            )
+            self.assertEqual(8, len(adjacent.strip("|").split("|")), prefix)
+        cells = row.strip("|").split("|")
+        self.assertIn("专用时间删除", cells[5])
+        self.assertIn("`signal_baselines`", cells[5])
+        self.assertNotIn("专用时间删除", cells[4])
+        self.assertNotIn("专用时间删除", cells[6])
+        for needle in (
+            "健康/语音 30 秒聚合窗口",
+            "`signal_windows.stats_enc`",
+            "`channel` 为 `health` 或 `voice`",
+            "服务端读取并解密",
+            "`speech_rate`",
+            "`volume`",
+            "`pitch`",
+            "基线与参考计算",
+            "仅含统计值",
+            "不含 PCM、录音、逐秒数组或转写",
+            "180 天",
+            "PurgeDue",
+            "隐私删除协调器",
+            "DELETE /v1/signal-windows",
+            "`channel=health` 或 `channel=voice`",
+            "精确 30 秒 `starts_at`",
+            "专用时间删除",
+            "当前账号",
+            "不波及相邻窗口或其他账号",
+            "`signal_baselines` 物化结果",
+            "删除会使该账号的 `signal_baselines` 物化结果失效并清除",
+            "由存活窗口重新计算",
+            "客户端撤回 `voice` 或 `audio_retention` 不会自动删除全部既有服务端窗口",
+            "该能力不等于通用删除入口已接线",
+            "通用单条删除仍未接线",
+            "本机录音 `3 天` 到期属 D44",
+            "正式语音留存政策仍待确认",
+            "不新增历史表计数",
+        ):
+            self.assertIn(needle, row)
+        self.assertNotIn("健康窗口专用删除已接线", row)
+        self.assertIn("D01–D44", inventory)
+
+
 class ConsentAndSourceRegisterContract(unittest.TestCase):
     def test_c05_is_an_actionable_microphone_prompt_draft(self) -> None:
         text = read("docs/compliance/separate-consents.md")
@@ -1223,7 +1575,7 @@ class ConsentAndSourceRegisterContract(unittest.TestCase):
             r"(?:不上传|不会上传).*(?:音频|转写)",
             r"混入他人",
             r"(?:拒绝|撤回).*(?:后果|影响|停止)",
-            r"待 T29 对表",
+            re.escape("T29 归档静态实现、未合入固定基线、真机待验"),
         )
         for pattern in required:
             self.assertRegex(c05, pattern)

@@ -1,0 +1,82 @@
+name: T29/T30 voice wire
+
+on:
+  push:
+    paths:
+      - 'app/lib/features/voice/**'
+      - 'app/lib/core/api.dart'
+      - 'app/lib/core/app_op.g.dart'
+      - 'app/lib/core/consent.dart'
+      - 'app/lib/core/endpoints.g.dart'
+      - 'app/lib/core/session.dart'
+      - 'app/lib/core/transport.dart'
+      - 'app/test/isolation_test.dart'
+      - 'app/test/voice/**'
+      - 'app/tool/t29/**'
+      - 'server/internal/accounts/**'
+      - 'server/internal/emotion/**'
+      - 'server/internal/membership/**'
+      - 'server/internal/service/accounts_http.go'
+      - 'server/internal/service/config.go'
+      - 'server/internal/service/emotion_http.go'
+      - 'server/internal/service/http.go'
+      - 'server/internal/service/runtime.go'
+      - 'server/migrations/**'
+      - 'docker-compose.yml'
+      - 'docs/tasks/T29.md'
+      - '.github/workflows/t29-t30-wire.yml'
+  pull_request:
+    paths:
+      - 'app/lib/features/voice/**'
+      - 'app/lib/core/api.dart'
+      - 'app/lib/core/app_op.g.dart'
+      - 'app/lib/core/consent.dart'
+      - 'app/lib/core/endpoints.g.dart'
+      - 'app/lib/core/session.dart'
+      - 'app/lib/core/transport.dart'
+      - 'app/test/isolation_test.dart'
+      - 'app/test/voice/**'
+      - 'app/tool/t29/**'
+      - 'server/internal/accounts/**'
+      - 'server/internal/emotion/**'
+      - 'server/internal/membership/**'
+      - 'server/internal/service/accounts_http.go'
+      - 'server/internal/service/config.go'
+      - 'server/internal/service/emotion_http.go'
+      - 'server/internal/service/http.go'
+      - 'server/internal/service/runtime.go'
+      - 'server/migrations/**'
+      - 'docker-compose.yml'
+      - 'docs/tasks/T29.md'
+      - '.github/workflows/t29-t30-wire.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  voice-wire:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with: {persist-credentials: false}
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with: {flutter-version: '3.38.10', cache: true}
+      - name: Install app dependencies
+        working-directory: app
+        run: flutter pub get --enforce-lockfile
+      - name: Check T29 formatting
+        working-directory: app
+        run: dart format --output=none --set-exit-if-changed lib/features/voice test/voice tool/t29
+      - name: Analyze voice module and live test
+        working-directory: app
+        run: dart analyze lib/features/voice tool/t29
+      - name: Test T29 voice behavior
+        working-directory: app
+        run: flutter test --no-pub test/voice
+      - name: Verify T29 clients bypass proxy settings
+        working-directory: app
+        run: ./tool/t29/with_sentinel_proxy.sh flutter --no-version-check --suppress-analytics test --no-pub -r expanded tool/t29/proxy_isolation_test.dart
+      - name: Exercise T29 client against disposable T30 HTTP/PG/Redis
+        run: bash app/tool/t29/live.sh

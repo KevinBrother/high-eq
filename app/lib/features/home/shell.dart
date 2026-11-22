@@ -205,6 +205,13 @@ class HomeShell extends StatelessWidget {
                     if (section == Section.me) ...[
                       ListTile(
                         contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.graphic_eq),
+                        title: const Text('语音特征与录音'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.pushNamed(context, '/voice'),
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
                         leading: const Icon(Icons.workspace_premium_outlined),
                         title: const Text('会员与今日额度'),
                         onTap: () =>

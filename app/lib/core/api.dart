@@ -136,6 +136,46 @@ class AppApi {
     Map<String, String> query = const {},
     Json? body,
     void Function(int)? onStatus,
+  }) => _bytes(
+    op,
+    scope: scope,
+    path: path,
+    query: query,
+    body: body,
+    onStatus: onStatus,
+  );
+
+  /// Variant for callers that must re-check a privacy condition immediately
+  /// before every network send, including the 401 replay.
+  ///
+  /// Kept separate from [bytes] so existing subclasses that only model the
+  /// original route signature remain valid.
+  Stream<List<int>> bytesGuarded(
+    AppOp op, {
+    required Future<void> Function() beforeSend,
+    AccountScope? scope,
+    Map<String, String> path = const {},
+    Map<String, String> query = const {},
+    Json? body,
+    void Function(int)? onStatus,
+  }) => _bytes(
+    op,
+    scope: scope,
+    path: path,
+    query: query,
+    body: body,
+    onStatus: onStatus,
+    beforeSend: beforeSend,
+  );
+
+  Stream<List<int>> _bytes(
+    AppOp op, {
+    AccountScope? scope,
+    Map<String, String> path = const {},
+    Map<String, String> query = const {},
+    Json? body,
+    void Function(int)? onStatus,
+    Future<void> Function()? beforeSend,
   }) async* {
     String? access;
     if (op.secured) {
@@ -144,6 +184,12 @@ class AppApi {
         await _refresh(scope);
       }
       access = sessions.require(scope).access;
+    }
+    await beforeSend?.call();
+    if (op.secured) {
+      // The guard can await networking. Revalidate the exact account and use
+      // the token that is current after that suspension, not the pre-guard one.
+      access = sessions.require(scope!).access;
     }
     var response = await _send(op, path, query, body, access);
     if (op.secured && response.statusCode == 401) {
@@ -158,13 +204,11 @@ class AppApi {
         if (op == AppOp.getMe) rethrow;
         await _rejectUnauthorized(scope!);
       }
-      response = await _send(
-        op,
-        path,
-        query,
-        body,
-        sessions.require(scope).access,
-      );
+      // Token refresh can take long enough for consent or membership to change.
+      // Recheck the caller's fail-closed condition before replaying any body.
+      await beforeSend?.call();
+      final replayAccess = sessions.require(scope).access;
+      response = await _send(op, path, query, body, replayAccess);
       if (response.statusCode == 401) {
         await response.stream.listen(null).cancel();
         await _rejectUnauthorized(scope);
@@ -186,16 +230,42 @@ class AppApi {
     Map<String, String> path = const {},
     Map<String, String> query = const {},
     Json? body,
+  }) => _json(op, scope: scope, path: path, query: query, body: body);
+
+  Future<Json> jsonGuarded(
+    AppOp op, {
+    required Future<void> Function() beforeSend,
+    AccountScope? scope,
+    Map<String, String> path = const {},
+    Map<String, String> query = const {},
+    Json? body,
+  }) => _json(
+    op,
+    scope: scope,
+    path: path,
+    query: query,
+    body: body,
+    beforeSend: beforeSend,
+  );
+
+  Future<Json> _json(
+    AppOp op, {
+    AccountScope? scope,
+    Map<String, String> path = const {},
+    Map<String, String> query = const {},
+    Json? body,
+    Future<void> Function()? beforeSend,
   }) async {
     if (op.accept != 'application/json') throw ArgumentError('请使用流式接口');
     final result =
         jsonDecode(
-              await bytes(
+              await _bytes(
                 op,
                 scope: scope,
                 path: path,
                 query: query,
                 body: body,
+                beforeSend: beforeSend,
               ).transform(utf8.decoder).join(),
             )
             as Json;

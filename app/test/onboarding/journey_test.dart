@@ -58,6 +58,7 @@ class _FixtureApi extends AppApi {
     Map<String, String> path = const {},
     Map<String, String> query = const {},
     Json? body,
+    Future<void> Function()? beforeSend,
   }) async => examples[op.name] as Json;
 }
 

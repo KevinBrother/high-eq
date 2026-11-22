@@ -7,6 +7,7 @@ import WechatOpenSDK
 @main
 @objc class AppDelegate: FlutterAppDelegate {
   private let commerce = MobileCommerce()
+  private let voiceCapture = VoiceCapture()
   #if canImport(WechatOpenSDK)
   override func application(_ application: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
     WXApi.handleOpen(url, delegate: commerce) || super.application(application, open: url, options: options)
@@ -28,6 +29,9 @@ import WechatOpenSDK
     commerce.window = window
     if let registrar = registrar(forPlugin: "MobileCommerce") {
       FlutterMethodChannel(name: "cn.higheq/mobile-commerce", binaryMessenger: registrar.messenger()).setMethodCallHandler(commerce.handle)
+    }
+    if let registrar = registrar(forPlugin: "VoiceCapture") {
+      voiceCapture.install(messenger: registrar.messenger())
     }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }

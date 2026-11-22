@@ -47,6 +47,7 @@ class Sessions {
   _directory; // Dedicated to this backend; never a shared directory.
   final _cipher = AesGcm.with256bits();
   Future<void> _tail = Future.value();
+  final Map<AccountScope, Map<String, Future<void>>> _exclusiveTails = {};
   final _identity = ValueNotifier<AccountScope?>(null);
   ValueListenable<AccountScope?> get identity => _identity;
   AccountScope? get _active => _identity.value;
@@ -64,6 +65,37 @@ class Sessions {
     final next = _tail.then((_) => action());
     _tail = next.then<void>((_) {}, onError: (Object _, StackTrace _) {});
     return next;
+  }
+
+  /// Serializes a complete read-modify-write sequence for one account scope.
+  ///
+  /// The queue lives on [Sessions], not on a repository instance, so separate
+  /// repositories sharing this instance cannot interleave their operations.
+  Future<T> runExclusive<T>(
+    AccountScope scope,
+    String key,
+    Future<T> Function() action,
+  ) {
+    final queues = _exclusiveTails.putIfAbsent(
+      scope,
+      () => <String, Future<void>>{},
+    );
+    final previous = queues[key] ?? Future<void>.value();
+    final result = previous.then<T>((_) {
+      require(scope);
+      return action();
+    });
+    final settled = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    queues[key] = settled;
+    return result.whenComplete(() {
+      if (identical(queues[key], settled)) {
+        queues.remove(key);
+        if (queues.isEmpty) _exclusiveTails.remove(scope);
+      }
+    });
   }
 
   void _check(int generation) {

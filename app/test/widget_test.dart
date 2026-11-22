@@ -36,4 +36,24 @@ void main() {
       expect(tester.takeException(), isNull);
     }
   });
+
+  testWidgets('T27 live shortcuts and T29 voice entry share the home shell', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const MaterialApp(home: HomeShell(Section.live)));
+    for (final label in ['我上头了', '标记历史', '复盘与踩坑本', '回复助手']) {
+      expect(find.text(label), findsOneWidget);
+    }
+
+    await tester.pumpWidget(const MaterialApp(home: HomeShell(Section.me)));
+    await tester.pumpAndSettle();
+    for (final label in ['本次自评与续答', '语音特征与录音', '会员与今日额度', '关系人手记']) {
+      expect(find.text(label), findsOneWidget);
+    }
+  });
 }

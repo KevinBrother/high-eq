@@ -19,6 +19,8 @@ import 'features/onboarding/assessment.dart';
 import 'features/onboarding/repository.dart';
 import 'features/membership/page.dart';
 import 'features/membership/store.dart';
+import 'features/voice/page.dart';
+import 'features/voice/retention_janitor.dart';
 
 void main() => runApp(const ProviderScope(child: HighEqApp()));
 
@@ -46,18 +48,22 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
   Widget build(BuildContext context) => ref
       .watch(apiProvider)
       .when(
-        data: (api) => ShareHost(
-          api.sessions,
-          (scope, draft, rev, close) => _app(
-            api: api,
-            scope: scope,
-            draft: draft,
-            revision: rev,
-            close: close,
-          ),
-          onWarmShare: (scope, draft, discard) =>
-              _openWarmShare(api, scope, draft, discard),
+        data: (api) => VoiceRetentionJanitorHost(
           key: ObjectKey(api),
+          sessions: api.sessions,
+          child: ShareHost(
+            api.sessions,
+            (scope, draft, rev, close) => _app(
+              api: api,
+              scope: scope,
+              draft: draft,
+              revision: rev,
+              close: close,
+            ),
+            onWarmShare: (scope, draft, discard) =>
+                _openWarmShare(api, scope, draft, discard),
+            key: ObjectKey(api),
+          ),
         ),
         loading: () => _app(status: const StatusPanel('正在准备个人空间…')),
         error: (_, _) => _app(
@@ -163,6 +169,27 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
               );
             case '/membership':
               return MemberPage(MemberStore(api!, scope));
+            case '/voice':
+              return Consumer(
+                builder: (context, ref, _) => ref
+                    .watch(consentProvider)
+                    .when(
+                      data: (gate) => VoicePage.forAccount(
+                        api: api!,
+                        scope: scope,
+                        gate: gate,
+                      ),
+                      loading: () => const Scaffold(
+                        body: Center(child: CircularProgressIndicator()),
+                      ),
+                      error: (_, _) => Scaffold(
+                        body: StatusPanel(
+                          '无法确认语音授权，请稍后重试。',
+                          retry: () => ref.invalidate(consentProvider),
+                        ),
+                      ),
+                    ),
+              );
             case '/logout':
               return Scaffold(
                 body: Center(
