@@ -48,6 +48,8 @@
 
 ## 4. 已核对的产品事实摘要
 
+**T23 文字复盘：** `review_requests`、`review_tombstones` 是固定 42 项盘点之后的增量，见 D23；不要与 T21 的 `reply_requests` 混淆。T24 经真实 HTTP 连接 T23 的受控上游验证了无授权拒绝、同键重放、成功评分和审核故障恢复；不代表真实模型质量或生产签收。
+
 **T19/T25 后端增量：** `server/internal/training/` 已接入对练路由，T19 已接入 T25 画像摘要，选用关系人时额外检查 `contacts`；`20261122003019_practice_work` 新增活动级元数据，详见 D38。T25 新增 `profile_observations.fact_enc`、`activity_profile_context.context_enc` 和 `profile_inference_requests`，详见 D14/D39/D40；其 `profile_inference` 提示词草稿为 `b935fb60-5a85-4c12-82c0-401afd649325`。42 项仍是 `f60ace3` 的固定盘点，D39/D40 不计入。本批后端实现不等于生产上线。`TestPracticeWire` 和 T25 生命周期测试已在隔离 PG17、双 Redis 与受控上游实跑；不代表客户端首用、真实模型、真机、供应商合同或律师签收。
 
 - 首次启动先展示隐私/协议摘要，用户主动勾选后才继续；未同意不发起登录。`[已知]`

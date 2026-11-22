@@ -70,6 +70,9 @@ func run() error {
 				if e := s.Practice.ReplayPending(worker); e != nil && worker.Err() == nil {
 					slog.Error("completion delivery unavailable", "module", "practice", "result", "retry")
 				}
+				if e := s.Reviews.ReplayPending(worker); e != nil && worker.Err() == nil {
+					slog.Error("score delivery pending", "module", "reviews", "result", "retry")
+				}
 				if e := s.Assessments.ReplayPending(worker); e != nil && worker.Err() == nil {
 					slog.Error("completion delivery unavailable", "module", "assessments", "result", "retry")
 				}

@@ -85,7 +85,7 @@ func (a *generation) flush(ctx context.Context) error {
 	a.sent = true
 	return a.review.c.Emit(ctx, Event{Name: "fragment", Text: s})
 }
-func (a *generation) run(parent context.Context) (Result, error) {
+func (a *generation) run(parent context.Context, id uuid.UUID) (Result, error) {
 	r, c := a.review.r, a.review.c
 	ctx, cancel := context.WithCancelCause(parent)
 	defer cancel(nil)
@@ -142,6 +142,28 @@ func (a *generation) run(parent context.Context) (Result, error) {
 		}
 	}
 	full := a.all.String()
+	if c.OnGenerated != nil {
+		// Checkpoint ownership forbids a second generation, even if the write fails.
+		a.sent = true
+		if err := c.OnGenerated(ctx, id, full); err != nil {
+			return res, err
+		}
+	}
+	return a.complete(ctx, res, full)
+}
+
+// replay repeats output moderation and parsing over an already complete model
+// result. It intentionally skips both model dispatch and OnGenerated.
+func (a *generation) replay(ctx context.Context, full string) (Result, error) {
+	if full == "" {
+		return Result{}, ErrProvider
+	}
+	a.all.WriteString(full)
+	return a.complete(ctx, Result{}, full)
+}
+
+func (a *generation) complete(ctx context.Context, res Result, full string) (Result, error) {
+	c := a.review.c
 	if err := a.approve(ctx, full); err != nil {
 		return res, err
 	}

@@ -301,6 +301,32 @@ class DataLineageContract(unittest.TestCase):
         self.assertIn("1 天", t33)
 
 
+class ReviewInventoryContract(unittest.TestCase):
+    def test_recovery_and_tombstone_have_separate_lifetimes(self) -> None:
+        migration = read("server/migrations/20261122120023_review_requests.up.sql")
+        self.assertIn("mark_id uuid REFERENCES manual_marks(id) ON DELETE SET NULL", migration)
+        self.assertIn("CREATE TABLE review_tombstones", migration)
+        self.assertIn("AFTER DELETE ON users", migration)
+        checkpoint = read("server/internal/reviews/checkpoint.go")
+        self.assertIn("generatedCheckpointTTL = 15 * time.Minute", checkpoint)
+        self.assertIn("generated_at=null,generated_expired=true", checkpoint)
+        self.assertIn("s.Reviews.ReplayPending(worker)", read("server/cmd/api/main.go"))
+        fields = read("server/internal/reviews/privacy.go")
+        self.assertIn('record["approved_repair_draft"]', fields)
+        self.assertIn('record["result"]', fields)
+        self.assertNotIn("generated_enc", fields)
+        journal = read("server/internal/reviews/store.go")
+        self.assertIn("journalInput.MarkId, journalInput.SignalEventId = nil, nil", journal)
+        self.assertIn("v.Submitted.MarkId, v.Submitted.SignalEventId = r.mark, r.signal", journal)
+        row = next(line for line in read("docs/compliance/data-inventory.md").splitlines() if line.startswith("| D23 |"))
+        for field in ("review_tombstones", "deleted_at", "15 分钟", "后台定期清扫", "reviews.json", "501 not_implemented"):
+            self.assertIn(field, row)
+        self.assertIn("未审核输出不展示、不导出", read("docs/compliance/separate-consents.md"))
+        self.assertIn("成功落库时起算", row)
+        self.assertIn("单独的已审核短语", row)
+        self.assertIn("T26 真实下游消费待验", read("docs/compliance/qa.md"))
+
+
 class ProfileEvidenceContract(unittest.TestCase):
     PROMPT_ID = "b935fb60-5a85-4c12-82c0-401afd649325"
 

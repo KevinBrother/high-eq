@@ -19,6 +19,8 @@ import (
 	"high-eq/server/internal/payments"
 	"high-eq/server/internal/privacy"
 	"high-eq/server/internal/profile"
+	"high-eq/server/internal/reviews"
+	"high-eq/server/internal/scoring"
 	"high-eq/server/internal/training"
 	"high-eq/server/migrations"
 )
@@ -29,6 +31,7 @@ type Runtime struct {
 	Marks                *marks.Service
 	Practice             *training.Service
 	Profiles             *profile.Service
+	Reviews              *reviews.Service
 	Emotion              *emotion.Service
 	Assessments          *assessment.Service
 	catalog              *gateway.Catalog
@@ -86,9 +89,9 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	}
 	s.Profiles = &profile.Service{Fields: c.Fields, Rights: s.Membership}
 	hooks, e := privacy.NewRegistry(
-		[]string{"training", "profiles", "assessments", "payments", "membership", "accounts", "ai_calls", "emotion", "manual_marks"},
+		[]string{"training", "profiles", "assessments", "payments", "membership", "accounts", "ai_calls", "emotion", "manual_marks", "reviews"},
 		payments.Hooks(), s.Membership.Hooks(), assessment.Hooks(c.Fields), accounts.Hooks(c.Fields),
-		training.Hooks(c.Fields), s.Profiles.Hooks(), gateway.Hooks(), emotion.Hooks(c.Fields), marks.Hooks(c.Fields),
+		training.Hooks(c.Fields), s.Profiles.Hooks(), gateway.Hooks(), emotion.Hooks(c.Fields), marks.Hooks(c.Fields), reviews.Hooks(c.Fields),
 	)
 	if e != nil {
 		return nil, e
@@ -118,9 +121,11 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	if e != nil {
 		return nil, e
 	}
-	s.Bus = events.New(s.Data, training.Decoder(c.Fields, nil))
+	s.Bus = events.New(s.Data, training.Decoder(c.Fields, reviews.Decoder(c.Fields)))
 	s.Bus.ProfileFeedback.Subscribe(s.Profiles.Consume)
 	s.Marks = &marks.Service{Fields: c.Fields, DB: s.db, Data: s.Data}
+	s.Reviews = &reviews.Service{Accounts: s.Accounts, Rights: s.Membership, Data: s.Data, Fields: c.Fields, DB: s.db, Bus: s.Bus, Key: c.authMaster, Router: func(stop gateway.Stop) (scoring.Runner, error) { return s.catalog.NewRouter(s.Data, stop) }}
+	s.Reviews.Profile = s.Profiles
 	s.Emotion = &emotion.Service{DB: s.db, Data: s.Data, Fields: c.Fields, Bus: s.Bus}
 	s.initPractice()
 	s.Assessments = assessment.New(bank, s.Accounts, c.Fields, s.Bus, s.db)

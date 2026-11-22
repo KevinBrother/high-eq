@@ -37,6 +37,16 @@ func inCanary(id uuid.UUID, percent int) bool {
 
 // Scope comes from authenticated server state, never from routing parameters supplied by the client.
 type Scope struct{ User, Operation, Activity, Contact, PromptVersion uuid.UUID }
+
+// Generated is a complete model output retained by the caller before output
+// moderation. Replaying it must still repeat the safety checks, but must not
+// dispatch the model or invoke OnGenerated again.
+type Generated struct {
+	Task   Task
+	Raw    string
+	CallID uuid.UUID
+}
+
 type Call struct {
 	Scope
 	Task      Task
@@ -51,6 +61,16 @@ type Call struct {
 	// BeforeAttempt runs immediately before each provider dispatch, including
 	// moderation and fallback attempts. Returning an error aborts the dispatch.
 	BeforeAttempt func(context.Context) error
+	// BeforeGenerate rechecks mutable authorization and lease state after input
+	// moderation and immediately before model generation. Fallback generation is
+	// another external round trip and therefore checks it before that attempt too.
+	BeforeGenerate func(context.Context) error
+	// OnGenerated durably retains the opaque complete output before output
+	// moderation. It is not called when replaying a persisted Generated result.
+	OnGenerated func(context.Context, uuid.UUID, string) error
+	// Generated replays an already persisted output. It still repeats all
+	// moderation, but never dispatches a model or calls OnGenerated.
+	Generated *Generated
 }
 
 // Text is provisional for fragment events. For terminal events replace all fragments with Terminal.
@@ -141,6 +161,9 @@ func (r *Router) Run(parent context.Context, c Call) (Reply, error) {
 	if !c.Task.valid() || c.User == uuid.Nil || c.Operation == uuid.Nil || c.PromptVersion != uuid.Nil {
 		return Reply{}, ErrRequest
 	}
+	if c.Generated != nil && (c.Generated.Task != c.Task || c.Generated.Raw == "" || c.Generated.CallID == uuid.Nil) {
+		return Reply{}, ErrRequest
+	}
 	if (c.Mode != Text && c.Mode != Stream && c.Mode != JSONObject) || (c.Mode == Stream) != (c.Emit != nil) {
 		return Reply{}, ErrRequest
 	}
@@ -155,7 +178,7 @@ func (r *Router) Run(parent context.Context, c Call) (Reply, error) {
 	if err != nil {
 		return Reply{}, err
 	}
-	for _, model := range []endpoint{p.primary, p.backup} {
+	for modelIndex, model := range []endpoint{p.primary, p.backup} {
 		if model.id == uuid.Nil {
 			break
 		}
@@ -168,6 +191,14 @@ func (r *Router) Run(parent context.Context, c Call) (Reply, error) {
 		}
 		if err := guard(ctx, c.Guard); err != nil {
 			return Reply{}, err
+		}
+		// A fallback starts another external round trip. Recheck mutable
+		// authorization before sending the review to input moderation, then again
+		// after an allow verdict and before generation.
+		if modelIndex > 0 && c.BeforeGenerate != nil {
+			if err := c.BeforeGenerate(ctx); err != nil {
+				return Reply{}, err
+			}
 		}
 		review := reviewer{r: r, c: attempt, p: p}
 		input, _ := json.Marshal(attempt.Messages)
@@ -182,13 +213,35 @@ func (r *Router) Run(parent context.Context, c Call) (Reply, error) {
 		if err := guard(ctx, c.Guard); err != nil {
 			return Reply{}, err
 		}
-		start := time.Now()
-		a := generation{review: &review, model: model}
-		result, err := a.run(ctx)
-		if err := rejected(err); err != nil {
-			return Reply{}, err
+		if c.BeforeGenerate != nil {
+			if err := c.BeforeGenerate(ctx); err != nil {
+				return Reply{}, err
+			}
 		}
+		if c.Generated != nil {
+			a := generation{review: &review, model: model}
+			result, err := a.replay(ctx, c.Generated.Raw)
+			if a.terminal != nil {
+				return r.finish(parent, c, *a.terminal, errors.Join(a.reviewErr, err))
+			}
+			if rejection := rejected(err); rejection != nil {
+				return Reply{}, rejection
+			}
+			if err != nil {
+				return Reply{}, err
+			}
+			if ctx.Err() != nil {
+				return Reply{}, ctx.Err()
+			}
+			return Reply{Result: result, CallID: c.Generated.CallID}, nil
+		}
+		start := time.Now()
 		id := uuid.New()
+		a := generation{review: &review, model: model}
+		result, err := a.run(ctx, id)
+		if rejection := rejected(err); rejection != nil {
+			return Reply{}, rejection
+		}
 		audit := r.log(parent, attempt, attemptStat{id, model, start, time.Since(start), result, outcome(err, a.terminal)})
 		if a.terminal != nil {
 			return r.finish(parent, c, *a.terminal, errors.Join(a.reviewErr, audit))

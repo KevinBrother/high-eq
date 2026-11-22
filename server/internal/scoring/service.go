@@ -8,19 +8,34 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"high-eq/server/internal/gateway"
 )
 
 type Runner interface {
 	Run(context.Context, gateway.Call) (gateway.Reply, error)
 }
+
+type Hooks struct {
+	BeforeGenerate func(context.Context) error
+	OnGenerated    func(context.Context, uuid.UUID, string) error
+	Generated      *gateway.Generated
+}
+
 type Service struct {
 	router Runner
 	scope  gateway.Scope
+	hooks  Hooks
 }
 
 // New binds the router to authenticated server state for ONE operation.
-func New(r Runner, scope gateway.Scope) *Service { return &Service{r, scope} }
+func New(r Runner, scope gateway.Scope, hooks ...Hooks) *Service {
+	var h Hooks
+	if len(hooks) != 0 {
+		h = hooks[0]
+	}
+	return &Service{router: r, scope: scope, hooks: h}
+}
 
 type numbered struct {
 	Turn
@@ -89,6 +104,9 @@ func run[T any](parent context.Context, s *Service, c gateway.Call, parse func([
 	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
 	defer cancel()
 	c.Scope = s.scope
+	c.BeforeGenerate = s.hooks.BeforeGenerate
+	c.OnGenerated = s.hooks.OnGenerated
+	c.Generated = s.hooks.Generated
 	failed := Outcome[T]{Status: Failed}
 	for attempt := 0; attempt < 2; attempt++ {
 		if err := ctx.Err(); err != nil {

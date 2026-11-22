@@ -90,10 +90,22 @@ func New(guard *privacy.Coordinator, decode func(privacy.ScoreSource) (ScoreValu
 	return &Bus{guard: guard, decode: decode}
 }
 func (b *Bus) PublishScore(ctx context.Context, v Score) error {
+	return b.PublishPendingScore(ctx, v.ScoreKey, nil)
+}
+
+// PublishPendingScore acknowledges the publisher outbox and runs all subscribers
+// under the same protected source transaction. A failed subscriber rolls back both.
+func (b *Bus) PublishPendingScore(ctx context.Context, key privacy.ScoreKey, claim func(pgx.Tx) (bool, error)) error {
 	if b.decode == nil {
 		return errors.New("canonical score decoder unavailable")
 	}
-	return b.guard.ConsumeScore(ctx, v.ScoreKey, func(ctx context.Context, tx pgx.Tx, src privacy.ScoreSource) error {
+	return b.guard.ConsumeScore(ctx, key, func(ctx context.Context, tx pgx.Tx, src privacy.ScoreSource) error {
+		if claim != nil {
+			ok, e := claim(tx)
+			if e != nil || !ok {
+				return e
+			}
+		}
 		values, err := b.decode(src)
 		if err != nil {
 			return err

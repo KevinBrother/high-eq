@@ -134,7 +134,7 @@ func (s routingStore) record(ctx context.Context, c Call, a attemptStat) error {
 
 // LinkScoreTx runs inside the scorer's guarded score-insert transaction. No reason or value is copied.
 func LinkScoreTx(ctx context.Context, tx pgx.Tx, user, call, activity, score uuid.UUID) error {
-	tag, err := tx.Exec(ctx, `update ai_calls set score_id=$4 where id=$2 and user_id=$1 and activity_id=$3 and task='scoring' and outcome='ok' and (score_id is null or score_id=$4) and exists(select from model_configs m where m.id=ai_calls.model_id and m.kind='model')`, user, call, activity, score)
+	tag, err := tx.Exec(ctx, `update ai_calls set score_id=$4 where id=$2 and user_id=$1 and activity_id=$3 and task='scoring' and outcome in ('ok','moderation_unavailable') and (score_id is null or score_id=$4) and exists(select from model_configs m where m.id=ai_calls.model_id and m.kind='model')`, user, call, activity, score)
 	if err != nil || tag.RowsAffected() != 1 {
 		return ErrRequest
 	}

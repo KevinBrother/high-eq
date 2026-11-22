@@ -229,6 +229,216 @@ func TestStickyCohorts(t *testing.T) {
 	}
 }
 
+func TestGenerationHooksAndReplay(t *testing.T) {
+	raw := `{"safety_flag":false,"value":"synthetic"}`
+	newRouter := func(modelCalls, moderationCalls *int, order *[]string) *Router {
+		model, moderator := endpoint{id: uuid.New()}, endpoint{id: uuid.New()}
+		return &Router{
+			first: time.Second, total: 2 * time.Second, review: time.Second,
+			resolvePrompt: func(context.Context, string, uuid.UUID, uuid.UUID, map[string]string) (uuid.UUID, string, error) {
+				return uuid.New(), "synthetic rules", nil
+			},
+			load: func(context.Context, Call) (plan, error) {
+				return plan{primary: model, moderator: moderator}, nil
+			},
+			record: func(context.Context, Call, attemptStat) error { return nil },
+			stop:   func(context.Context, Scope, Terminal) error { return nil },
+			dispatch: func(_ context.Context, _ uuid.UUID, _ endpoint, kind Kind, req Request) (Result, error) {
+				if kind == Moderation {
+					*moderationCalls++
+					*order = append(*order, "moderate")
+					return Result{Object: []byte(`{"verdict":"allow"}`)}, nil
+				}
+				*modelCalls++
+				*order = append(*order, "model")
+				if err := req.OnDelta(raw); err != nil {
+					return Result{}, err
+				}
+				return Result{}, nil
+			},
+		}
+	}
+	scope := Scope{User: uuid.New(), Operation: uuid.New(), Activity: uuid.New()}
+
+	t.Run("object fallback respects checkpoint boundary", func(t *testing.T) {
+		for _, checkpoint := range []bool{false, true} {
+			modelCalls, checks, saved := 0, 0, 0
+			var order []string
+			r := newRouter(&modelCalls, &checks, &order)
+			backup := endpoint{id: uuid.New()}
+			load := r.load
+			r.load = func(ctx context.Context, call Call) (plan, error) {
+				p, err := load(ctx, call)
+				p.backup = backup
+				return p, err
+			}
+			r.dispatch = func(_ context.Context, _ uuid.UUID, target endpoint, kind Kind, req Request) (Result, error) {
+				if kind == Moderation {
+					checks++
+					return Result{Object: []byte(`{"verdict":"allow"}`)}, nil
+				}
+				modelCalls++
+				if target.id == backup.id {
+					return Result{}, req.OnDelta(raw)
+				}
+				return Result{}, req.OnDelta("not an object")
+			}
+			call := Call{Scope: scope, Task: ProfileInference, Mode: JSONObject, BeforeAttempt: func(context.Context) error { return nil }}
+			if checkpoint {
+				call.OnGenerated = func(context.Context, uuid.UUID, string) error { saved++; return nil }
+			}
+			reply, err := r.Run(t.Context(), call)
+			if checkpoint {
+				if !errors.Is(err, ErrProvider) || modelCalls != 1 || checks != 2 || saved != 1 {
+					t.Fatalf("checkpointed retry: calls=%d reviews=%d saved=%d err=%v", modelCalls, checks, saved, err)
+				}
+			} else if err != nil || modelCalls != 2 || checks != 4 || string(reply.Result.Object) != raw {
+				t.Fatalf("uncheckpointed fallback: calls=%d reviews=%d err=%v", modelCalls, checks, err)
+			}
+		}
+	})
+
+	t.Run("before dispatch then checkpoint before output review", func(t *testing.T) {
+		modelCalls, moderationCalls := 0, 0
+		var order []string
+		var gotID uuid.UUID
+		var gotRaw string
+		r := newRouter(&modelCalls, &moderationCalls, &order)
+		c := Call{Scope: scope, Task: Scoring, Mode: JSONObject, BeforeGenerate: func(context.Context) error {
+			order = append(order, "before")
+			return nil
+		}, OnGenerated: func(_ context.Context, id uuid.UUID, value string) error {
+			order = append(order, "generated")
+			gotID, gotRaw = id, value
+			return nil
+		}}
+		reply, err := r.Run(t.Context(), c)
+		if err != nil || string(reply.Result.Object) != raw || reply.CallID == uuid.Nil {
+			t.Fatalf("normal generation: reply=%+v err=%v", reply, err)
+		}
+		if !reflect.DeepEqual(order, []string{"moderate", "before", "model", "generated", "moderate"}) || modelCalls != 1 || moderationCalls != 2 {
+			t.Fatalf("hook order=%v model=%d moderation=%d", order, modelCalls, moderationCalls)
+		}
+		if gotID != reply.CallID || gotRaw != raw {
+			t.Fatalf("checkpoint hook got id=%s raw=%q", gotID, gotRaw)
+		}
+	})
+
+	t.Run("before hook failure prevents dispatch", func(t *testing.T) {
+		modelCalls, moderationCalls := 0, 0
+		var order []string
+		withdrawn := errors.New("synthetic withdrawal")
+		r := newRouter(&modelCalls, &moderationCalls, &order)
+		c := Call{Scope: scope, Task: Scoring, Mode: JSONObject, BeforeGenerate: func(context.Context) error { return withdrawn }, OnGenerated: func(context.Context, uuid.UUID, string) error {
+			t.Fatal("checkpointed a withheld model call")
+			return nil
+		}}
+		_, err := r.Run(t.Context(), c)
+		if !errors.Is(err, withdrawn) || modelCalls != 0 || moderationCalls != 1 || !reflect.DeepEqual(order, []string{"moderate"}) {
+			t.Fatalf("withdrawal: err=%v model=%d moderation=%d order=%v", err, modelCalls, moderationCalls, order)
+		}
+	})
+
+	t.Run("fallback reauthorizes before input review", func(t *testing.T) {
+		modelCalls, moderationCalls := 0, 0
+		var order []string
+		withdrawn := errors.New("synthetic fallback withdrawal")
+		r := newRouter(&modelCalls, &moderationCalls, &order)
+		primary := r.load
+		r.load = func(ctx context.Context, c Call) (plan, error) {
+			p, err := primary(ctx, c)
+			p.backup = p.primary
+			p.backup.id = uuid.New()
+			return p, err
+		}
+		r.dispatch = func(_ context.Context, _ uuid.UUID, e endpoint, kind Kind, _ Request) (Result, error) {
+			if kind == Moderation {
+				moderationCalls++
+				order = append(order, "moderate")
+				return Result{Object: []byte(`{"verdict":"allow"}`)}, nil
+			}
+			modelCalls++
+			order = append(order, "model")
+			if modelCalls != 1 {
+				t.Fatal("fallback model dispatched after withdrawal")
+			}
+			return Result{}, ErrProvider
+		}
+		beforeCalls := 0
+		_, err := r.Run(t.Context(), Call{Scope: scope, Task: Scoring, Mode: JSONObject, Messages: []Message{{"user", "合成输入"}}, BeforeGenerate: func(context.Context) error {
+			beforeCalls++
+			order = append(order, "before")
+			if beforeCalls == 1 {
+				return nil
+			}
+			return withdrawn
+		}})
+		if !errors.Is(err, withdrawn) || modelCalls != 1 || moderationCalls != 1 || beforeCalls != 2 || !reflect.DeepEqual(order, []string{"moderate", "before", "model", "before"}) {
+			t.Fatalf("fallback withdrawal: err=%v model=%d moderation=%d before=%d order=%v", err, modelCalls, moderationCalls, beforeCalls, order)
+		}
+	})
+
+	t.Run("checkpoint failure stops output review and fallback", func(t *testing.T) {
+		modelCalls, moderationCalls := 0, 0
+		var order []string
+		checkpointErr := errors.New("synthetic checkpoint failure")
+		r := newRouter(&modelCalls, &moderationCalls, &order)
+		// Give the router a fallback so a checkpoint failure cannot silently move
+		// the same complete output to another model.
+		primary := r.load
+		r.load = func(ctx context.Context, c Call) (plan, error) {
+			p, err := primary(ctx, c)
+			p.backup = p.primary
+			p.backup.id = uuid.New()
+			return p, err
+		}
+		c := Call{Scope: scope, Task: Scoring, Mode: JSONObject, OnGenerated: func(context.Context, uuid.UUID, string) error {
+			order = append(order, "generated")
+			return checkpointErr
+		}}
+		reply, err := r.Run(t.Context(), c)
+		if !errors.Is(err, checkpointErr) || reply.Terminal != nil || modelCalls != 1 || moderationCalls != 1 || !reflect.DeepEqual(order, []string{"moderate", "model", "generated"}) {
+			t.Fatalf("checkpoint failure: reply=%+v err=%v model=%d moderation=%d order=%v", reply, err, modelCalls, moderationCalls, order)
+		}
+	})
+
+	t.Run("input terminal skips before hook", func(t *testing.T) {
+		modelCalls, moderationCalls := 0, 0
+		var order []string
+		r := newRouter(&modelCalls, &moderationCalls, &order)
+		r.dispatch = func(context.Context, uuid.UUID, endpoint, Kind, Request) (Result, error) {
+			moderationCalls++
+			return Result{Object: []byte(`{"verdict":"crisis"}`)}, nil
+		}
+		c := Call{Scope: scope, Task: Scoring, Mode: JSONObject, BeforeGenerate: func(context.Context) error {
+			t.Fatal("authorized a terminal input")
+			return nil
+		}}
+		reply, err := r.Run(t.Context(), c)
+		if err != nil || reply.Terminal == nil || !reply.Terminal.Safety || modelCalls != 0 || moderationCalls != 1 {
+			t.Fatalf("input terminal: reply=%+v err=%v model=%d moderation=%d", reply, err, modelCalls, moderationCalls)
+		}
+	})
+
+	t.Run("generated replay skips model and checkpoint hook", func(t *testing.T) {
+		modelCalls, moderationCalls := 0, 0
+		var order []string
+		id := uuid.New()
+		r := newRouter(&modelCalls, &moderationCalls, &order)
+		c := Call{Scope: scope, Task: Scoring, Mode: JSONObject, BeforeGenerate: func(context.Context) error {
+			order = append(order, "before")
+			return nil
+		}, OnGenerated: func(context.Context, uuid.UUID, string) error {
+			t.Fatal("rewrote an existing checkpoint")
+			return nil
+		}, Generated: &Generated{Task: Scoring, Raw: raw, CallID: id}}
+		reply, err := r.Run(t.Context(), c)
+		if err != nil || string(reply.Result.Object) != raw || reply.CallID != id || modelCalls != 0 || moderationCalls != 2 || !reflect.DeepEqual(order, []string{"moderate", "before", "moderate"}) {
+			t.Fatalf("generated replay: reply=%+v err=%v model=%d moderation=%d order=%v", reply, err, modelCalls, moderationCalls, order)
+		}
+	})
+}
+
 // Every upstream is synthetic. The balance starts charged to exercise a refund,
 // not merely the absence of a new debit.
 func TestModeratedAttempts(t *testing.T) {

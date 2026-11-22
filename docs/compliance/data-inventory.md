@@ -4,7 +4,7 @@
 >
 > 已按主会话在 PG17 空库全量迁移后导出的 `verified-pg17-inventory.jsonl` 对固定基线 42 个 public 表/视图逐名核对（覆盖 42/42；本轮补入 7 个漏项）；后台员工表、平台配置、查询视图与普通用户数据分开列示，视图不计作物理副本。
 > 真实结构以固定基线的 `server/migrations/` 为准。`bytea` 本身不等于加密；本清单中的“AES-GCM”只适用于明确标注 `*_enc` 且由 `server/internal/fieldcrypt/cipher.go` 封装写入的字段。日志、备份、供应商侧和平台侧留存不在本仓库可见范围内，不能据本清单宣称已全部删除。`[待运营填写]` `[待 T35 对表]`
-> T25 后端增量新增三张表：D14 登记明确反馈，D39、D40 分别登记活动场景与推断请求；固定基线 `f60ace3` 的 42 项逐名盘点不变，D37、D38 及 T25 的 D14/D39/D40 均不计入这 42 项。本批后端实现不等于生产上线。T22 本机分享草稿 D37 仅依据已发布 `bc66e6e` 的三份原生代码登记；T21 服务端仍未合入，不能把本机交接写成服务端原文不保存、删除闭环或供应商留存已完成。
+> T25 后端增量新增三张表：D14 登记明确反馈，D39、D40 分别登记活动场景与推断请求。T23 后端增量新增 `review_requests` 与 `review_tombstones`，最终迁移为 `20261122120023_review_requests`，登记在 D23。固定基线 `f60ace3` 的 42 项逐名盘点不变，D37、D38、D23 及 T25 的 D14/D39/D40 均不计入这 42 项。本批后端实现不等于生产上线。T22 本机分享草稿 D37 仅依据已发布 `bc66e6e` 的三份原生代码登记；`reply_requests` 属于 T21 增量，不是 T23 复盘增量，T21 服务端仍未合入；不能把本机分享交接写成服务端原文不保存、删除闭环或供应商留存已完成。
 
 ## 1. 分类与关联原则
 
@@ -27,7 +27,7 @@
 | D06 | WLEIS 答卷与得分 | `assessments.instrument_version`、`answers_enc`、`scores_enc`、`completed_at` | 源 + 计算副本 | 答卷和得分分别 AES-GCM | 至删除测评或注销；删除源及待投递状态；通用导出未接线 | `assessment` / `2026-11` | `[已知]` `[待 T35 对表]` |
 | D07 | 关系人手记与当前画像 | `contacts.profile_enc`、`last_used_at` | 源 + 当前画像副本 | 画像 AES-GCM；按 `(user_id,id)` 隔离；后端只接受通过校验的七个有界选项，并合并进当前画像，规范化选择不保存聊天原文或模型自由正文 | 至删除关系人或注销；删除关系人通过外键级联清理关联活动、观察、场景冻结、推断请求、标记、评分和副本；模块内部删除走协调器，不等于 T35 公共入口 | `contacts` / `2026-11`；选用已有摘要检查 `contacts` 和关系人使用权；仅导入聊天做推断时另需 `chat_import` | `[已知]` `[待 T35 对表]` |
 | D08 | 本人画像 | `personal_profiles.profile_enc`、`updated_at` | 源/派生 | AES-GCM；与关系人当前画像分开，不混入关系人反馈或推断材料 | 至删除或注销；不得复制关系人原话；导出/删除仍待 T35 公共入口 | `contacts` 或对应画像用途 | `[已知]` `[待律师复核]` `[待 T35 对表]` |
-| D09 | 对练、复盘、回复根活动 | `activities.content_enc`、`kind`、`state`、`source_id`、`contact_id` | 源根 + 关联 ID | 正文 AES-GCM；`source_id` 是随机清理键 | 随账号/关系人级联；通用单条删除和导出未接线；专用删除路径待 T35 验收 | 对练 `practice`；复盘 `review`；回复 `chat_import` | `[已知]`；候选模块另列 `[候选待对表]` |
+| D09 | 对练、复盘、回复根活动 | `activities.content_enc`、`kind`、`state`、`source_id`、`contact_id` | 源根 + 关联 ID | 正文 AES-GCM；`source_id` 是随机清理键 | 随账号/关系人级联；通用单条删除和导出未接线；已接专用复盘删除；通用跨模块权利仍待 T35 验收 | 对练 `practice`；复盘 `review`；回复 `chat_import` | `[已知]`；候选模块另列 `[候选待对表]` |
 | D10 | 对练逐轮消息 | `practice_messages.content_enc`、`role`、`seq`、`client_message_id` | 源明细 | 用户和 AI 双方发言均 AES-GCM | 随活动/关系人/账号级联；会话删除后不可由旧事件重建 | `practice` | `[已知]`；客户端授权写入与版本校验 `[候选待对表]` |
 | D11 | 回复请求去重 | `reply_requests.input_mac`、`request_id` | 元数据 | 仅输入 HMAC，不存聊天原文 | 候选设计为随活动级联；固定基线不存在 `*reply_requests*` 迁移，不能按已实现写入 | `chat_import` / `2026-11` | `[候选待对表]` |
 | D12 | 回复反馈 | `reply_feedback.outcome_enc`、`input_mac`、`occurred_at`、`pending` | 反馈源 + 元数据 | 结果 AES-GCM；输入仅 HMAC | 随回复活动级联；待投递状态可重试 | `chat_import` | `[候选待对表]`：非固定基线表；合入后复验字段、保留与实际清理 |
@@ -41,7 +41,7 @@
 | D20 | 自动事件/节奏记录 | `signal_events.event_enc`、`occurred_at`、`contact_id` | 源事件 | AES-GCM | 180 天清理；随关系人/账号删除；通用导出未接线 | `health` / `voice`；语音待 T29 | `[已知]`；T29 真机待验 |
 | D21 | 手动标记 | `manual_marks.mark_enc`、`accepted_at`、`contact_id` | 源 | AES-GCM；不含音频/心率 | 180 天滚动；用户/关系人/账号提前删除；通用导出未接线 | `manual_mark` / `v1` | `[已知]`；客户端版本校验缺口 |
 | D22 | 标记幂等映射 | `mark_requests.request_id`、`mark_id` | 元数据 | 账号内请求键到标记 ID；不跨用户合并 | 随标记/账号级联；不导出为独立数据 | `manual_mark` | `[已知]` |
-| D23 | 复盘请求与删除墓碑 | `review_requests.input_mac`、`scene_mac`、`repair_enc`、`review_tombstones` | 源/派生 + 删除防重放 | 请求正文摘要；修复短语 AES-GCM；墓碑仅账号内请求键和 HMAC | 复盘删除后保留墓碑，账号注销时清理；墓碑不导出 | `review` / `v1` | `[候选待对表]`：非固定基线表；合入后复验字段、保留与实际清理 |
+| D23 | 文字复盘请求、短期生成检查点与删除墓碑 | `review_requests.activity_id`、`user_id`、`request_id`、`input_mac`、`scene_mac`、`mark_id`、`signal_event_id`、`repair_enc`、`generated_enc`、`generated_task`、`generated_call_id`、`generated_at`、`generated_expired`、`score_pending`；`review_tombstones.user_id`、`request_id`、`input_mac`、`deleted_at` | 请求幂等/来源关联元数据 + 短期生成检查点 + 删除防重放 | `input_mac`/`scene_mac` 为账号绑定 HMAC，不存正文；`repair_enc`（已审核修复短语）和 `generated_enc` 为 AES-GCM；只有成功落库且尚未过期的完整结果才能按原键复审。15 分钟从未审核输出 `generated_enc` 成功落库时起算；单独的已审核短语 `repair_enc` 不按此计时 | 生成期间可在专属列暂存检查点；完成时正文写入 `activities.content_enc`、评分写入 `scores.detail_enc`，清除阶段检查点并设置 `score_pending` 供事件投递。未审核输出超过 15 分钟不再恢复；下次检查或后台定期清扫成功后清空 `repair_enc`/`generated_enc`/`generated_task`/`generated_call_id`/`generated_at`，置 `generated_expired=true`，活动转 `failed` 并释放工作占位；原请求键不可恢复或重算。`mark_id`、`signal_event_id` 删除只 `ON DELETE SET NULL`，复盘保留；活动、关系人或账号删除经外键级联。删除复盘或关系人产生墓碑，账号注销清除墓碑；墓碑含账号、请求键、HMAC 及删除时间，不含正文或来源活动 ID，不导出。`reviews.json` 导出活动 ID、来源 ID、请求 ID、时间、状态、关系人/标记/信号关联、已批准修复短语和完成结果，不输出 `input_mac`/`scene_mac` 或未审核 `generated_enc`；通用 `/v1/me/export` 与 `/v1/me/data/:kind/:id` 仍为 `501 not_implemented` | `review` / `v1`；标记复盘预填是用户人工发起、本人参考，不自动绑定或提交 | T23 后端增量，不计入 `f60ace3` 的 42 项；本批后端实现不等于生产上线。T24 客户端回环、T32A 标记预填和隔离后端测试见交接；T35 公共权利入口仍待验。 |
 | D24a | 每日计划 | `daily_plans.plan_enc`、`user_id` | 派生/源 | AES-GCM；只有用户外键，没有活动外键 | `daily_plans` 仅随账号删除；通用导出未接线 | 计划用途 | `[已知]` `[待 T35 对表]` |
 | D24b | 单项训练进度 | `drill_progress.progress_enc`、`activity_id`、`kind` | 派生/源 | AES-GCM；`(activity_id,kind)` 指向单项活动 | `drill_progress` 随单项活动删除，并随账号清理；通用导出未接线 | 训练用途 | `[已知]` `[待 T35 对表]` |
 | D25 | 支付订单与权益 | `orders`、`entitlements`、`payment_facts.checkout_enc`、`payment_notices`、`apple_purchase_chains` | 订单源 + 关联元数据 | 交易指纹/通知 HMAC；`checkout_enc` AES-GCM，五分钟复用 | 订单在注销后可脱敏保留 `user_id=NULL`；支付明细/通知随账号清理；不导出平台收据原文 | 支付平台规则 | `[已知]` `[待商户/平台确认]` |
@@ -66,9 +66,9 @@
 在固定基线迁移中可定位的密文信封列（字段级加密算法与读写路径另按各卡测试核验）：
 
 `assessments.answers_enc`、`assessments.scores_enc`、`signal_windows.stats_enc`、`signal_baselines.baseline_enc`、`signal_events.event_enc`、`practice_messages.content_enc`、`scores.detail_enc`、`growth_scores.nvc_enc`、`growth_scores.emotion_enc`、`contacts.profile_enc`、`personal_profiles.profile_enc`、`manual_marks.mark_enc`、`activities.content_enc`、`daily_plans.plan_enc`、`drill_progress.progress_enc`、`payment_facts.checkout_enc`、`login_identities.subject_enc`、`model_configs.api_key_enc`、`[已知]`。`[已知：基线字段]`
-T25 后端增量新增 `profile_observations.fact_enc` 和 `activity_profile_context.context_enc`，二者使用字段加密但不计入固定基线 `f60ace3` 的 42 项；本批后端实现不等于生产上线。另有在途设计 `review_requests.repair_enc`、`reply_feedback.outcome_enc`，固定基线不存在这些表，不计为已落库、已加密或已完成清理。`[候选待对表]`
+T25 后端增量新增 `profile_observations.fact_enc` 和 `activity_profile_context.context_enc`，二者使用字段加密但不计入固定基线 `f60ace3` 的 42 项。T23 后端增量新增 `review_requests.repair_enc` 与 `review_requests.generated_enc`：前者保存已审核修复短语检查点，后者保存仅用于同请求重试的未审核生成结果，均由业务字段加密封装写入；成功保存后清除；审核故障可保留检查点用于恢复，过期清扫由维护任务或重试触发（不承诺到点即物理擦除）。两者不计入固定基线 42 项，本批后端实现不等于生产上线。T21 的 `reply_feedback.outcome_enc` 未随本 T23 归档复刻，不能写成已落库或已完成清理。`[已知：T23 本批后端]` `[T21 候选待对表]`
 
-基线中的 `login_identities.subject_hmac`、`auth_sessions.refresh_hash`、`sms_challenges.phone_hmac`、`sms_challenges.otp_hash` 以及 `ai_calls` 的关联 ID 和计量字段不是加密正文。`[已知]` 另有 `reply_requests.input_mac`、`review_requests.input_mac`、`review_tombstones.input_mac` 为在途设计，不能算作已发布的删除证明。`[候选待对表]`
+基线中的 `login_identities.subject_hmac`、`auth_sessions.refresh_hash`、`sms_challenges.phone_hmac`、`sms_challenges.otp_hash` 以及 `ai_calls` 的关联 ID 和计量字段不是加密正文。T23 的 `review_requests.input_mac`、`review_requests.scene_mac` 和 `review_tombstones.input_mac` 同为 HMAC 元数据，不是密文、正文或来源 ID；墓碑存在也不等于 T35 公共删除入口已接线。`[已知：T23 本批后端]` `[T21 的 reply_requests 候选待对表]`
 
 ## 4. 源、评分引用、数值副本与可关联日志链路
 
@@ -99,7 +99,7 @@ T25 后端增量新增 `profile_observations.fact_enc` 和 `activity_profile_con
 
 - [ ] 固定基线通用 `GET /v1/me/export` 当前返回 `501 not_implemented`；T35 必须接线后才能验证模块清单覆盖 D01–D40 中应导出的个人数据，并排除密钥、HMAC、平台收据原文和他人数据。D37、D38 及 T25 的 D14/D39/D40 均不计入 PG17 42 项，须另验设备端领取、场景冻结、双同意推理和实际清理边界。模块内部导出/删除不等于 T35 公共入口。`[待 T35 对表]`
 - [ ] 固定基线通用 `DELETE /v1/me/data/:kind/:id` 当前返回 `501 not_implemented`；T35 接线后须能从源记录追到 `scores`、`growth_scores`、`ai_calls`、画像观察、计划和关联日志，并验证删除后重算不可回填。`[待 T35 对表]`
-- [ ] 注销冻结、15 天冷静期、撤销注销、按根清理和支付订单脱敏，分别核对线上签收；另在 T23 合入后验证 `review_tombstones` 的清理。前者是基线设计，后者是候选验收，不应混称已上线。`[待 T35 对表]`
+- [ ] 注销冻结、15 天冷静期、撤销注销、按根清理和支付订单脱敏，分别核对线上签收。T23 已有账号注销前后显式清理 `review_tombstones` 的触发器与隔离后端断言；T35 仍须验证公共删除/注销入口的实际回执和全链路证明，不能把内部测试写成生产闭环。`[待 T35 对表]`
 - [ ] 健康窗口专用删除保持按账号、渠道和 30 秒起点定位，越权、相邻窗口和其他账号不受影响；该能力与通用单条删除分开验收。`[待 T35 对表]`
 - [ ] `chat_imports` 在 24 小时后不可读、不可导出、不可由旧请求恢复；定时清理失败可重试并告警。`[待实现/验收]`
 - [ ] T29 录音/语音特征、3 天清理、账号隔离、离线/杀进程和撤回行为有真机证据。`[待 T29 对表]` `[待真机复核]`

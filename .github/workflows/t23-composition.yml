@@ -1,0 +1,62 @@
+name: T23 composition
+
+on:
+  push:
+    paths: ['server/**', 'app/**', 'docker-compose.yml', '.github/workflows/t23-composition.yml']
+  pull_request:
+    paths: ['server/**', 'app/**', 'docker-compose.yml', '.github/workflows/t23-composition.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  server-composition:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with: {persist-credentials: false}
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version-file: server/go.mod
+      - name: Compile all server packages and tests
+        working-directory: server
+        run: go test ./... -run '^$'
+      - name: Verify isolated T23 review and T32A mark composition
+        run: ./server/tests/t23-verify.sh
+
+  client-offline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with: {persist-credentials: false}
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with: {flutter-version: '3.38.10', cache: true}
+      - name: Install app dependencies
+        working-directory: app
+        run: flutter pub get --enforce-lockfile
+      - name: Check mark and review client formatting
+        working-directory: app
+        run: dart format --output=none --set-exit-if-changed lib/features/marks lib/features/reviews test/marks test/reviews
+      - name: Analyze app
+        working-directory: app
+        run: flutter analyze
+      - name: Test mark prefill and review flows offline
+        working-directory: app
+        run: flutter test test/marks test/reviews
+
+  t24-live:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with: {persist-credentials: false}
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with: {flutter-version: '3.38.10', cache: true}
+      - name: Install app dependencies
+        working-directory: app
+        run: flutter pub get --enforce-lockfile
+      - name: Run synthetic T24 client against isolated T23 HTTP
+        run: ./app/tool/t24/live.sh

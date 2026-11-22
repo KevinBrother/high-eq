@@ -63,6 +63,32 @@ func TestSessionRetry(t *testing.T) {
 		t.Fatal("no repair instruction")
 	}
 }
+
+func TestHooksReachGatewayCall(t *testing.T) {
+	f := &spy{steps: []step{{raw: strings.Replace(good, `"target_turn":2`, `"target_turn":1`, 1)}}}
+	before, generated := 0, 0
+	hooks := Hooks{
+		BeforeGenerate: func(context.Context) error { before++; return nil },
+		OnGenerated:    func(context.Context, uuid.UUID, string) error { generated++; return nil },
+	}
+	r, err := New(f, scope, hooks).Score(t.Context(), "家庭", "情境", "我的做法", "")
+	if err != nil || r.Status != Success || len(f.calls) != 1 {
+		t.Fatal(err)
+	}
+	c := f.calls[0]
+	if c.BeforeGenerate == nil || c.OnGenerated == nil || c.Generated != nil {
+		t.Fatal("review hooks were not forwarded")
+	}
+	if err = c.BeforeGenerate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.OnGenerated(t.Context(), uuid.New(), good); err != nil {
+		t.Fatal(err)
+	}
+	if before != 1 || generated != 1 {
+		t.Fatalf("hooks before=%d generated=%d", before, generated)
+	}
+}
 func TestSchemaBoundaries(t *testing.T) {
 	for _, pair := range [][2]string{{`"total":99`, `"total":null`}, {`"total":99`, `"TOTAL":15`}, {`"score":15`, `"score":15,"score":15`}, {`"score":15`, `"score":20`}, {`"score":15,`, ``}, {`"level":1`, `"level":0`}, {`"level":1`, `"level":6`}, {`"level":1`, `"extra":0,"level":1`}, {`"target_turn":2`, `"target_turn":0`}, {`"target_turn":2`, `"target_turn":3`}, {`"target_turn":2`, `"target_turn":null`}, {`"express"`, `"other"`}, {`"具体请求"`, `" "`}, {`"一起理一下分工好吗？"`, `"` + strings.Repeat("界", 81) + `"`}, {`false`, `"false"`}} {
 		if _, err := ParseFull([]byte(strings.Replace(good, pair[0], pair[1], 1)), 2); err == nil {
