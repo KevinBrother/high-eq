@@ -53,8 +53,8 @@ func LoadContent() (Content, error) {
 }
 
 func validateContent(c Content) error {
-	if c.SourceNote == "" || len(c.Exercises) != 50 || len(c.Cards) != 20 {
-		return errors.New("T26 content must contain 50 exercises and 20 cards")
+	if c.SourceNote == "" || len(c.Exercises) < 50 || len(c.Cards) < 20 {
+		return errors.New("T26 content must contain at least 50 exercises and 20 cards")
 	}
 	ids := make(map[uuid.UUID]bool, len(c.Exercises)+len(c.Cards))
 	sceneCounts := make(map[string]int, 5)

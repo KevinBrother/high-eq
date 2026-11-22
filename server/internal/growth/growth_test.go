@@ -12,8 +12,8 @@ func TestContentIsCompleteAndOriginal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.Exercises) != 50 || len(c.Cards) != 20 {
-		t.Fatalf("exercises=%d cards=%d", len(c.Exercises), len(c.Cards))
+	if len(c.Exercises) < 50 || len(c.Cards) < 20 {
+		t.Fatalf("content below minimum: exercises=%d (want at least 50), cards=%d (want at least 20)", len(c.Exercises), len(c.Cards))
 	}
 	if c.SourceNote == "" || !contains(c.SourceNote, "原创虚构材料") {
 		t.Fatal("missing original-material declaration")
@@ -153,26 +153,24 @@ func TestPlanDeterministicAndSevenDayNoRepeat(t *testing.T) {
 }
 
 func TestDueLevelReviewDoesNotResetExerciseDedup(t *testing.T) {
-	c, err := LoadContent()
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := dueLevelReviewContent()
 	user := uuid.MustParse("00000000-0000-0000-0000-000000000006")
+	scores := WLEIS{SEA: 20, OEA: 40, UOE: 60, ROE: 80}
 	firstDay := time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)
-	first := testPlanInput(user, firstDay, WLEIS{SEA: 20, OEA: 40, UOE: 60, ROE: 80}, nil, nil)
-	first.Scene = sceneFor(user, firstDay.Format(time.DateOnly), "observation")
+	first := testPlanInput(user, firstDay, scores, nil, nil)
+	first.Scene = "friends"
 	firstPlan, err := BuildPlan(c, first)
 	if err != nil {
 		t.Fatal(err)
 	}
 	firstExercise := firstPlan.Items[0].ContentID
-	if want := uuid.MustParse("26000000-0000-4000-8000-000000000039"); firstExercise != want {
-		t.Fatalf("counterexample exercise=%s want=%s", firstExercise, want)
+	if !fixtureContainsExercise(c, firstExercise) {
+		t.Fatalf("fixture selected unexpected exercise %s", firstExercise)
 	}
 
 	reviewDay := time.Date(2026, 11, 22, 0, 0, 0, 0, time.UTC)
-	review := testPlanInput(user, reviewDay, WLEIS{SEA: 20, OEA: 40, UOE: 60, ROE: 80}, map[uuid.UUID]bool{firstExercise: true}, nil)
-	review.Scene = sceneFor(user, reviewDay.Format(time.DateOnly), "observation")
+	review := testPlanInput(user, reviewDay, scores, map[uuid.UUID]bool{firstExercise: true}, nil)
+	review.Scene = "friends"
 	review.ReviewTarget = "observation"
 	review.ReviewLevelID = &review.Levels.Single
 	reviewActivityID := uuid.New()
@@ -184,12 +182,31 @@ func TestDueLevelReviewDoesNotResetExerciseDedup(t *testing.T) {
 	if reviewPlan.Items[0].ContentID == firstExercise {
 		t.Fatalf("due level review reused ordinary exercise %s", firstExercise)
 	}
+	if !fixtureContainsExercise(c, reviewPlan.Items[0].ContentID) {
+		t.Fatalf("fixture selected unexpected replacement exercise %s", reviewPlan.Items[0].ContentID)
+	}
 	if item := reviewPlan.Items[1]; !item.Review || item.ReviewActivityID == nil || *item.ReviewActivityID != reviewActivityID {
 		t.Fatalf("review link not attached to level: %+v", item)
 	}
 
-	explicit := testPlanInput(user, reviewDay.AddDate(0, 0, 1), WLEIS{SEA: 20, OEA: 40, UOE: 60, ROE: 80}, map[uuid.UUID]bool{firstExercise: true}, nil)
-	explicit.Scene = sceneFor(user, reviewDay.AddDate(0, 0, 1).Format(time.DateOnly), "observation")
+	// The same due-level input with an empty history must select the original
+	// exercise again. This keeps the counterexample precise: only the used set
+	// prevents the repeat, not the level review path itself.
+	control := testPlanInput(user, reviewDay, scores, nil, nil)
+	control.Scene = "friends"
+	control.ReviewTarget = "observation"
+	control.ReviewLevelID = &control.Levels.Single
+	control.ReviewActivityID = &reviewActivityID
+	controlPlan, err := BuildPlan(c, control)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if controlPlan.Items[0].ContentID != firstExercise {
+		t.Fatalf("fixture no longer reproduces the seven-day repeat: got %s want %s", controlPlan.Items[0].ContentID, firstExercise)
+	}
+
+	explicit := testPlanInput(user, reviewDay.AddDate(0, 0, 1), scores, map[uuid.UUID]bool{firstExercise: true}, nil)
+	explicit.Scene = "friends"
 	explicit.ReviewExerciseID = &firstExercise
 	explicit.ReviewTarget = "observation"
 	explicit.ReviewLevelID = &explicit.Levels.Single
