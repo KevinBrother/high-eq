@@ -44,9 +44,11 @@ final apiProvider = FutureProvider<AppApi>((ref) async {
     (await Sha256().hash(utf8.encode(endpoint))).bytes,
   );
   final dir = await getApplicationCacheDirectory();
+  final support = await getApplicationSupportDirectory();
   final sessions = Sessions(
     DeviceSecret('session.$name'),
     Directory('${dir.path}/accounts/$name'),
+    retirementBarrier: File('${support.path}/session-retirement/$name.v1'),
   );
   await sessions.restore();
   final transport = mock ? ExampleTransport() : HttpTransport(http.Client());

@@ -83,6 +83,7 @@ class Sessions {
   final SecretStore _secret;
   final Directory
   _directory; // Dedicated to this backend; never a shared directory.
+  final File? _retirementBarrier;
   final DirectoryWipe _wipe;
   final CacheRead _readCache;
   final _cipher = AesGcm.with256bits();
@@ -100,17 +101,23 @@ class Sessions {
   final _unknownWithdrawals = <String>{};
   final _persistedUnknownWithdrawals = <String>{};
   int _generation = 0;
+  bool _retirementPending = false;
   final _roundOwner = Object();
   static const _cacheReadAttempts = 3;
   static const _cleanupWriteAttempts = 3;
   static const _retryDelay = Duration(milliseconds: 10);
   static const _cleanupMarkerName = '.t28-cleanup.v1';
+
+  /// [retirementBarrier] is dedicated to this vault and lives outside the
+  /// cache directory so a purge cannot erase both recovery files.
   Sessions(
     this._secret,
     this._directory, {
     DirectoryWipe? wipeDirectory,
     CacheRead? readCache,
-  }) : _wipe = wipeDirectory ?? _defaultWipeDirectory,
+    File? retirementBarrier,
+  }) : _retirementBarrier = retirementBarrier,
+       _wipe = wipeDirectory ?? _defaultWipeDirectory,
        _readCache = readCache ?? _defaultReadCache;
 
   static Future<List<int>> _defaultReadCache(File file) => file.readAsBytes();
@@ -179,6 +186,40 @@ class Sessions {
   }
 
   Future<void> _wipeDirectory() => _wipe(_directory);
+
+  Future<void> _fenceRetirement() async {
+    _retirementPending = true;
+    final barrier = _retirementBarrier;
+    if (barrier == null) return;
+    try {
+      await barrier.parent.create(recursive: true);
+      // Presence alone blocks restore, even if a write stops partway through.
+      await barrier.writeAsString('1', flush: true);
+    } on FileSystemException {
+      // The cleanup journal and credential update can still fence retirement.
+    }
+  }
+
+  Future<bool> _retirementNeedsRecovery() async {
+    if (_retirementPending) return true;
+    final barrier = _retirementBarrier;
+    if (barrier == null) return false;
+    try {
+      await barrier.length();
+      return true;
+    } on PathNotFoundException {
+      return false;
+    }
+  }
+
+  Future<void> _finishRetirement() async {
+    try {
+      await _retirementBarrier?.delete();
+    } on PathNotFoundException {
+      // There is no barrier left to release.
+    }
+    _retirementPending = false;
+  }
 
   File get _cleanupMarkerFile => File('${_directory.path}/$_cleanupMarkerName');
 
@@ -333,6 +374,7 @@ class Sessions {
     void Function()? onEvidence,
   }) async {
     if (owner != null) {
+      await _fenceRetirement();
       final account = owner.account;
       final tag = await _accountTag(account);
       final matching = marker?.accountTag == tag ? marker : null;
@@ -358,8 +400,8 @@ class Sessions {
                   deferred: owner,
                 );
               } on Object catch (error) {
-                // The journal still fences restore if the vault also failed.
-                // Do not let that failure turn this into a network attempt.
+                // Keep the local recovery fences and suppress network work
+                // while the queue evidence remains unavailable.
                 throw CleanupEvidenceUnavailable(error);
               }
             }
@@ -381,6 +423,7 @@ class Sessions {
       await _persistRaw(null, null, retryWrite: true);
     }
     await _wipeDirectory();
+    await _finishRetirement();
   }
 
   Future<({SecretKey? key, Set<String> accounts})> _decryptAccountSet(
@@ -583,7 +626,8 @@ class Sessions {
     if (stored == null ||
         tokens == null ||
         (marker != null &&
-            marker.accountTag == await _accountTag(tokens.account))) {
+            marker.accountTag == await _accountTag(tokens.account)) ||
+        await _retirementNeedsRecovery()) {
       await _retireStored(stored, marker);
       return;
     }
