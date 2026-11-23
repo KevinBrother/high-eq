@@ -2,17 +2,15 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
-class VoicePcmChunk {
-  final Uint8List pcm;
-  final DateTime capturedAt;
+import 'pcm_chunk.dart';
 
-  const VoicePcmChunk({required this.pcm, required this.capturedAt});
-}
+export 'pcm_chunk.dart';
 
 /// The only boundary allowed to read the microphone or play local PCM.
 ///
 /// Implementations return 16 kHz mono PCM16LE together with the UTC time of
-/// the samples. They must not transcribe, persist plaintext, or upload audio.
+/// the samples. They may mark the first chunk after a capture discontinuity.
+/// They must not transcribe, persist plaintext, or upload audio.
 abstract interface class VoiceCapturePlatform {
   Stream<VoicePcmChunk> get pcm;
   Future<bool> checkPermission();
@@ -93,25 +91,4 @@ class MethodChannelVoiceCapture implements VoiceCapturePlatform {
       await stopPlayback();
     }
   }
-}
-
-VoicePcmChunk voicePcmChunkFromEvent(Object? event) {
-  if (event is! Map) {
-    throw const FormatException('语音平台返回了无效采样事件');
-  }
-  final pcm = _asPcm(event['pcm']);
-  final capturedAtUs = event['captured_at_us'];
-  if (capturedAtUs is! int || capturedAtUs <= 0) {
-    throw const FormatException('语音平台缺少样本采集时间');
-  }
-  return VoicePcmChunk(
-    pcm: pcm,
-    capturedAt: DateTime.fromMicrosecondsSinceEpoch(capturedAtUs, isUtc: true),
-  );
-}
-
-Uint8List _asPcm(Object? value) {
-  if (value is Uint8List) return value;
-  if (value is List<int>) return Uint8List.fromList(value);
-  throw const FormatException('语音平台返回了非 PCM 数据');
 }

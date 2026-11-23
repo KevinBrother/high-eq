@@ -14,30 +14,13 @@ final class VoiceCapture: NSObject, FlutterStreamHandler {
   private let captureEngine = AVAudioEngine()
   private let playbackEngine = AVAudioEngine()
   private let playbackPlayer = AVAudioPlayerNode()
-  private let targetFormat: AVAudioFormat
-  private var converter: AVAudioConverter?
+  private var captureSession: VoicePCMCaptureSession?
   private var eventSink: FlutterEventSink?
   private var controlChannel: FlutterMethodChannel?
   private var eventChannel: FlutterEventChannel?
   private var tapInstalled = false
-  private var recording = false
   private var playing = false
   private var pendingPermission: FlutterResult?
-  private var captureClockAnchor: CaptureClockAnchor?
-  private var lastCapturedAtUs: Int64?
-
-  override init() {
-    guard let format = AVAudioFormat(
-      commonFormat: .pcmFormatInt16,
-      sampleRate: 16_000,
-      channels: 1,
-      interleaved: true
-    ) else {
-      fatalError("Unable to create the T29 PCM format")
-    }
-    targetFormat = format
-    super.init()
-  }
 
   func install(messenger: FlutterBinaryMessenger) {
     let control = FlutterMethodChannel(
@@ -80,12 +63,18 @@ final class VoiceCapture: NSObject, FlutterStreamHandler {
     withArguments arguments: Any?,
     eventSink events: @escaping FlutterEventSink
   ) -> FlutterError? {
+    if eventSink != nil, captureSession != nil {
+      stop()
+    }
     eventSink = events
     return nil
   }
 
   func onCancel(withArguments arguments: Any?) -> FlutterError? {
     eventSink = nil
+    if captureSession != nil {
+      stop()
+    }
     return nil
   }
 
@@ -137,71 +126,46 @@ final class VoiceCapture: NSObject, FlutterStreamHandler {
       ))
       return
     }
-    if recording {
+    if captureSession != nil {
       result(nil)
       return
     }
 
     do {
-      let session = AVAudioSession.sharedInstance()
-      try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
-      try session.setActive(true, options: [])
+      let audioSession = AVAudioSession.sharedInstance()
+      try audioSession.setCategory(.record, mode: .measurement, options: [.duckOthers])
+      try audioSession.setActive(true, options: [])
 
       let input = captureEngine.inputNode
       let inputFormat = input.inputFormat(forBus: 0)
-      guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
-        throw VoiceCaptureError.audioUnavailable
-      }
-      guard let nextConverter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
-        throw VoiceCaptureError.audioUnavailable
-      }
-      nextConverter.sampleRateConverterQuality = .max
-      converter = nextConverter
-
       let anchorHostTime = AVAudioTime.hostTime(
         forSeconds: ProcessInfo.processInfo.systemUptime
       )
-      guard anchorHostTime != 0 else {
-        throw VoiceCaptureError.audioTimestampUnavailable
-      }
-      captureClockAnchor = CaptureClockAnchor(
+      guard let capture = VoicePCMCaptureSession(
+        inputFormat: inputFormat,
         wallClockUs: Int64(Date().timeIntervalSince1970 * 1_000_000),
         hostTime: anchorHostTime
-      )
-      lastCapturedAtUs = nil
-
-      if tapInstalled {
-        input.removeTap(onBus: 0)
-        tapInstalled = false
+      ) else {
+        throw VoiceCaptureError.audioUnavailable
       }
-      recording = true
+
+      captureSession = capture
+      let deliver: (VoicePCMCaptureSession.Event) -> Void = { [weak self] event in
+        self?.deliverCapture(event)
+      }
       input.installTap(
         onBus: 0,
         bufferSize: 1024,
         format: inputFormat
-      ) { [weak self] buffer, when in
-        guard let self else { return }
-        guard let capturedAtUs = self.capturedAtUs(for: when) else {
-          self.failCaptureTimestamp()
-          return
-        }
-        self.convertAndEmit(buffer, capturedAtUs: capturedAtUs)
+      ) { buffer, when in
+        capture.receive(buffer, at: when, deliver: deliver)
       }
       tapInstalled = true
       captureEngine.prepare()
       try captureEngine.start()
       result(nil)
     } catch {
-      recording = false
-      removeCaptureTap()
-      captureEngine.stop()
-      converter = nil
-      captureClockAnchor = nil
-      lastCapturedAtUs = nil
-      try? AVAudioSession.sharedInstance().setActive(
-        false,
-        options: .notifyOthersOnDeactivation
-      )
+      stop()
       result(FlutterError(
         code: "audio_unavailable",
         message: "Unable to start microphone capture.",
@@ -210,103 +174,27 @@ final class VoiceCapture: NSObject, FlutterStreamHandler {
     }
   }
 
-  private func capturedAtUs(for audioTime: AVAudioTime) -> Int64? {
-    guard recording,
-          audioTime.isHostTimeValid,
-          audioTime.hostTime != 0,
-          let anchor = captureClockAnchor,
-          audioTime.hostTime >= anchor.hostTime else {
-      return nil
-    }
-
-    let elapsedSeconds = AVAudioTime.seconds(forHostTime: audioTime.hostTime)
-      - AVAudioTime.seconds(forHostTime: anchor.hostTime)
-    let elapsedUs = elapsedSeconds * 1_000_000
-    guard elapsedSeconds.isFinite,
-          elapsedSeconds >= 0,
-          elapsedUs.isFinite,
-          elapsedUs <= Double(Int64.max - anchor.wallClockUs) else {
-      return nil
-    }
-
-    let capturedAtUs = anchor.wallClockUs + Int64(elapsedUs.rounded())
-    guard capturedAtUs > 0,
-          lastCapturedAtUs.map({ capturedAtUs > $0 }) ?? true else {
-      return nil
-    }
-    lastCapturedAtUs = capturedAtUs
-    return capturedAtUs
-  }
-
-  private func failCaptureTimestamp() {
-    DispatchQueue.main.async(execute: DispatchWorkItem { [weak self] in
-      guard let self, self.recording else { return }
-      self.stop()
-      self.eventSink?(FlutterError(
+  private func deliverCapture(_ event: VoicePCMCaptureSession.Event) {
+    switch event {
+    case .frames(let frames):
+      for frame in frames {
+        eventSink?(frame.channelEvent { FlutterStandardTypedData(bytes: $0) })
+      }
+    case .invalidTimestamp:
+      stop()
+      eventSink?(FlutterError(
         code: "capture_timestamp_invalid",
         message: "The microphone timestamp is unavailable or inconsistent.",
         details: nil
       ))
-    })
-  }
-
-  private func convertAndEmit(
-    _ input: AVAudioPCMBuffer,
-    capturedAtUs: Int64
-  ) {
-    guard recording, let converter else { return }
-    let ratio = targetFormat.sampleRate / input.format.sampleRate
-    let capacity = AVAudioFrameCount(
-      min(Double(UInt32.max), Double(input.frameLength) * ratio + 32)
-    )
-    guard capacity > 0,
-          let output = AVAudioPCMBuffer(
-            pcmFormat: targetFormat,
-            frameCapacity: capacity
-          ) else {
-      return
-    }
-
-    var supplied = false
-    var conversionError: NSError?
-    let status = converter.convert(
-      to: output,
-      error: &conversionError
-    ) { _, inputStatus in
-      if supplied {
-        inputStatus.pointee = .endOfStream
-        return nil
-      }
-      supplied = true
-      inputStatus.pointee = .haveData
-      return input
-    }
-
-    guard status != .error,
-          output.frameLength > 0,
-          let samples = output.int16ChannelData?[0] else {
-      return
-    }
-    let data = Data(
-      bytes: samples,
-      count: Int(output.frameLength) * MemoryLayout<Int16>.size
-    )
-    DispatchQueue.main.async { [weak self] in
-      guard let self, self.recording else { return }
-      self.eventSink?([
-        "pcm": FlutterStandardTypedData(bytes: data),
-        "captured_at_us": capturedAtUs,
-      ])
     }
   }
 
   private func stop() {
-    recording = false
+    captureSession?.deactivate()
+    captureSession = nil
     removeCaptureTap()
     captureEngine.stop()
-    converter = nil
-    captureClockAnchor = nil
-    lastCapturedAtUs = nil
     try? AVAudioSession.sharedInstance().setActive(
       false,
       options: .notifyOthersOnDeactivation
@@ -338,7 +226,7 @@ final class VoiceCapture: NSObject, FlutterStreamHandler {
 
       guard let format = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
-        sampleRate: targetFormat.sampleRate,
+        sampleRate: VoicePCMConverter.sampleRate,
         channels: 1,
         interleaved: false
       ) else {
@@ -406,12 +294,6 @@ final class VoiceCapture: NSObject, FlutterStreamHandler {
 
   private enum VoiceCaptureError: Error {
     case audioUnavailable
-    case audioTimestampUnavailable
-  }
-
-  private struct CaptureClockAnchor {
-    let wallClockUs: Int64
-    let hostTime: UInt64
   }
 }
 

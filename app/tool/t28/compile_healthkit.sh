@@ -21,6 +21,6 @@ xcrun --sdk iphonesimulator swiftc -sdk "$(xcrun --sdk iphonesimulator --show-sd
   -target arm64-apple-ios15.0-simulator -F "$framework" -module-cache-path "$out/modules" \
   -Xcc -I -Xcc "$out/include" \
   -import-objc-header ios/Runner/Runner-Bridging-Header.h -whole-module-optimization \
-  -emit-object ios/Runner/{AppDelegate,MobileCommerce,HealthHistory,VoiceCapture}.swift \
+  -emit-object ios/Runner/{AppDelegate,MobileCommerce,HealthHistory,VoiceCapture,VoicePCMConverter,VoicePCMCaptureSession}.swift \
   ios/ReplyShare/ReplyInbox.swift -o "$out/Runner.o"
 file "$out/Runner.o" | grep 'Mach-O 64-bit object arm64'

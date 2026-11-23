@@ -616,7 +616,12 @@ class VoiceController extends ChangeNotifier {
       final levelAt = now();
       final level = PcmAnalyzer.level(chunk.pcm);
       _levelDb = level;
-      _aggregator!.add(chunk.pcm, chunk.capturedAt, retainAudio: _retainAudio);
+      _aggregator!.add(
+        chunk.pcm,
+        chunk.capturedAt,
+        retainAudio: _retainAudio,
+        startsNewSegment: chunk.startsNewSegment,
+      );
       if (_lastLevelNotify == null ||
           levelAt.difference(_lastLevelNotify!) >=
               const Duration(milliseconds: 120)) {

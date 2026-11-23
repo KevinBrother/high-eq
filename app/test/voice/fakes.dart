@@ -142,6 +142,10 @@ class FakeVoiceCapture implements VoiceCapturePlatform {
   @override
   Stream<VoicePcmChunk> get pcm => _pcm.stream;
 
+  void emitEvent(Map<String, Object?> event) {
+    if (!closed) _pcm.add(voicePcmChunkFromEvent(event));
+  }
+
   void emit(Uint8List pcm, {DateTime? capturedAt}) {
     if (closed) return;
     _pcm.add(

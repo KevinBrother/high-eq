@@ -15,12 +15,24 @@ void main() {
 
     expect(chunk.pcm, pcm);
     expect(chunk.capturedAt, DateTime.utc(2026, 11, 21, 9));
+    expect(chunk.startsNewSegment, isFalse);
   });
 
   test('rejects a PCM event without a native capture timestamp', () {
     expect(
       () => voicePcmChunkFromEvent({
         'pcm': Uint8List.fromList([1, 0]),
+      }),
+      throwsFormatException,
+    );
+  });
+
+  test('rejects a non-boolean segment boundary', () {
+    expect(
+      () => voicePcmChunkFromEvent({
+        'pcm': Uint8List.fromList([1, 0]),
+        'captured_at_us': DateTime.utc(2026, 11, 21).microsecondsSinceEpoch,
+        'starts_new_segment': 'true',
       }),
       throwsFormatException,
     );

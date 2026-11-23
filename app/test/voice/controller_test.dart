@@ -497,6 +497,29 @@ void main() {
     },
   );
 
+  test('a native segment boundary discards the partial window', () async {
+    await harness.controller.initialize();
+    expect(await harness.controller.start(), isTrue);
+    harness.platform.emit(
+      tone(duration: const Duration(seconds: 15), syllableHz: 4),
+      capturedAt: aligned,
+    );
+    final resume = aligned.add(const Duration(seconds: 15));
+    harness.platform.emitEvent({
+      'pcm': tone(duration: const Duration(seconds: 45), syllableHz: 4),
+      'captured_at_us': resume.microsecondsSinceEpoch,
+      'starts_new_segment': true,
+    });
+
+    await pumpEventQueue();
+    await harness.controller.settle();
+    await pumpEventQueue();
+
+    expect(harness.uploader.uploaded.map((window) => window.startsAt), [
+      aligned.add(const Duration(seconds: 30)),
+    ]);
+  });
+
   test(
     'native stop failure is reported without claiming capture stopped',
     () async {
