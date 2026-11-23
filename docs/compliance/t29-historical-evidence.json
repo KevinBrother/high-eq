@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "kind": "recorded-host-execution",
+  "artifact": {
+    "path": "build/t29/live-published.ToeY3h/t30-live.log",
+    "in_archive": false
+  },
+  "versions": {
+    "run_tree": "33149cab1d768881c2b6d9b24c62e294fafa0811",
+    "frozen_tree": "2825621d921f40b44248f9c1a7ef79c24b5a91de",
+    "components_match": true,
+    "unchanged_components": [
+      "app/",
+      "server/",
+      "docker-compose.yml"
+    ],
+    "workflow_path": ".github/workflows/t29-t30-wire.yml",
+    "workflow_status": "different"
+  },
+  "execution": {
+    "environment": "host-isolated-compose",
+    "host_status": "passed",
+    "ci_status": "unverified"
+  },
+  "input": {
+    "pcm": "synthetic"
+  },
+  "scope": {
+    "current_tree": false,
+    "real_device": false,
+    "production": false
+  }
+}
