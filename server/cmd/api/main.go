@@ -58,6 +58,9 @@ func run() error {
 				if e := s.Marks.PurgeDue(worker, time.Now()); e != nil && worker.Err() == nil {
 					slog.Error("cleanup unavailable", "module", "marks", "result", "retry")
 				}
+				if e := s.Practice.PurgeChatImports(worker, time.Now()); e != nil && worker.Err() == nil {
+					slog.Error("cleanup unavailable", "module", "chat_imports", "result", "retry")
+				}
 				if e := s.Emotion.PurgeDue(worker, time.Now()); e != nil && worker.Err() == nil {
 					slog.Error("cleanup unavailable", "module", "emotion", "result", "retry")
 				}

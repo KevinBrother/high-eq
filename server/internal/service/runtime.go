@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -164,6 +165,11 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 		return s.Profiles.ConsumeReplyOutcome(ctx, tx, v, s.Replies)
 	})
 	s.initPractice()
+	// Chat source cleanup is best effort at startup; the minute loop retries a
+	// transient storage failure without blocking unrelated users.
+	if e = s.Practice.PurgeChatImports(ctx, time.Now()); e != nil {
+		slog.Error("startup cleanup pending", "module", "chat_imports", "result", "retry")
+	}
 	s.Marks = &marks.Service{Fields: c.Fields, DB: s.db, Data: s.Data}
 	s.Reviews = &reviews.Service{Accounts: s.Accounts, Rights: s.Membership, Data: s.Data, Fields: c.Fields, DB: s.db, Bus: s.Bus, Key: c.authMaster, Router: func(stop gateway.Stop) (scoring.Runner, error) { return s.catalog.NewRouter(s.Data, stop) }}
 	s.Reviews.Profile = s.Profiles

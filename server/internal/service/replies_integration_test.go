@@ -184,6 +184,13 @@ func TestReplyLifecycle(t *testing.T) {
 	if !bytes.Equal(r.b, r2.b) || calls.Load() != 1 || profiles.calls.Load() != 0 {
 		t.Fatal("not original result or profile reread")
 	}
+	if bytes.Contains(r2.b, []byte(raw)) {
+		t.Fatal("replayed response contains the submitted chat")
+	}
+	var imports int
+	if e = s.db.QueryRow(ctx, `select count(*) from chat_imports c join activities a on a.id=c.activity_id where a.user_id=$1`, a.UserId).Scan(&imports); e != nil || imports != 0 {
+		t.Fatal("original request or replay persisted imported chat", imports, e)
+	}
 	in.ChatText += "different"
 	check(post(), 409, nil)
 	in.ChatText = raw
@@ -406,7 +413,6 @@ func TestReplyLifecycle(t *testing.T) {
 	if _, e = s.db.Exec(ctx, `insert into chat_imports(activity_id,original_enc) values($1,$2)`, answer.Id, []byte("synthetic blocked import")); e == nil {
 		t.Fatal("reply raw import unexpectedly persisted")
 	}
-	var imports int
 	if e = s.db.QueryRow(ctx, `select count(*) from chat_imports c join activities a on a.id=c.activity_id where a.user_id=$1`, a.UserId).Scan(&imports); e != nil || imports != 0 {
 		t.Fatal("chat retained", e)
 	}
