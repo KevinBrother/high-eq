@@ -1364,6 +1364,12 @@ type ListSessionsParams struct {
 	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// GetBaselinesParams defines parameters for GetBaselines.
+type GetBaselinesParams struct {
+	// ForWindow RFC3339 绝对时间，须严格对齐 UTC 30 秒窗口起点，在保留期内且不晚于当前时间。移动端使用 UTC Z。
+	ForWindow *string `form:"for_window,omitempty" json:"for_window,omitempty"`
+}
+
 // ListSignalEventsParams defines parameters for ListSignalEvents.
 type ListSignalEventsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
@@ -2187,7 +2193,7 @@ type ServerInterface interface {
 	SendMessage(c *gin.Context, sessionId openapi_types.UUID)
 	// 逐信号进度与阈值
 	// (GET /v1/signal-baselines)
-	GetBaselines(c *gin.Context)
+	GetBaselines(c *gin.Context, params GetBaselinesParams)
 	// 会员查看待核对与已标注事件
 	// (GET /v1/signal-events)
 	ListSignalEvents(c *gin.Context, params ListSignalEventsParams)
@@ -3635,7 +3641,20 @@ func (siw *ServerInterfaceWrapper) SendMessage(c *gin.Context) {
 // GetBaselines operation middleware
 func (siw *ServerInterfaceWrapper) GetBaselines(c *gin.Context) {
 
+	var err error
+
 	c.Set(BearerScopes, []string{})
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetBaselinesParams
+
+	// ------------- Optional query parameter "for_window" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "for_window", c.Request.URL.Query(), &params.ForWindow)
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter for_window: %w", err), http.StatusBadRequest)
+		return
+	}
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -3644,7 +3663,7 @@ func (siw *ServerInterfaceWrapper) GetBaselines(c *gin.Context) {
 		}
 	}
 
-	siw.Handler.GetBaselines(c)
+	siw.Handler.GetBaselines(c, params)
 }
 
 // ListSignalEvents operation middleware

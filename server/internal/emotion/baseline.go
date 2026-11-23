@@ -43,8 +43,8 @@ func (s Service) windows(ctx context.Context, tx pgx.Tx, u uuid.UUID, from, to t
 	return rows.Err()
 }
 
-// For a classification at end, leave its slot out of its own reference baseline.
-func (s Service) baseline(ctx context.Context, tx pgx.Tx, u uuid.UUID, now, end time.Time, forEvent bool) (Baselines, Frame, error) {
+// A window projection leaves the target slot out of its own reference baseline.
+func (s Service) baseline(ctx context.Context, tx pgx.Tx, u uuid.UUID, now, end time.Time, forWindow bool) (Baselines, Frame, error) {
 	var zone string
 	var f Frame
 	e := tx.QueryRow(ctx, `select timezone from users where id=$1`, u).Scan(&zone)
@@ -55,16 +55,22 @@ func (s Service) baseline(ctx context.Context, tx pgx.Tx, u uuid.UUID, now, end 
 	if e != nil {
 		return Baselines{}, f, e
 	}
-	a, f, e := reduceWindows(loc, end, forEvent, func(visit func(Window) error) error { return s.windows(ctx, tx, u, now.Add(-retention), end, visit) })
+	a, f, e := reduceWindows(loc, end, forWindow, func(visit func(Window) error) error {
+		return s.windows(ctx, tx, u, now.Add(-retention), end, visit)
+	})
 	if e != nil {
 		return Baselines{}, f, e
 	}
 	counts := map[string]int{}
 	e = s.walkEvents(ctx, tx, u, now.Add(-retention), end, func(r record) error {
-		if r.Confirmation == "no" && r.ConfirmedAt != nil && !r.ConfirmedAt.After(end) {
-			for _, k := range r.Triggers {
-				counts[k]++
-			}
+		if r.Confirmation != "no" || r.ConfirmedAt == nil || r.ConfirmedAt.After(end) {
+			return nil
+		}
+		if forWindow && (!r.StartsAt.Before(end) || !r.ConfirmedAt.Before(end)) {
+			return nil
+		}
+		for _, k := range r.Triggers {
+			counts[k]++
 		}
 		return nil
 	})
@@ -85,9 +91,31 @@ func (s Service) Baselines(ctx context.Context, tx pgx.Tx, u uuid.UUID, now time
 	return b, e
 }
 
+// ValidateWindowTime checks whether a target window can be read at now.
+func ValidateWindowTime(now, at time.Time) error {
+	if !aligned(at) || at.After(now) || !at.After(now.Add(-retention)) {
+		return Invalid
+	}
+	return nil
+}
+
+func (s Service) BaselinesForWindow(ctx context.Context, tx pgx.Tx, u uuid.UUID, now, at time.Time) (Baselines, error) {
+	if e := ValidateWindowTime(now, at); e != nil {
+		return Baselines{}, e
+	}
+	if e := consent(ctx, tx, u, "voice", at); e != nil {
+		return Baselines{}, e
+	}
+	if _, e := WindowKey(ctx, tx, u, "voice", at); e != nil {
+		return Baselines{}, e
+	}
+	b, _, e := s.baseline(ctx, tx, u, now, at, true)
+	return b, e
+}
+
 // reduceWindows folds sorted (time, channel) statistics. The reader can be a
 // PG cursor or synthetic vector; no database, clock or device enters the fold.
-func reduceWindows(loc *time.Location, end time.Time, forEvent bool, read func(func(Window) error) error) (*accumulator, Frame, error) {
+func reduceWindows(loc *time.Location, end time.Time, forWindow bool, read func(func(Window) error) error) (*accumulator, Frame, error) {
 	var f Frame
 	a := newAccumulator(loc)
 	var slot slot
@@ -121,18 +149,19 @@ func reduceWindows(loc *time.Location, end time.Time, forEvent bool, read func(f
 			f0.VoiceAt = v.At
 			f0.Exercise = f0.Exercise || *v.Exercise
 		}
+		inBaseline := !forWindow || slot.at.Before(end)
 		sample := func(k string, s *Stat) {
 			if s == nil || *s.Seconds == 0 {
 				return
 			}
 			f0.Means[k] = s.Mean
-			if !(forEvent && end.Equal(slot.at)) && !f0.Exercise && f0.Cadence <= 100 {
+			if inBaseline && !f0.Exercise && f0.Cadence <= 100 {
 				a.add(slot.at, k, *s.Mean, *s.Seconds)
 			}
 		}
 		if h != nil {
 			sample("heart_rate", h.Heart)
-			if h.HRV != nil {
+			if inBaseline && h.HRV != nil {
 				a.readings += h.HRV.Count
 				a.hrvDays[h.At.In(loc).Format(time.DateOnly)] = true
 			}

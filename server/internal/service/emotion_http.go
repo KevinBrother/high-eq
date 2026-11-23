@@ -2,6 +2,9 @@ package service
 
 import (
 	"errors"
+	"net/url"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -43,11 +46,62 @@ func (a appAPI) UploadWindow(c *gin.Context) {
 	})
 	signalReply(c, ack, e)
 }
-func (a appAPI) GetBaselines(c *gin.Context) {
+
+// Check the original precision before time.Parse can truncate a fractional second.
+var alignedBaselineWindow = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:(00|30)(\.0+)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$`)
+
+func parseBaselineWindow(rawQuery string, value *string) (*time.Time, error) {
+	// The generated binder uses URL.Query(), which drops malformed values.
+	if _, err := url.ParseQuery(rawQuery); err != nil {
+		for field := range strings.SplitSeq(rawQuery, "&") {
+			key, _, _ := strings.Cut(field, "=")
+			if name, _ := url.QueryUnescape(key); name == "for_window" {
+				return nil, emotion.Invalid
+			}
+		}
+	}
+	if value == nil {
+		return nil, nil
+	}
+	if !alignedBaselineWindow.MatchString(*value) {
+		return nil, emotion.Invalid
+	}
+	at, err := time.Parse(time.RFC3339, strings.ToUpper(*value))
+	if err != nil || at.IsZero() {
+		return nil, emotion.Invalid
+	}
+	utc := at.UTC()
+	return &utc, nil
+}
+
+func (a appAPI) GetBaselines(c *gin.Context, p app.GetBaselinesParams) {
+	window, parseErr := parseBaselineWindow(c.Request.URL.RawQuery, p.ForWindow)
+	ctx, u := c.Request.Context(), principal(c).User
 	var b emotion.Baselines
-	e := a.withRights(c, membership.Collection, func(tx pgx.Tx) error {
+	e := a.withRights(c, "", func(tx pgx.Tx) error {
 		var e error
-		b, e = a.signals.Baselines(c.Request.Context(), tx, principal(c).User, time.Now())
+		if window == nil && parseErr == nil {
+			if e = a.membership.Require(ctx, tx, u, membership.Collection); e != nil {
+				return e
+			}
+			b, e = a.signals.Baselines(ctx, tx, u, time.Now())
+			return e
+		}
+		now := time.Now()
+		start, e := a.membership.CollectionStart(ctx, tx, u, now)
+		if e != nil {
+			return e
+		}
+		if parseErr != nil {
+			return parseErr
+		}
+		if e = emotion.ValidateWindowTime(now, *window); e != nil {
+			return e
+		}
+		if window.Before(start) {
+			return membership.ErrForbidden
+		}
+		b, e = a.signals.BaselinesForWindow(ctx, tx, u, now, *window)
 		return e
 	})
 	signalReply(c, b, e)

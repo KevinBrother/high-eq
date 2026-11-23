@@ -118,7 +118,11 @@ type access struct {
 }
 
 func (s *Service) access(ctx context.Context, tx pgx.Tx, user uuid.UUID) (access, error) {
-	a := access{tier: s.policy.Free, at: s.now()}
+	return s.accessAt(ctx, tx, user, s.now())
+}
+
+func (s *Service) accessAt(ctx context.Context, tx pgx.Tx, user uuid.UUID, now time.Time) (access, error) {
+	a := access{tier: s.policy.Free, at: now}
 	var zone string
 	var period pgtype.Range[time.Time]
 	// Merge adjoining verified periods so expires_at is the end of continuous access, not the next billing boundary.

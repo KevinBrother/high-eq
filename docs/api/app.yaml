@@ -2547,7 +2547,20 @@ paths:
     get:
       operationId: getBaselines
       summary: 逐信号进度与阈值
-      description: 各信号分别按非运动有效时长或人声特征有效时长统计，1800 秒为一个有效日、7 日就绪。threshold 是与对应窗口均值比较的绝对上界（单位同上传接口），未就绪为 null。HRV 只按读数及采样日统计，永不参与或阻塞提醒。
+      description: |
+        省略 for_window 时返回当前进度。指定时返回 T30 判定该窗所用的基线投影，从保留期内仍存的记录重算。统计及误报调整只使用该窗起点之前的历史，今日时长按账号时区的目标窗日期统计。
+        按窗查询需要当前连续采集权益和语音授权覆盖目标时间，失权时返回 403。当前账号没有该起点的已存储语音窗口时返回 404。响应仅含基线进度，事件判定仍由服务端执行。
+        各信号分别按非运动有效时长或人声特征有效时长统计，1800 秒为一个有效日、7 日就绪。threshold 是与对应窗口均值比较的绝对上界（单位同上传接口），未就绪为 null。HRV 只按读数及采样日统计，永不参与或阻塞提醒。
+      parameters:
+      - name: for_window
+        in: query
+        required: false
+        description: RFC3339 绝对时间，须严格对齐 UTC 30 秒窗口起点，在保留期内且不晚于当前时间。移动端使用 UTC Z。
+        schema:
+          type: string
+          format: date-time
+          x-go-type: string
+        example: '2026-11-21T01:00:30Z'
       responses:
         '200':
           description: 成功
@@ -2620,6 +2633,8 @@ paths:
         '401': {$ref: '#/components/responses/E401'}
         '500': {$ref: '#/components/responses/E500'}
         '403': {$ref: '#/components/responses/E403'}
+        '404': {$ref: '#/components/responses/E404'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       x-example-request: GET /v1/signal-baselines
   /v1/signal-events:
     post:

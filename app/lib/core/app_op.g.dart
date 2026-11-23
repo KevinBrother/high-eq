@@ -60,7 +60,7 @@ enum AppOp {
   checkHealth('GET', '/v1/health', 'application/json', false, false, [], []),
   uploadWindow('POST', '/v1/signal-windows', 'application/json', true, true, [], []),
   deleteWindow('DELETE', '/v1/signal-windows', 'application/json', true, false, ['starts_at', 'channel'], ['starts_at', 'channel']),
-  getBaselines('GET', '/v1/signal-baselines', 'application/json', true, false, [], []),
+  getBaselines('GET', '/v1/signal-baselines', 'application/json', true, false, ['for_window'], []),
   reportSignalEvent('POST', '/v1/signal-events', 'application/json', true, true, [], []),
   listSignalEvents('GET', '/v1/signal-events', 'application/json', true, false, ['cursor', 'limit'], []),
   annotateSignalEvent('PATCH', '/v1/signal-events/{id}', 'application/json', true, true, [], []);

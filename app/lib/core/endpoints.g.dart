@@ -67,7 +67,7 @@ class MobileEndpoints {
   Future<Json> checkHealth() => api.json(AppOp.checkHealth);
   Future<Json> uploadWindow({required AccountScope scope, required Json body}) => api.json(AppOp.uploadWindow, scope: scope, body: body);
   Future<Json> deleteWindow({required AccountScope scope, required String startsAt, required String channel}) => api.json(AppOp.deleteWindow, scope: scope, query: {'starts_at': startsAt, 'channel': channel});
-  Future<Json> getBaselines({required AccountScope scope}) => api.json(AppOp.getBaselines, scope: scope);
+  Future<Json> getBaselines({required AccountScope scope, String? forWindow}) => api.json(AppOp.getBaselines, scope: scope, query: {'for_window': ?forWindow});
   Future<Json> reportSignalEvent({required AccountScope scope, required Json body}) => api.json(AppOp.reportSignalEvent, scope: scope, body: body);
   Future<Json> listSignalEvents({required AccountScope scope, String? cursor, int? limit}) => api.json(AppOp.listSignalEvents, scope: scope, query: {'cursor': ?cursor, 'limit': ?limit?.toString()});
   Future<Json> annotateSignalEvent({required AccountScope scope, required String id, required Json body}) => api.json(AppOp.annotateSignalEvent, scope: scope, path: {'id': id}, body: body);

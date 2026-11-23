@@ -33,16 +33,25 @@ type signalFixture struct {
 
 func setupSignals(t *testing.T) *signalFixture {
 	t.Helper()
-	ctx := context.Background()
 	cfg, e := LoadConfig()
 	if e != nil {
 		t.Fatal(e)
 	}
+	return setupSignalsWithConfig(t, cfg)
+}
+
+func setupSignalsWithConfig(t *testing.T, cfg Config) *signalFixture {
+	t.Helper()
+	ctx := context.Background()
 	s, e := Start(ctx, cfg)
 	if e != nil {
 		t.Fatal(e)
 	}
 	t.Cleanup(s.Close)
+	return signalsFor(t, s, ctx)
+}
+
+func signalsFor(t *testing.T, s *Runtime, ctx context.Context) *signalFixture {
 	r := s.Router()
 	return &signalFixture{T: t, s: s, ctx: ctx, call: func(method, path, token string, v any, status int, out any) {
 		t.Helper()
