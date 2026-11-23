@@ -205,6 +205,13 @@ class HomeShell extends StatelessWidget {
                     if (section == Section.me) ...[
                       ListTile(
                         contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.monitor_heart_outlined),
+                        title: const Text('健康数据'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.pushNamed(context, '/health'),
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
                         leading: const Icon(Icons.graphic_eq),
                         title: const Text('语音特征与录音'),
                         trailing: const Icon(Icons.chevron_right),

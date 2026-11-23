@@ -5,6 +5,33 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// China/HMS distribution is deliberately closed. An environment variable or a
+// developer keystore must never turn a restricted Health Kit scope on.
+val historyDistribution = providers.gradleProperty("t28Distribution").orElse("platform").get()
+require(historyDistribution in setOf("platform", "huaweiRestricted")) {
+    "T28: no approved Huawei Health Kit configuration for this release"
+}
+val huaweiRestricted = historyDistribution == "huaweiRestricted"
+// Read the issuer value only for the restricted channel. A machine that also
+// passes -Pt28HuaweiAppId must not leak it into an ordinary platform package.
+val huaweiAppId =
+    if (huaweiRestricted) providers.gradleProperty("t28HuaweiAppId").orElse("").get().trim() else ""
+if (huaweiRestricted) {
+    require(huaweiAppId.isNotEmpty()) {
+        "T28: huaweiRestricted requires -Pt28HuaweiAppId=<approved app id>"
+    }
+    require(huaweiAppId.matches(Regex("[0-9]+"))) {
+        "T28: huaweiRestricted app id must be numeric"
+    }
+    // The licensed AG Connect project file is injected by the issuer and is
+    // deliberately excluded from source control. Applying the plugin only in
+    // this branch keeps the ordinary Android build independent from AGCP.
+    require(file("agconnect-services.json").isFile) {
+        "T28: huaweiRestricted requires an issuer-provided agconnect-services.json"
+    }
+    apply(plugin = "com.huawei.agconnect")
+}
+
 android {
     namespace = "cn.higheq.high_eq"
     compileSdk = flutter.compileSdkVersion
@@ -24,7 +51,9 @@ android {
         applicationId = "cn.higheq.high_eq"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // huawei_health 6.17.0+300 declares minSdkVersion 26. Keep the app's
+        // manifest merge compatible even when the restricted channel is off.
+        minSdk = 26
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -63,3 +92,8 @@ if (vendorBuild) {
         android.sourceSets.maybeCreate(it).manifest.srcFile("src/vendor/AndroidManifest.xml")
     }
 }
+
+android.defaultConfig.manifestPlaceholders["t28HuaweiAppId"] = huaweiAppId
+android.defaultConfig.resValue("string", "t28_huawei_app_id", huaweiAppId)
+android.defaultConfig.resValue("bool", "t28_platform_history", (historyDistribution == "platform").toString())
+android.defaultConfig.resValue("bool", "t28_huawei_history", huaweiRestricted.toString())

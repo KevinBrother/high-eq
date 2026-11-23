@@ -1,9 +1,9 @@
 # T33 隐私与合规材料总览
 
 > 状态：可先行草案，不可直接用于上线。
-> 核对日期：2026-11-22。
+> 核对日期：2026-11-23。
 > 固定事实基线：`f60ace3`。
-> 上一轮 T33 文档候选证据：`ce479034bcba174475fa8fbc156be66a3b22ba5371b5344602f29394185d638a`（只标识早期 T33 草案，不是业务源码）（仅文档，不含其他卡业务实现）。T19/T23/T25 是已有后端，T21 为本批后端增量；T29 归档静态实现、未合入固定基线、真机待验；T28 候选实现不等于已合入固定基线。
+> 上一轮 T33 文档候选证据：`ce479034bcba174475fa8fbc156be66a3b22ba5371b5344602f29394185d638a`（只标识早期 T33 草案，不是业务源码）（仅文档，不含其他卡业务实现）。T19/T23/T25 是已有后端，T21 为本批后端增量；T29 归档静态实现、未合入固定基线、真机待验；T28 归档静态实现、未合入固定基线，真机与平台审批未验。
 > 本目录不是法律意见。法规、平台规则和上线准入均须由具备资质的律师及项目运营主体复核。
 
 ## 1. 本批材料的边界
@@ -12,6 +12,7 @@
 - 不修改业务代码，不代填公司主体、地址、联系人、商户、供应商、授权函、备案号或审批结论。
 - 不代备案、不联系律师或平台、不访问任何真实用户数据。
 - T29 归档已有语音特征、麦克风权限、本机加密队列、录音索引、3 天到期不可读和撤回清理的静态实现，但未合入固定基线；真机、抓包、耗电、ASR 质量和平台审批仍待验。T29 归档静态实现、未合入固定基线、真机待验。
+- T28 归档已有健康历史读取、系统权限、30 秒窗口、华为受限发行和 D45 本机撤回 outbox 的静态实现，但未合入固定基线；本批同源码宿主合装回执为 analyze 绿、健康定向 181 过、health+voice 235 过（两者覆盖不同，不能相加）、全 Flutter 442 过/2 跳过、Swift arm64、Android API35 六种合同/适配器类实际重编及 T28 live `05:59` 4 过（含代理哨兵）；真机、真实健康库、完整 APK、平台审批和固定 SHA CI 仍待验。
 - T35 尚无 `docs/tasks/T35.md` 交接。`GET /v1/me/export` 与 `DELETE /v1/me/data/:kind/:id` 在固定基线均未进入 HTTP 路由白名单，对有效会话返回 `501 not_implemented`；OpenAPI、测试钩子或删除协调器不能替代生产接线。
 - 注销冻结/撤销注销、健康窗口专用删除、AES-GCM 字段加密和删除协调器是已核对的安全边界；不得因通用权利接口未接通而抹掉这些既有能力。
 
@@ -39,7 +40,7 @@
 | `privacy-policy-draft.md` | 面向用户的隐私政策草案 | 主体信息、供应商及法律依据待补；T29 语音边界已按静态归档登记 |
 | `terms-of-service-draft.md` | 用户协议草案 | 商户、退款、责任限制和争议条款待律师复核 |
 | `separate-consents.md` | 各敏感/可选处理的单独同意文案 | 已有功能的文案可先行；C05/C06 已按 T29 静态归档补齐，真机待验 |
-| `data-inventory.md` | 字段、原始记录、副本、加密、留存、删除和导出对表 | 已按 PG17 清单逐名核对 42/42 表/视图；D32–D36 补后台缺口，D39/D40 另列 T25 增量，D41/D42 另列 T21 增量，D43 为 T26 单项复习调度投影，D44 为 T29 本机语音队列、录音索引和 PCM，D37–D44 均不计入 42 项；清理、通用权利接口与真机项待验收 |
+| `data-inventory.md` | 字段、原始记录、副本、加密、留存、删除和导出对表 | D01–D45 已登记；已按 PG17 清单逐名核对 42/42 表/视图；D32–D36 补后台缺口，D39/D40 另列 T25 增量，D41/D42 另列 T21 增量，D43 为 T26 单项复习调度投影，D44 为 T29 本机语音队列、录音索引和 PCM，D45 为 T28 本机健康历史待发状态与撤回意图，D37–D45 均不计入 42 项；清理、通用权利接口与真机项待验收 |
 | `sdk-model-review-checklist.md` | 主模型、备用/灰度模型、审核服务及 SDK 证据清单 | 无真实供应商资料，全部待运营提供 |
 | `filings-and-authorizations.md` | 备案、ICP、应用商店、量表授权、健康平台和权限归档 | 无备案号、批准或授权函，不得宣称已完成 |
 | `banned-words-and-examples.md` | 文案禁用词与 10 条改写示例 | 可先行用于文案评审 |
@@ -57,10 +58,12 @@
 - 首次启动先展示隐私/协议摘要，用户主动勾选后才继续；未同意不发起登录。`[已知]`
 - 新账号登录携带 `privacy_version`、`terms_version`，服务端接受后写入 `privacy` 与 `terms` 同意。当前版本均为 `2026-11`，属开发占位版本。`[已知]`
 - 登录需确认已满 14 周岁；产品不是医疗、心理诊断或危机干预服务。`[已知]`
-- 健康读取的产品目标是会员、App `health` 单独同意和系统健康权限同时成立；固定基线尚未声明这些设备权限，T28 候选的权限、30 秒聚合、180 天窗口和真机行为须单独对表。`[候选待对表]` `[待真机复核]`
-- 固定基线 Android Manifest 仅声明 `INTERNET`；没有 `ACTIVITY_RECOGNITION` 或 Health Connect 读取权限。T29 归档另声明 `RECORD_AUDIO`，但没有运动识别或健康读取权限。`[已知]`
-- iOS 在固定基线没有 HealthKit entitlement，也没有 `NSHealthShareUsageDescription` 或 `NSMicrophoneUsageDescription`；T29 归档新增 `NSMicrophoneUsageDescription`，仍未声明健康读取用途或 HealthKit entitlement。`[已知]`
+- 健康读取的产品目标是会员、App `health` 单独同意和系统健康权限同时成立；固定基线尚未声明这些设备权限。当前 T28 归档静态实现已有 Android 的 `ACTIVITY_RECOGNITION`、Health Connect 心率/HRV/步数/训练读取权限（无健康写入）和 iOS 的 HealthKit 读取用途/entitlement（无更新用途），查询最多回看 24 小时、30 秒对齐、单段最多 10 分钟；服务端既有 180 天留存和专用窗口删除另列。该归档未合入固定基线，真机、平台审批和真实 App→T30 回执未验。`[候选待对表]` `[待真机复核]`
+- 固定基线 Android Manifest 仅声明 `INTERNET`；没有 `ACTIVITY_RECOGNITION` 或 Health Connect 读取权限。T29 归档另声明 `RECORD_AUDIO`；T28 归档另声明 `ACTIVITY_RECOGNITION`、`health.READ_HEART_RATE`、`health.READ_HEART_RATE_VARIABILITY`、`health.READ_STEPS`、`health.READ_EXERCISE`，未发现健康写入权限。`[已知：T28 归档静态实现]`
+- iOS 在固定基线没有 HealthKit entitlement，也没有 `NSHealthShareUsageDescription` 或 `NSMicrophoneUsageDescription`；T29 归档新增 `NSMicrophoneUsageDescription`；T28 归档新增 `NSHealthShareUsageDescription` 和 `com.apple.developer.healthkit=true`，没有 `NSHealthUpdateUsageDescription`。`[已知：T28 归档静态实现]`
 - T29 归档只把完整、UTC 对齐的 30 秒窗口统计上传，字段不含 PCM、逐秒数组或转写；`speech_rate` 是声学音节速率代理，不是转写语速。录音保留独立授权且默认关闭，本机队列不含 PCM。T29 归档静态实现、未合入固定基线、真机待验。`[已知：T29 归档静态实现]`
+- T28 归档只读取 Apple Health、Health Connect 和 Huawei Health 的历史来源 `apple_history`、`health_connect`、`huawei_history`，没有 `watch_live`；`HealthHistory.swift` 为只读前台历史，无后台投递、写入或 Watch 桥。华为默认发行 `platform`，仅 `huaweiRestricted` 加载 AGCP，要求数字 App ID 和 `agconnect-services.json`；`T28_HUAWEI_HEALTH_APPROVED` 默认 false，未批准/未知来源 fail closed；授权只读 scope 为心率、步数、活动记录，不申请或消费 HRV。HMS 插件返回样本可能含其他平台字段，原生通道解析数据类型、时间及可转成数值的字段，归一化适配器才筛选心率、步数增量及对应时间，并把活动区间映射为 `exercise` 运动标志；插件原始返回和解析样本均不写入本机队列或上传。`[已知：T28 归档静态实现]` `[待真机复核]` `[待商户/平台确认]`
+- T28 窗口以 30 秒对齐、最多回看 24 小时、单段最多 10 分钟，使用 `pending_end` 续传；本机队列只保存 slot range，不缓存测量值。D45 `t28.history.v1` 使用 AES-GCM 256，AAD 绑定账号、`queue` 和队列键；显式撤回意图独立加密 outbox，可跨登出但只能由原账号凭据重试，不等于删除云端历史。`[已知：T28 归档静态实现]`
 - 对练消息、评分明细、成长数值副本、复盘、关系人画像和手动标记的目标是使用 `*_enc` AES-GCM 字段保存；具体候选实现须按模块对表。`[已知：字段与加密封装]` `[候选待对表：候选模块]`
 - T25 后端已把用户明确反馈形成的画像观察事实写入 `profile_observations`，后端只接受通过校验的七个有界选项并合并到 `contacts.profile_enc`，T25 推断链路不持久化聊天原文；推理请求同时绑定 `chat_import` 与 `contacts` 的精确同意记录和 32 字节 SHA-256 输入摘要，处理中复核发现授权变化或关系人不可用时，旧推断失效、不再外发或保存；同键换材料或关系人返回 409，不改写原记录；已完成请求须有当前权限，重放只读当前画像。`[已知：本批后端]` `[待 T35 对表]`
 - T21 回复请求不保存聊天原文或目的；输入 HMAC、加密结果/反馈和最小回执的字段边界见 D11/D12/D41/D42。模块内部导出不等于 T35 公共权利入口，厂商与基础设施留存仍待证据。
@@ -79,12 +82,18 @@
 4. 聊天原文 24 小时目标完成实现、读取过滤、定时物理清理、失败重试和导出排除验收。`[待实现/验收]`
 5. T29 归档静态实现已补齐语音/录音权限、独立授权、30 秒聚合、账号隔离、3 天到期不可读和撤回清理；仍需真机验证权限与状态提示、杀进程/离线清理、账号切换、抓包、耗电、ASR 质量和平台材料。T29 归档静态实现、未合入固定基线、真机待验。`[待真机复核]` `[待商户/平台确认]`
 6. T35 完成查阅、复制/导出、更正、删除、撤回同意、注销的实际入口和全量数据验收；通用 export/delete 路由当前为 `501 not_implemented`。`[待 T35 对表]`
-7. 健康权限、运动识别、Health Connect、HealthKit、华为等平台审批与真机行为完成；固定基线目前只声明 `INTERNET`，不得把 T28 候选写成已合入。`[候选待对表]` `[待真机复核]`
+7. T28 归档的 Android/iOS 健康读取权限、30 秒窗口、24 小时回看、华为受限发行和 D45 撤回 outbox 已做静态对表，并取得本批同源码宿主合装回执：analyze 无问题、健康定向 181 过、health+voice 235 过（两者覆盖不同，不能相加）、全 Flutter 442 过/2 跳过、Swift 模拟器 arm64、Android API35 六种合同/适配器类实际重编、T28 live 于 `05:59` 4 过（含代理哨兵）。固定基线仍只声明 `INTERNET`，不得把 T28 归档写成固定基线事实；完整 MainActivity/APK、Health Connect/HealthKit/HMS 真机、真实健康库、华为批准/签名、耗电、实际延迟、同步成功率和固定 SHA CI 仍须验收。`[候选待对表]` `[待真机复核]` `[待商户/平台确认]`
 8. 法规、生成式 AI、算法/深度合成/内容标识、ICP/App 备案和应用商店规则的官方正文、版本、日期与适用结论完成核验。`[待官方来源核验]` `[待律师复核]`
 9. 隐私政策和用户协议完成律师书面审阅，版本号、生效日期和变更通知流程确定。`[待律师复核]`
 10. 正式文案不得出现未证实的功能、留存、绝对效果或平台批准表述。`[已知]` 发布前需再次 QA。
 
-## 6. 证据和变更规则
+## 6. 证据分层和变更规则
+
+证据按三层记录，不能互相替代：
+
+1. **固定基线静态**：`f60ace3` 的 Android Manifest 仅声明 `INTERNET`，没有健康权限、HealthKit entitlement 或健康用途说明；这是固定基线事实，不是 T28 实现。
+2. **当前 T28 归档静态**：已核对 Android/iOS 只读健康权限、三种历史来源、30 秒窗口、24 小时回看、10 分钟分段、华为默认关闭和 D45 撤回 outbox；证据见 `app/android/app/src/main/AndroidManifest.xml`、`app/ios/Runner/Info.plist`、`app/ios/Runner/Runner.entitlements`、`app/ios/Runner/HealthHistory.swift`、`app/lib/features/health/`、`app/lib/core/session.dart`、`docs/compliance/data-inventory.md` D45 和 `docs/compliance/test_t33_contract.py`。该归档未合入固定基线。
+3. **本批宿主合装回执（非 CI 合同）**：同一源码树最终 `flutter analyze` 为 `No issues found`；健康定向回归 181 过；health+voice 回归 235 过，二者覆盖不同，不能相加；全 Flutter 回归 442 过、2 跳过；Swift 模拟器产出 `Mach-O 64-bit object arm64`；Android 用 API35 Kotlin 本批重编六种合同/适配器类（`HealthNotice`、`PhoneSteps`、`HealthHistory`、`ReplyShare`、`VoiceCapture`、`Commerce`，不是 MainActivity 或完整 APK）；T28 live 于 `05:59` 4 过，含真实代理哨兵，覆盖真实 T28 客户端、T30、PG17、双 Redis、直连夹具和合成设备授权，断言 `real T28 client and T30 storage enforce consent, collection, and withdrawal`。旧阶段 `unknown-join` 曾为 `24 issues found` 红态，现仅作历史记录，已被本批同源码 analyze 与回归回执替代；该 live 不能证明所有异常路径都在真机跑过。iOS 签名安装/授权/真实 HealthKit 样本、三台真机、真实健康库、Huawei 审批/签名/HMS、完整 MainActivity/APK、耗电、实际延迟/空窗率/成功率、HRV 缺失原因、固定 SHA CI 和生产发布均未签收。宿主日志只用于本次回执，不是 CI 合同或干净 clone 的必需文件；本层计数、耗时和命令输出不构成文档静态契约。
 
 - 固定基线事实以 `f60ace3` 为准；候选实现必须单独标注，不得回填为基线事实。
 - 任何新增模型、SDK、权限、数据字段、日志或留存期，都必须在 `data-inventory.md` 和 `sdk-model-review-checklist.md` 同步登记。

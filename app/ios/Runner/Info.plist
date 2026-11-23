@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSHealthShareUsageDescription</key>
+	<string>读取心率、心率变异性、步数和训练区间，用于个人基线与事后复盘，只上传半分钟摘要。</string>
 	<key>SubscriptionMonthly</key><string>$(SUBSCRIPTION_MONTHLY)</string>
 	<key>SubscriptionYearly</key><string>$(SUBSCRIPTION_YEARLY)</string>
 	<key>WeChatAppID</key><string>$(WECHAT_APP_ID)</string>

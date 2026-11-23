@@ -6,6 +6,7 @@ import WechatOpenSDK
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
+  private let healthHistory = HealthHistory()
   private let commerce = MobileCommerce()
   private let voiceCapture = VoiceCapture()
   #if canImport(WechatOpenSDK)
@@ -25,6 +26,9 @@ import WechatOpenSDK
       FlutterMethodChannel(name: "cn.higheq/reply-share", binaryMessenger: registrar.messenger()).setMethodCallHandler { call, result in
         if call.method == "take" { result(ReplyInbox.take()) } else { result(FlutterMethodNotImplemented) }
       }
+    }
+    if let registrar = registrar(forPlugin: "HealthHistory") {
+      FlutterMethodChannel(name: "cn.higheq/health-history", binaryMessenger: registrar.messenger()).setMethodCallHandler(healthHistory.handle)
     }
     commerce.window = window
     if let registrar = registrar(forPlugin: "MobileCommerce") {

@@ -1,6 +1,7 @@
 import 'api.dart';
 import 'app_op.g.dart';
 import 'session.dart';
+import 'transport.dart' show Json;
 
 enum CollectionPurpose { health, voice, audioRetention }
 
@@ -14,7 +15,21 @@ class ConsentGate {
     CollectionPurpose purpose, {
     required Future<bool> Function() systemGranted,
     required void Function() beginRead,
+    bool Function(Map record)? acceptsGrant,
+    void Function(DateTime expiry)? onExpiry,
+    void Function()? onDenied,
+    bool forHealthUpload = false,
   }) async {
+    Future<Json> query(AppOp op, [Map<String, String> query = const {}]) =>
+        forHealthUpload && purpose == CollectionPurpose.health
+        ? api.jsonForHealthUploadGate(op, scope: scope, query: query)
+        : api.json(op, scope: scope, query: query);
+
+    bool denied() {
+      onDenied?.call();
+      return false;
+    }
+
     try {
       final needed = switch (purpose) {
         CollectionPurpose.health => {'health'},
@@ -25,29 +40,30 @@ class ConsentGate {
       final seenCursors = <String>{};
       String? cursor;
       do {
-        final page = await api.json(
-          AppOp.listConsents,
-          scope: scope,
-          query: {'cursor': ?cursor},
-        );
+        final page = await query(AppOp.listConsents, {'cursor': ?cursor});
         for (final record in page['items'] as List) {
-          if (record['granted'] == true) {
+          if (record['granted'] == true &&
+              (!needed.contains(record['purpose']) ||
+                  (acceptsGrant?.call(record) ?? true))) {
             allowed.add(record['purpose'] as String);
           }
           if (record['granted'] == false &&
               needed.contains(record['purpose'])) {
-            return false;
+            return denied();
           }
         }
         cursor = page['next_cursor'] as String?;
         if (cursor != null && !seenCursors.add(cursor)) return false;
       } while (cursor != null);
-      if (!allowed.containsAll(needed) || !await systemGranted()) return false;
-      final rights = await api.json(AppOp.getEntitlements, scope: scope);
-      if (rights['tier'] != 'member') return false;
+      if (!allowed.containsAll(needed) || !await systemGranted()) {
+        return denied();
+      }
+      final rights = await query(AppOp.getEntitlements);
+      if (rights['tier'] != 'member') return denied();
       final expiry = DateTime.tryParse(rights['expires_at'] as String? ?? '');
-      if (expiry == null || !expiry.isAfter(DateTime.now())) return false;
+      if (expiry == null || !expiry.isAfter(DateTime.now())) return denied();
       api.sessions.require(scope);
+      onExpiry?.call(expiry);
     } catch (_) {
       return false;
     } // Offline, malformed data, logout: fail closed.

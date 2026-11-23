@@ -20,6 +20,42 @@ class ApiFailure implements Exception {
   ]);
 }
 
+enum LogoutStatus { confirmed, unconfirmed }
+
+enum LogoutHealthStatus {
+  /// There was no local evidence requiring a remote withdrawal.
+  notRequired,
+
+  /// The original account must decide; unknown evidence was not sent.
+  needsDecision,
+
+  /// The server confirmed there is no current health grant.
+  confirmed,
+
+  /// Evidence or a remote response was unavailable. This is not confirmation.
+  unconfirmed,
+}
+
+/// Independent outcomes for one exit. Check [Sessions.isCurrentLogout] with
+/// [round] immediately before presenting feedback, even if no one is logged in.
+final class LogoutResult {
+  const LogoutResult({
+    required this.round,
+    required this.localCleanup,
+    required this.healthWithdrawal,
+    required this.serverLogout,
+  });
+
+  final LogoutRound round;
+
+  /// Confirmed only when both credential removal and cache wiping completed.
+  final LogoutStatus localCleanup;
+  final LogoutHealthStatus healthWithdrawal;
+  final LogoutStatus serverLogout;
+}
+
+enum _UnauthorizedPolicy { standard, preserveOnRefreshFailure, healthGate }
+
 class AppApi {
   final Uri origin;
   final Transport transport;
@@ -27,6 +63,7 @@ class AppApi {
   final _refreshing = <AccountScope, Future<void>>{};
   AppApi(this.origin, this.transport, this.sessions);
   static const _timeout = Duration(seconds: 20);
+  static const healthQueueKey = Sessions.healthQueueKey;
 
   Future<http.StreamedResponse> _send(
     AppOp op,
@@ -95,6 +132,70 @@ class AppApi {
     }
   }
 
+  Future<Json> _jsonWithAccess(
+    AppOp op,
+    String access, {
+    Map<String, String> path = const {},
+    Map<String, String> query = const {},
+    Json? body,
+  }) async {
+    final response = await _send(op, path, query, body, access);
+    await _success(response, op);
+    final value = jsonDecode(
+      await response.stream.bytesToString(utf8).timeout(_timeout),
+    );
+    if (value is! Json) throw const FormatException('服务响应格式异常');
+    return value;
+  }
+
+  Future<void> _withdrawHealth(Tokens tokens, LogoutRound round) async {
+    void requireCurrent() {
+      if (!sessions.isCurrentLogout(round)) throw SessionChanged();
+    }
+
+    String? cursor;
+    final seen = <String>{};
+    do {
+      requireCurrent();
+      final page = await _jsonWithAccess(
+        AppOp.listConsents,
+        tokens.access,
+        query: {'cursor': ?cursor},
+      );
+      final items = page['items'];
+      if (items is! List) throw const FormatException('服务响应格式异常');
+      for (final row in items) {
+        if (row is! Map || row['purpose'] != 'health') continue;
+        if (row['granted'] == true) {
+          final version = row['version'];
+          if (version is! String) throw const FormatException('健康授权版本缺失');
+          requireCurrent();
+          final record = await _jsonWithAccess(
+            AppOp.setConsent,
+            tokens.access,
+            path: {'purpose': 'health'},
+            body: {'granted': false, 'version': version},
+          );
+          if (record['purpose'] != 'health' || record['granted'] != false) {
+            throw const FormatException('健康授权撤回未确认');
+          }
+          return;
+        }
+        if (row['granted'] != false) {
+          throw const FormatException('健康授权状态异常');
+        }
+      }
+      final next = page['next_cursor'];
+      if (next != null && next is! String) {
+        throw const FormatException('服务响应格式异常');
+      }
+      cursor = next as String?;
+      if (cursor != null && !seen.add(cursor)) {
+        throw const FormatException('服务响应游标重复');
+      }
+    } while (cursor != null);
+  }
+
   Future<void> _refresh(AccountScope scope) =>
       _refreshing.putIfAbsent(scope, () async {
         try {
@@ -149,10 +250,15 @@ class AppApi {
   /// before every network send, including the 401 replay.
   ///
   /// Kept separate from [bytes] so existing subclasses that only model the
-  /// original route signature remain valid.
+  /// original route signature remain valid. [checkBeforeSend] can close a
+  /// local race after the async guard; it runs synchronously with dispatch.
+  /// [preserveSessionOnUnconfirmedRefresh] surfaces failures without a replay
+  /// or local logout. A refresh or replay that returns 401 still ends the session.
   Stream<List<int>> bytesGuarded(
     AppOp op, {
     required Future<void> Function() beforeSend,
+    void Function()? checkBeforeSend,
+    bool preserveSessionOnUnconfirmedRefresh = false,
     AccountScope? scope,
     Map<String, String> path = const {},
     Map<String, String> query = const {},
@@ -166,6 +272,10 @@ class AppApi {
     body: body,
     onStatus: onStatus,
     beforeSend: beforeSend,
+    checkBeforeSend: checkBeforeSend,
+    unauthorizedPolicy: preserveSessionOnUnconfirmedRefresh
+        ? _UnauthorizedPolicy.preserveOnRefreshFailure
+        : _UnauthorizedPolicy.standard,
   );
 
   Stream<List<int>> _bytes(
@@ -176,6 +286,8 @@ class AppApi {
     Json? body,
     void Function(int)? onStatus,
     Future<void> Function()? beforeSend,
+    void Function()? checkBeforeSend,
+    _UnauthorizedPolicy unauthorizedPolicy = _UnauthorizedPolicy.standard,
   }) async* {
     String? access;
     if (op.secured) {
@@ -191,6 +303,7 @@ class AppApi {
       // the token that is current after that suspension, not the pre-guard one.
       access = sessions.require(scope!).access;
     }
+    checkBeforeSend?.call();
     var response = await _send(op, path, query, body, access);
     if (op.secured && response.statusCode == 401) {
       await response.stream.listen(null).cancel();
@@ -199,17 +312,22 @@ class AppApi {
       } on SessionChanged {
         rethrow;
       } catch (_) {
-        // Authentication probes are allowed to surface a transient refresh
-        // failure without discarding a still-valid local session.
-        if (op == AppOp.getMe) rethrow;
+        // _refresh already clears on confirmed credential rejection. Callers
+        // with retry bounds to preserve can surface unconfirmed failures.
+        if (op == AppOp.getMe ||
+            unauthorizedPolicy != _UnauthorizedPolicy.standard) {
+          rethrow;
+        }
         await _rejectUnauthorized(scope!);
       }
       // Token refresh can take long enough for consent or membership to change.
       // Recheck the caller's fail-closed condition before replaying any body.
       await beforeSend?.call();
       final replayAccess = sessions.require(scope).access;
+      checkBeforeSend?.call();
       response = await _send(op, path, query, body, replayAccess);
-      if (response.statusCode == 401) {
+      if (response.statusCode == 401 &&
+          unauthorizedPolicy != _UnauthorizedPolicy.healthGate) {
         await response.stream.listen(null).cancel();
         await _rejectUnauthorized(scope);
       }
@@ -231,6 +349,25 @@ class AppApi {
     Map<String, String> query = const {},
     Json? body,
   }) => _json(op, scope: scope, path: path, query: query, body: body);
+
+  /// Read-only probes for the T28 collection/upload gate. A failed probe
+  /// blocks collection without discarding retry bounds. Only a definitive
+  /// refresh rejection (handled by [_refresh]) ends the local session.
+  Future<Json> jsonForHealthUploadGate(
+    AppOp op, {
+    required AccountScope scope,
+    Map<String, String> query = const {},
+  }) {
+    if (op != AppOp.listConsents && op != AppOp.getEntitlements) {
+      throw ArgumentError.value(op, 'op', 'Not a health upload gate query');
+    }
+    return _json(
+      op,
+      scope: scope,
+      query: query,
+      unauthorizedPolicy: _UnauthorizedPolicy.healthGate,
+    );
+  }
 
   Future<Json> jsonGuarded(
     AppOp op, {
@@ -255,6 +392,7 @@ class AppApi {
     Map<String, String> query = const {},
     Json? body,
     Future<void> Function()? beforeSend,
+    _UnauthorizedPolicy unauthorizedPolicy = _UnauthorizedPolicy.standard,
   }) async {
     if (op.accept != 'application/json') throw ArgumentError('请使用流式接口');
     final result =
@@ -266,6 +404,7 @@ class AppApi {
                 query: query,
                 body: body,
                 beforeSend: beforeSend,
+                unauthorizedPolicy: unauthorizedPolicy,
               ).transform(utf8.decoder).join(),
             )
             as Json;
@@ -291,14 +430,81 @@ class AppApi {
     }
   }
 
+  /// The captured tokens are used only for this foreground attempt. Durable
+  /// retries carry the account-bound intent, never these credentials.
+  Future<LogoutResult> logoutWithResult(AccountScope scope) async =>
+      (await _logout(scope)).result;
+
+  /// Adapter for the existing UI until it consumes [logoutWithResult]. Do not
+  /// publish a legacy notice from an exit that has since been superseded.
   Future<void> logout(AccountScope scope) async {
+    final outcome = await _logout(scope);
+    if (!sessions.isCurrentLogout(outcome.result.round)) return;
+    final legacyError =
+        outcome.localError ?? outcome.withdrawalError ?? outcome.serverError;
+    if (legacyError != null) throw legacyError;
+  }
+
+  Future<
+    ({
+      LogoutResult result,
+      Object? localError,
+      Object? withdrawalError,
+      Object? serverError,
+    })
+  >
+  _logout(AccountScope scope) async {
     final tokens = sessions.require(scope);
-    final cleared = sessions.clear(); // Invalidate synchronously, even offline.
-    await cleared;
-    final response = await _send(AppOp.logout, {}, {}, {
-      'refresh_token': tokens.refresh,
-    }, tokens.access);
-    await _success(response, AppOp.logout);
-    await response.stream.drain<void>().timeout(_timeout);
+    final (:round, :cleanup) = sessions.beginLogout(scope);
+    final local = await cleanup;
+    var health = switch (local.withdrawal) {
+      LogoutWithdrawalEvidence.none => LogoutHealthStatus.notRequired,
+      LogoutWithdrawalEvidence.unknown => LogoutHealthStatus.needsDecision,
+      _ => LogoutHealthStatus.unconfirmed,
+    };
+    Object? withdrawalError;
+    if (local.withdrawal == LogoutWithdrawalEvidence.explicit) {
+      try {
+        await _withdrawHealth(tokens, round);
+        health = LogoutHealthStatus.confirmed;
+      } on Object catch (error) {
+        withdrawalError = error;
+      }
+      if (health == LogoutHealthStatus.confirmed && local.error == null) {
+        try {
+          await sessions.acknowledgeLogoutWithdrawal(round);
+        } on Object {
+          // A failed acknowledgment leaves the outbox available for an
+          // idempotent retry. It does not undo the server's confirmation.
+        }
+      }
+    }
+    Object? serverError;
+    var serverLogout = LogoutStatus.unconfirmed;
+    if (local.error is! CleanupEvidenceUnavailable) {
+      try {
+        final response = await _send(AppOp.logout, {}, {}, {
+          'refresh_token': tokens.refresh,
+        }, tokens.access);
+        await _success(response, AppOp.logout);
+        await response.stream.drain<void>().timeout(_timeout);
+        serverLogout = LogoutStatus.confirmed;
+      } on Object catch (error) {
+        serverError = error;
+      }
+    }
+    return (
+      result: LogoutResult(
+        round: round,
+        localCleanup: local.error == null
+            ? LogoutStatus.confirmed
+            : LogoutStatus.unconfirmed,
+        healthWithdrawal: health,
+        serverLogout: serverLogout,
+      ),
+      localError: local.error,
+      withdrawalError: withdrawalError,
+      serverError: serverError,
+    );
   }
 }

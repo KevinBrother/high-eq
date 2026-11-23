@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
 import '../../integration_test/smoke_test.dart' as suite;
+import '../../integration_test/t28_health_platform_test.dart' as health;
 
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -23,6 +24,7 @@ void main() {
     binding.framePolicy = previous;
   });
   suite.main();
+  health.main();
   binding.allTestsPassed.future.then((passed) async {
     final count = binding.results.length;
     final file = File('${Directory.systemTemp.path}/t16-smoke.new');

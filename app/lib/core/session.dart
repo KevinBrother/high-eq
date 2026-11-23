@@ -9,6 +9,9 @@ abstract interface class SecretStore {
   Future<void> replace(String? value);
 }
 
+typedef DirectoryWipe = Future<void> Function(Directory directory);
+typedef CacheRead = Future<List<int>> Function(File file);
+
 class Tokens {
   final String account, access, refresh;
   final DateTime expires;
@@ -33,7 +36,27 @@ class Tokens {
 
 enum CacheKind { continuation, draft, recording, queue }
 
+enum _CleanupIntent { pending, absent, setup, explicit, unknown }
+
+class _CleanupMarker {
+  const _CleanupMarker(this.accountTag, this.intent);
+  final String accountTag;
+  final _CleanupIntent intent;
+
+  _CleanupMarker withIntent(_CleanupIntent next) =>
+      _CleanupMarker(accountTag, next);
+}
+
 class SessionChanged implements Exception {}
+
+/// The queue has not been classified: its bytes could not be read this round.
+/// Unlike unknown contents, this must not authorize network calls or a wipe.
+class CleanupEvidenceUnavailable extends FileSystemException {
+  const CleanupEvidenceUnavailable([this.checkpointError])
+    : super('无法读取待清理的健康队列');
+
+  final Object? checkpointError;
+}
 
 /// Capture this handle when scheduling work, never look up the current user at dispatch.
 class AccountScope {
@@ -41,10 +64,27 @@ class AccountScope {
   final String account;
 }
 
+/// An in-process exit identity. A scope can never represent a later login of
+/// the same account; the generation also fences restore and failed activations.
+final class LogoutRound {
+  const LogoutRound._(this.scope, this._generation, this._owner);
+  final AccountScope scope;
+  final int _generation;
+  final Object _owner;
+}
+
+enum LogoutWithdrawalEvidence { none, explicit, unknown, unavailable }
+
+typedef _CacheOwner = ({String account, SecretKey key});
+typedef _StoredCache = ({Tokens? tokens, _CacheOwner cache});
+
 class Sessions {
+  static const healthQueueKey = 't28.history.v1';
   final SecretStore _secret;
   final Directory
   _directory; // Dedicated to this backend; never a shared directory.
+  final DirectoryWipe _wipe;
+  final CacheRead _readCache;
   final _cipher = AesGcm.with256bits();
   Future<void> _tail = Future.value();
   final Map<AccountScope, Map<String, Future<void>>> _exclusiveTails = {};
@@ -53,8 +93,33 @@ class Sessions {
   AccountScope? get _active => _identity.value;
   SecretKey? _key;
   Tokens? _tokens;
+  SecretKey? _withdrawalsKey;
+  final _withdrawals = <String>{};
+  final _persistedWithdrawals = <String>{};
+  SecretKey? _unknownWithdrawalsKey;
+  final _unknownWithdrawals = <String>{};
+  final _persistedUnknownWithdrawals = <String>{};
   int _generation = 0;
-  Sessions(this._secret, this._directory);
+  final _roundOwner = Object();
+  static const _cacheReadAttempts = 3;
+  static const _cleanupWriteAttempts = 3;
+  static const _retryDelay = Duration(milliseconds: 10);
+  static const _cleanupMarkerName = '.t28-cleanup.v1';
+  Sessions(
+    this._secret,
+    this._directory, {
+    DirectoryWipe? wipeDirectory,
+    CacheRead? readCache,
+  }) : _wipe = wipeDirectory ?? _defaultWipeDirectory,
+       _readCache = readCache ?? _defaultReadCache;
+
+  static Future<List<int>> _defaultReadCache(File file) => file.readAsBytes();
+
+  static Future<void> _defaultWipeDirectory(Directory directory) async {
+    if (await directory.exists()) await directory.delete(recursive: true);
+    await directory.create(recursive: true);
+  }
+
   AccountScope? get active => _active;
   Tokens require(AccountScope scope) {
     if (!identical(scope, _active)) throw SessionChanged();
@@ -102,52 +167,455 @@ class Sessions {
     if (_generation != generation) throw SessionChanged();
   }
 
-  int _invalidate() {
-    _identity.value = null;
+  Future<T> _transition<T>(Future<T> Function(int generation) action) {
+    final generation = ++_generation;
     _tokens = null;
     _key = null;
-    return ++_generation;
+    // Enqueue before notifying listeners, which may synchronously start the
+    // next transition. No later transition can overtake this cleanup.
+    final result = _serial(() => action(generation));
+    _identity.value = null;
+    return result;
   }
 
-  Future<void> _wipe() async {
-    // Destroy decryption material first, including after a process interruption.
-    await _secret.replace(null);
-    if (await _directory.exists()) await _directory.delete(recursive: true);
+  Future<void> _wipeDirectory() => _wipe(_directory);
+
+  File get _cleanupMarkerFile => File('${_directory.path}/$_cleanupMarkerName');
+
+  Future<String> _accountTag(String account) async {
+    final digest = await Sha256().hash(utf8.encode(account));
+    return base64UrlEncode(digest.bytes);
+  }
+
+  Future<void> _writeCleanupMarker(_CleanupMarker marker) async {
     await _directory.create(recursive: true);
+    final target = _cleanupMarkerFile;
+    final temp = File('${target.path}.tmp');
+    final raw = jsonEncode({
+      'account_tag': marker.accountTag,
+      'kind': CacheKind.queue.name,
+      'id': healthQueueKey,
+      'intent': marker.intent.name,
+    });
+    await temp.writeAsString(raw, flush: true);
+    await temp.rename(target.path);
   }
 
-  Future<void> restore() {
-    final generation = _invalidate();
-    return _serial(() async {
-      final raw = await _secret.read();
-      if (raw == null) {
-        await _wipe();
-        return;
+  Future<_CleanupMarker?> _readCleanupMarker() async {
+    final file = _cleanupMarkerFile;
+    if (!await file.exists()) return null;
+    final value = jsonDecode(await file.readAsString());
+    if (value is! Map) throw const FormatException('无效的清理标记');
+    final tag = value['account_tag'];
+    final intentName = value['intent'];
+    if (tag is! String ||
+        tag.isEmpty ||
+        value['kind'] != CacheKind.queue.name ||
+        value['id'] != healthQueueKey) {
+      throw const FormatException('无效的清理标记');
+    }
+    _CleanupIntent? intent;
+    for (final candidate in _CleanupIntent.values) {
+      if (candidate.name == intentName) intent = candidate;
+    }
+    if (intent == null) {
+      throw const FormatException('无效的清理标记');
+    }
+    return _CleanupMarker(tag, intent);
+  }
+
+  void _recordCleanupIntent(String account, _CleanupIntent intent) {
+    if (intent == _CleanupIntent.explicit) {
+      _withdrawals.add(account);
+      _unknownWithdrawals.remove(account);
+      return;
+    }
+    if (intent == _CleanupIntent.unknown && !_withdrawals.contains(account)) {
+      _unknownWithdrawals.add(account);
+    }
+  }
+
+  Future<void> _tryWriteCleanupMarker(_CleanupMarker marker) async {
+    try {
+      await _writeCleanupMarker(marker);
+    } on Object {
+      // The encrypted outbox write below is the primary durable copy. A marker
+      // written before the failure may still recover the exact intent.
+      return;
+    }
+  }
+
+  Future<_StoredCache?> _readStoredCache() async {
+    final raw = await _secret.read();
+    if (raw == null) {
+      _persistedWithdrawals.clear();
+      _persistedUnknownWithdrawals.clear();
+      return null;
+    }
+    final data = jsonDecode(raw);
+    if (data is! Map<String, dynamic>) {
+      throw const FormatException('无效的登录信息');
+    }
+    await _loadWithdrawals(data);
+    final tokenData = data['tokens'];
+    final keyData = data['key'];
+    final deferred = data['cleanup_queue'];
+    if (deferred != null) {
+      if (tokenData != null || keyData != null || deferred is! Map) {
+        throw const FormatException('无效的清理队列');
       }
-      final data = jsonDecode(raw);
-      final tokens = Tokens.fromJson(data['tokens']);
-      final key = SecretKey(base64Decode(data['key']));
-      await _directory.create(recursive: true);
-      await for (final entry in _directory.list()) {
-        if (entry is File &&
-            (entry.path.endsWith('.new') ||
-                (entry.path.endsWith('.audio') && await _expired(entry)))) {
-          await entry.delete();
+      final account = deferred['account'];
+      final key = deferred['key'];
+      if (account is! String || account.isEmpty || key is! String) {
+        throw const FormatException('无效的清理队列');
+      }
+      return (
+        tokens: null,
+        cache: (account: account, key: SecretKey(base64Decode(key))),
+      );
+    }
+    if (tokenData == null && keyData == null) return null;
+    if (tokenData is! Map || keyData is! String) {
+      throw const FormatException('无效的登录信息');
+    }
+    final tokens = Tokens.fromJson(tokenData.cast<String, dynamic>());
+    return (
+      tokens: tokens,
+      cache: (account: tokens.account, key: SecretKey(base64Decode(keyData))),
+    );
+  }
+
+  bool get _hasUncommittedIntents =>
+      !_persistedWithdrawals.containsAll(_withdrawals) ||
+      !_persistedUnknownWithdrawals.containsAll(_unknownWithdrawals);
+
+  _CacheOwner? get _liveCache {
+    final account = _active?.account;
+    final key = _key;
+    return account == null || key == null ? null : (account: account, key: key);
+  }
+
+  Future<void> _retireCurrentOrStored(
+    _CacheOwner? liveCache, {
+    void Function()? onEvidence,
+  }) async {
+    if (liveCache != null) {
+      // An exposed scope already loaded the vault and has no old journal.
+      // Capture its cache key before invalidation so a locked vault does not
+      // prevent journaling the exit or inspecting the encrypted queue.
+      await _retire(liveCache, null, onEvidence: onEvidence);
+      return;
+    }
+    await _retireStored(
+      await _readStoredCache(),
+      await _readCleanupMarker(),
+      onEvidence: onEvidence,
+    );
+  }
+
+  Future<void> _retireStored(
+    _StoredCache? stored,
+    _CleanupMarker? marker, {
+    void Function()? onEvidence,
+  }) => _retire(
+    stored?.cache,
+    marker,
+    deferred: stored != null && stored.tokens == null,
+    onEvidence: onEvidence,
+  );
+
+  /// Remove credentials before wiping. If reading the queue fails, checkpoint
+  /// only its owner and key instead, and leave the ciphertext for recovery.
+  Future<void> _retire(
+    _CacheOwner? owner,
+    _CleanupMarker? marker, {
+    bool deferred = false,
+    void Function()? onEvidence,
+  }) async {
+    if (owner != null) {
+      final account = owner.account;
+      final tag = await _accountTag(account);
+      final matching = marker?.accountTag == tag ? marker : null;
+      // For a live login, a mismatched journal is a residue of the old
+      // activate ordering. A credential-free checkpoint, however, is itself
+      // proof of unfinished retirement and does not depend on the journal.
+      if (marker == null || matching != null || deferred) {
+        final journal = matching ?? _CleanupMarker(tag, _CleanupIntent.pending);
+        if (matching == null) await _tryWriteCleanupMarker(journal);
+        var intent = journal.intent;
+        if (intent == _CleanupIntent.pending ||
+            intent == _CleanupIntent.unknown) {
+          late final _CleanupIntent evidence;
+          try {
+            evidence = await _queueIntent(account, owner.key);
+          } on CleanupEvidenceUnavailable {
+            if (!deferred) {
+              try {
+                await _persistRaw(
+                  null,
+                  null,
+                  retryWrite: true,
+                  deferred: owner,
+                );
+              } on Object catch (error) {
+                // The journal still fences restore if the vault also failed.
+                // Do not let that failure turn this into a network attempt.
+                throw CleanupEvidenceUnavailable(error);
+              }
+            }
+            rethrow;
+          }
+          if (intent == _CleanupIntent.pending ||
+              evidence == _CleanupIntent.explicit) {
+            intent = evidence;
+          }
+        }
+        _recordCleanupIntent(account, intent);
+        if (intent != journal.intent) {
+          await _tryWriteCleanupMarker(journal.withIntent(intent));
         }
       }
-      _check(generation);
-      _key = key;
-      _tokens = tokens;
-      _identity.value = AccountScope._(tokens.account);
-    });
+    }
+    onEvidence?.call();
+    if (owner != null || _hasUncommittedIntents) {
+      await _persistRaw(null, null, retryWrite: true);
+    }
+    await _wipeDirectory();
   }
 
+  Future<({SecretKey? key, Set<String> accounts})> _decryptAccountSet(
+    Map data, {
+    required String keyField,
+    required String boxField,
+    required String aad,
+  }) async {
+    final keyRaw = data[keyField];
+    final boxRaw = data[boxField];
+    if (keyRaw == null && boxRaw == null) {
+      return (key: null, accounts: <String>{});
+    }
+    if (keyRaw is! String || boxRaw is! String) {
+      throw const FormatException('无效的撤回意图');
+    }
+    final key = SecretKey(base64Decode(keyRaw));
+    final box = SecretBox.fromConcatenation(
+      base64Decode(boxRaw),
+      nonceLength: _cipher.nonceLength,
+      macLength: _cipher.macAlgorithm.macLength,
+    );
+    final clear = await _cipher.decrypt(
+      box,
+      secretKey: key,
+      aad: utf8.encode(aad),
+    );
+    final value = jsonDecode(utf8.decode(clear));
+    if (value is! List || value.any((e) => e is! String)) {
+      throw const FormatException('无效的撤回意图');
+    }
+    return (key: key, accounts: value.cast<String>().toSet());
+  }
+
+  Future<void> _loadWithdrawals(Map data) async {
+    final explicit = await _decryptAccountSet(
+      data,
+      keyField: 'withdrawals_key',
+      boxField: 'withdrawals',
+      aad: 'withdrawals:v1',
+    );
+    final unknown = await _decryptAccountSet(
+      data,
+      keyField: 'unknown_withdrawals_key',
+      boxField: 'unknown_withdrawals',
+      aad: 'unknown-withdrawals:v1',
+    );
+    // Keep an in-memory intent that has not reached secure storage yet. The
+    // persisted sets remain authoritative only for deciding whether a retry is
+    // needed; they must not erase a newer local safety signal.
+    _withdrawals.addAll(explicit.accounts);
+    _persistedWithdrawals
+      ..clear()
+      ..addAll(explicit.accounts);
+    if (_withdrawals.isEmpty) {
+      _withdrawalsKey = null;
+    } else if (explicit.key != null) {
+      _withdrawalsKey = explicit.key;
+    }
+    _unknownWithdrawals.addAll(unknown.accounts);
+    _persistedUnknownWithdrawals
+      ..clear()
+      ..addAll(unknown.accounts);
+    if (_unknownWithdrawals.isEmpty) {
+      _unknownWithdrawalsKey = null;
+    } else if (unknown.key != null) {
+      _unknownWithdrawalsKey = unknown.key;
+    }
+    // An explicit local confirmation is stronger evidence than an earlier
+    // unreadable snapshot. Never leave one account in both account sets.
+    _unknownWithdrawals.removeAll(_withdrawals);
+    _persistedUnknownWithdrawals.removeAll(_persistedWithdrawals);
+  }
+
+  Future<T> _retryCacheRead<T>(Future<T> Function() action) async {
+    Object? failure;
+    StackTrace? stack;
+    for (var attempt = 0; attempt < _cacheReadAttempts; attempt++) {
+      try {
+        return await action();
+      } on PathNotFoundException {
+        rethrow;
+      } on FileSystemException catch (error, trace) {
+        failure = error;
+        stack = trace;
+        if (attempt + 1 < _cacheReadAttempts) {
+          await Future<void>.delayed(_retryDelay);
+        }
+      }
+    }
+    Error.throwWithStackTrace(failure!, stack!);
+  }
+
+  Future<void> _replaceSecret(String? value, {required bool retry}) async {
+    final attempts = retry ? _cleanupWriteAttempts : 1;
+    Object? failure;
+    StackTrace? stack;
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      try {
+        await _secret.replace(value);
+        return;
+      } on Object catch (error, trace) {
+        failure = error;
+        stack = trace;
+        // A platform write can commit and then lose its acknowledgement.
+        // Compare the exact envelope (including randomized ciphertext), never
+        // treat a different snapshot as evidence that this write succeeded.
+        try {
+          if (await _secret.read() == value) return;
+        } on Object {
+          // A later attempt or transition will inspect the durable state.
+        }
+        if (attempt + 1 < attempts) {
+          await Future<void>.delayed(_retryDelay);
+        }
+      }
+    }
+    Error.throwWithStackTrace(failure!, stack!);
+  }
+
+  Future<({SecretKey key, String keyRaw, String boxRaw})> _encryptAccountSet(
+    Set<String> accounts,
+    SecretKey? currentKey,
+    String aad,
+  ) async {
+    final key = currentKey ?? await _cipher.newSecretKey();
+    final values = accounts.toList()..sort();
+    final box = await _cipher.encrypt(
+      utf8.encode(jsonEncode(values)),
+      secretKey: key,
+      aad: utf8.encode(aad),
+    );
+    return (
+      key: key,
+      keyRaw: base64Encode(await key.extractBytes()),
+      boxRaw: base64Encode(box.concatenation()),
+    );
+  }
+
+  Future<void> _persistRaw(
+    Tokens? tokens,
+    SecretKey? key, {
+    bool retryWrite = false,
+    _CacheOwner? deferred,
+  }) async {
+    assert(deferred == null || (tokens == null && key == null));
+    _unknownWithdrawals.removeAll(_withdrawals);
+    final data = <String, dynamic>{};
+    if (deferred != null) {
+      data['cleanup_queue'] = {
+        'account': deferred.account,
+        'key': base64Encode(await deferred.key.extractBytes()),
+      };
+    } else if (tokens != null && key != null) {
+      data['tokens'] = tokens.toJson();
+      data['key'] = base64Encode(await key.extractBytes());
+    }
+    SecretKey? nextWithdrawalsKey;
+    if (_withdrawals.isNotEmpty) {
+      final encoded = await _encryptAccountSet(
+        _withdrawals,
+        _withdrawalsKey,
+        'withdrawals:v1',
+      );
+      nextWithdrawalsKey = encoded.key;
+      data['withdrawals_key'] = encoded.keyRaw;
+      data['withdrawals'] = encoded.boxRaw;
+    }
+    SecretKey? nextUnknownWithdrawalsKey;
+    if (_unknownWithdrawals.isNotEmpty) {
+      final encoded = await _encryptAccountSet(
+        _unknownWithdrawals,
+        _unknownWithdrawalsKey,
+        'unknown-withdrawals:v1',
+      );
+      nextUnknownWithdrawalsKey = encoded.key;
+      data['unknown_withdrawals_key'] = encoded.keyRaw;
+      data['unknown_withdrawals'] = encoded.boxRaw;
+    }
+    await _replaceSecret(
+      data.isEmpty ? null : jsonEncode(data),
+      retry: retryWrite,
+    );
+    _withdrawalsKey = nextWithdrawalsKey;
+    _unknownWithdrawalsKey = nextUnknownWithdrawalsKey;
+    _persistedWithdrawals
+      ..clear()
+      ..addAll(_withdrawals);
+    _persistedUnknownWithdrawals
+      ..clear()
+      ..addAll(_unknownWithdrawals);
+  }
+
+  Future<void> _persistCurrent() => _persistRaw(_tokens, _key);
+
+  Future<void> restore() => _transition((generation) async {
+    final stored = await _readStoredCache();
+    final tokens = stored?.tokens;
+    final marker = await _readCleanupMarker();
+    if (stored == null ||
+        tokens == null ||
+        (marker != null &&
+            marker.accountTag == await _accountTag(tokens.account))) {
+      await _retireStored(stored, marker);
+      return;
+    }
+    if (marker != null) {
+      // Frozen versions could commit B before deleting A's journal. B was
+      // not exposed and A's recoverable outbox was included in that write.
+      // Clean the residue before exposing B; a failed wipe can be retried.
+      await _wipeDirectory();
+    }
+    await _directory.create(recursive: true);
+    await for (final entry in _directory.list()) {
+      if (entry is File &&
+          (entry.path.endsWith('.new') ||
+              (entry.path.endsWith('.audio') && await _expired(entry)))) {
+        await entry.delete();
+      }
+    }
+    _check(generation);
+    _key = stored.cache.key;
+    _tokens = tokens;
+    _identity.value = AccountScope._(tokens.account);
+  });
+
   Future<AccountScope> activate(Tokens tokens) {
-    final generation = _invalidate();
-    return _serial(() async {
-      await _wipe();
+    final previous = _liveCache;
+    return _transition((generation) async {
+      // Do not install a new login while the previous retirement journal can
+      // still be present. Retries first converge to a logged-out snapshot.
+      await _retireCurrentOrStored(previous);
       final key = await _cipher.newSecretKey();
-      await _persist(tokens, key);
+      _check(generation);
+      await _persistRaw(tokens, key);
       _check(generation);
       _tokens = tokens;
       _key = key;
@@ -155,22 +623,188 @@ class Sessions {
     });
   }
 
-  Future<void> _persist(Tokens tokens, SecretKey key) async => _secret.replace(
-    jsonEncode({
-      'tokens': tokens.toJson(),
-      'key': base64Encode(await key.extractBytes()),
-    }),
-  );
   Future<void> rotate(AccountScope scope, Tokens tokens) => _serial(() async {
     require(scope);
     if (tokens.account != scope.account) throw SessionChanged();
-    await _persist(tokens, _key!);
+    await _persistRaw(tokens, _key!);
     require(scope);
     _tokens = tokens;
   });
   Future<void> clear() {
-    _invalidate();
-    return _serial(_wipe);
+    final previous = _liveCache;
+    return _transition((_) => _retireCurrentOrStored(previous));
+  }
+
+  /// Starts the same retirement transaction as an auth rejection. Snapshot
+  /// the withdrawal evidence in that transaction, not from a later login.
+  ({
+    LogoutRound round,
+    Future<({Object? error, LogoutWithdrawalEvidence withdrawal})> cleanup,
+  })
+  beginLogout(AccountScope scope) {
+    require(scope);
+    final round = LogoutRound._(scope, _generation + 1, _roundOwner);
+    final previous = _liveCache;
+    final cleanup = _transition((_) async {
+      var withdrawal = LogoutWithdrawalEvidence.unavailable;
+      try {
+        await _retireCurrentOrStored(
+          previous,
+          onEvidence: () => withdrawal = _logoutEvidence(scope),
+        );
+        return (error: null, withdrawal: withdrawal);
+      } on CleanupEvidenceUnavailable catch (error) {
+        return (error: error, withdrawal: LogoutWithdrawalEvidence.unavailable);
+      } on Object catch (error) {
+        if (withdrawal == LogoutWithdrawalEvidence.unavailable) {
+          final known = _logoutEvidence(scope);
+          if (known != LogoutWithdrawalEvidence.none) withdrawal = known;
+        }
+        return (error: error, withdrawal: withdrawal);
+      }
+    });
+    return (round: round, cleanup: cleanup);
+  }
+
+  LogoutWithdrawalEvidence _logoutEvidence(AccountScope scope) {
+    if (hasWithdrawalIntent(scope)) return LogoutWithdrawalEvidence.explicit;
+    if (hasUnknownWithdrawal(scope)) return LogoutWithdrawalEvidence.unknown;
+    return LogoutWithdrawalEvidence.none;
+  }
+
+  bool isCurrentLogout(LogoutRound round) =>
+      identical(round._owner, _roundOwner) &&
+      _generation == round._generation &&
+      _active == null;
+
+  Future<void> acknowledgeLogoutWithdrawal(LogoutRound round) =>
+      _serial(() async {
+        if (isCurrentLogout(round)) await _removeWithdrawalIntent(round.scope);
+      });
+
+  /// A withdrawal intent is a minimal encrypted outbox entry, separate from
+  /// the session and collection queue. It may outlive logout, but it is never
+  /// sent using another account's credentials.
+  bool hasWithdrawalIntent(AccountScope scope) =>
+      _withdrawals.contains(scope.account);
+
+  /// An unknown queue result is not proof of withdrawal. It blocks health
+  /// collection until this account's owner explicitly resolves it.
+  bool hasUnknownWithdrawal(AccountScope scope) =>
+      _unknownWithdrawals.contains(scope.account);
+
+  Future<void> addWithdrawalIntent(AccountScope scope) => _serial(() async {
+    require(scope);
+    final added = _withdrawals.add(scope.account);
+    final resolvedUnknown = _unknownWithdrawals.remove(scope.account);
+    // A failed outbox write leaves the intent in memory, but it must not make
+    // later retries look durable. Retry the encrypted write until this account
+    // is confirmed in the persisted set.
+    if (!added &&
+        !resolvedUnknown &&
+        _persistedWithdrawals.contains(scope.account) &&
+        !_persistedUnknownWithdrawals.contains(scope.account)) {
+      return;
+    }
+    await _persistCurrent();
+  });
+
+  /// Records the account owner's explicit decision for an unknown queue result.
+  ///
+  /// [withdraw] promotes the uncertainty to the reportable withdrawal outbox;
+  /// false clears only the uncertainty so a later explicit enable may collect
+  /// again. In both cases the decision is account-scoped and durable.
+  Future<void> resolveUnknownWithdrawal(
+    AccountScope scope, {
+    required bool withdraw,
+  }) {
+    if (withdraw) return addWithdrawalIntent(scope);
+    return _serial(() async {
+      require(scope);
+      final removed = _unknownWithdrawals.remove(scope.account);
+      if (!removed && !_persistedUnknownWithdrawals.contains(scope.account)) {
+        return;
+      }
+      final previousKey = _unknownWithdrawalsKey;
+      if (_unknownWithdrawals.isEmpty) _unknownWithdrawalsKey = null;
+      try {
+        await _persistCurrent();
+      } on Object {
+        _unknownWithdrawals.add(scope.account);
+        _unknownWithdrawalsKey = previousKey;
+        rethrow;
+      }
+    });
+  }
+
+  Future<_CleanupIntent> _queueIntent(String account, SecretKey key) async {
+    const kind = CacheKind.queue;
+    const id = healthQueueKey;
+    final file = await _file(kind, id);
+    final List<int> ciphertext;
+    try {
+      // An actual read distinguishes a missing path from permission or I/O
+      // errors; a false existence check is not proof of absence.
+      ciphertext = await _retryCacheRead(() => _readCache(file));
+    } on PathNotFoundException {
+      return _CleanupIntent.absent;
+    } on Object {
+      throw const CleanupEvidenceUnavailable();
+    }
+    try {
+      final box = SecretBox.fromConcatenation(
+        ciphertext,
+        nonceLength: _cipher.nonceLength,
+        macLength: _cipher.macAlgorithm.macLength,
+      );
+      final bytes = await _cipher.decrypt(
+        box,
+        secretKey: key,
+        aad: utf8.encode('$account:${kind.name}:$id'),
+      );
+      final value = jsonDecode(utf8.decode(bytes));
+      if (value is! Map<String, dynamic>) return _CleanupIntent.unknown;
+      if (value['mode'] == 'withdraw' && value['withdrawal'] == 'explicit') {
+        return _CleanupIntent.explicit;
+      }
+      // The only known non-withdrawal tombstone is the setup state written
+      // before collection starts. Any other readable state is not proof.
+      if (value['mode'] == 'withdraw' && value['withdrawal'] == null) {
+        return _CleanupIntent.setup;
+      }
+      return _CleanupIntent.unknown;
+    } on Object {
+      return _CleanupIntent.unknown;
+    }
+  }
+
+  Future<void> removeWithdrawalIntent(AccountScope scope) => _serial(() async {
+    require(scope);
+    await _removeWithdrawalIntent(scope);
+  });
+
+  Future<void> _removeWithdrawalIntent(AccountScope scope) async {
+    final removedWithdrawal = _withdrawals.remove(scope.account);
+    final removedUnknown = _unknownWithdrawals.remove(scope.account);
+    if (!removedWithdrawal &&
+        !removedUnknown &&
+        !_persistedWithdrawals.contains(scope.account) &&
+        !_persistedUnknownWithdrawals.contains(scope.account)) {
+      return;
+    }
+    final previousWithdrawalsKey = _withdrawalsKey;
+    final previousUnknownKey = _unknownWithdrawalsKey;
+    if (_withdrawals.isEmpty) _withdrawalsKey = null;
+    if (_unknownWithdrawals.isEmpty) _unknownWithdrawalsKey = null;
+    try {
+      await _persistCurrent();
+    } on Object {
+      if (removedWithdrawal) _withdrawals.add(scope.account);
+      if (removedUnknown) _unknownWithdrawals.add(scope.account);
+      _withdrawalsKey = previousWithdrawalsKey;
+      _unknownWithdrawalsKey = previousUnknownKey;
+      rethrow;
+    }
   }
 
   Future<bool> _expired(File file) async => !DateTime.now().isBefore(

@@ -4,7 +4,7 @@
 >
 > 已按主会话在 PG17 空库全量迁移后导出的 `verified-pg17-inventory.jsonl` 对固定基线 42 个 public 表/视图逐名核对（覆盖 42/42；本轮补入 7 个漏项）；后台员工表、平台配置、查询视图与普通用户数据分开列示，视图不计作物理副本。
 > 真实结构以固定基线的 `server/migrations/` 为准。`bytea` 本身不等于加密；本清单中的“AES-GCM”只适用于明确标注 `*_enc` 且由 `server/internal/fieldcrypt/cipher.go` 封装写入的字段。日志、备份、供应商侧和平台侧留存不在本仓库可见范围内，不能据本清单宣称已全部删除。`[待运营填写]` `[待 T35 对表]`
-> `f60ace3` 的 42 项是历史盘点。D14/D39/D40 登记后续 T25 数据；D23 登记 T23 的 `review_requests`、`review_tombstones`；D11/D12/D41/D42 登记 T21 的四张回复请求与反馈表；D43 登记 T26 的单项复习调度投影，D44 登记 T29 的本机语音队列、录音索引和录音；D37–D44 均不回填为旧基线。D37 是 T22 本机分享交接，不是后端留存证据。本批后端不等于生产上线或供应商签收。
+> `f60ace3` 的 42 项是历史盘点。D14/D39/D40 登记后续 T25 数据；D23 登记 T23 的 `review_requests`、`review_tombstones`；D11/D12/D41/D42 登记 T21 的四张回复请求与反馈表；D43 登记 T26 的单项复习调度投影，D44 登记 T29 的本机语音队列、录音索引和录音，D45 登记 T28 的本机健康历史待发状态、采集边界与撤回意图；D37–D45 均不回填为旧基线。D37 是 T22 本机分享交接，不是后端留存证据。本批后端不等于生产上线或供应商签收。
 
 ## 1. 分类与关联原则
 
@@ -64,6 +64,7 @@
 | D42 | 回复普通效果最小回执 | `reply_outcome_receipts.feedback_id`、`user_id`、`source_id`、`source_kind`、`occurred_at`、`suggestion_index`、`accepted_at` | 非画像消费回执 | 仅保存不透明来源键、时间和建议序号；没有聊天、目的、建议或效果正文，也不保存可用密钥；每条新反馈均可产生此回执，但不复制加密反馈正文；带显式 `self_report` 时还会单独投递本人观察 | 随 `reply_feedback`、用户和源活动级联；不进入 `replies.json` 导出和画像；T35 公共导出/删除未接线 | `chat_import` / `2026-11` | T21 后端增量，不计入 `f60ace3` 的 42 项；仅证明代码与隔离测试边界 |
 | D43 | 单项训练复习调度投影 | `growth_drill_schedules.activity_id`、`target_item`、`level_id`、`schedule_enc`、`occurred_at`、`retry_at`、`closed_at`、`created_at` | 数值调度投影/关联元数据 | `activity_id` 主键且 `REFERENCES activities ON DELETE CASCADE`；分数和档位只在 `schedule_enc`（AES-GCM）中，表内没有明文 `score`/`band`，也不保存评分正文、引述或模型理由；目标项、关卡和时间为不透明调度元数据 | 0/5/9 为 `retry_now`，10/15/24 为 `retry_in_three_days`，25 为 `pass`；10–24 分按真实完成时刻 `occurred_at + 72h` 设置 `retry_at`。`closed_at` 是持久终态，旧完成事件重放不能复活已结清复习；删除 drill 活动级联删除调度，删除后不回填；T19 `drill_progress` 仍是完整单项历史唯一源。内部 `growth.json` 的 `record_type:"drill"` 只输出关卡、目标项、数值分档及发生/重练时间，通用导出/删除仍为 `501 not_implemented` | `practice` | T26 后端增量，不计入 `f60ace3` 的 42 项；合成试题/卡片未人工审题，真实模型、真机、律师和 T34 恢复后重删另验。 |
 | D44 | T29 本机语音待发队列、录音索引与 PCM | 本机队列、录音索引和录音文件；本机队列不含 PCM | 设备端源/副本 | 待发窗口与录音索引按账号作用域使用 AES-GCM 256 保存，AAD 绑定账号、`kind` 和 `id`；原始 PCM 仅在录音保留开启时按完整 30 秒窗口写入本机密文，不上传 | 仅完整 30 秒窗口入队；3 天到期后不可读并尽力删除；janitor 在启动、账号变化、每分钟 sweep 和 resume 清理，`Sessions.restore` 先清 `.new` 与过期 `.audio`；`voice` 撤回先停采、尝试清待传队列并删除本机录音/索引，失败标记保留且不补传；`audio_retention` 撤回只停回听、删除本机录音/索引并保留待传队列和 `voice`；会员到期清待发窗口，续费不补传；不计入旧 42 项 | `voice` / 待正式版本；`audio_retention` 独立授权且默认关 | T29 归档静态实现、未合入固定基线、真机待验 |
+| D45 | T28 本机健康历史待发状态与撤回意图 | 本机 `CacheKind.queue` / `t28.history.v1`；Sessions 加密撤回 outbox；不含设备健康样本或聚合正文 | 设备端控制/重试元数据 + 账号级撤回意图 | `t28.history.v1` 以 AES-GCM 256 保存，AAD 绑定账号、`queue` 和队列键；内容仅含 `mode`、`paid_until`、`grant`、`source`、`collection_from`、`cursor`、`pending_end`、`skipped_conflicts` 及显式撤回标记，不缓存测量值。原始记录仍由 Apple Health / Health Connect / Huawei Health 保管；HMS 插件原始返回和解析样本不写入本队列，归一化适配器只将心率、步数增量/时间及活动区间的 `exercise` 运动标志交给后续窗口聚合；显式撤回意图另存加密账号 outbox，只能由同一账号凭据重试。T28 仅 `apple_history`、`health_connect`、`huawei_history` 历史通道，不是实时 `watch_live`；OS 读权限不落本地逐项明细，Apple 隐藏单项授权，由每次 OS 查询过滤 | 队列无独立固定 TTL，每次进度覆盖保存；启动/恢复后重新校验会员、服务端 `health` 同意（精确 `updated_at`）、OS 可用性和前台门禁，再以 `ceil(now,30s)` 设新 `collection_from`。查询最多回看 24 小时、按 30 秒对齐并以最多 10 分钟分段重读 OS；重开、前台恢复或撤权停采不补读边界前数据，也不删除服务端既有窗口。上传字段仅 `channel:"health"`、UTC `starts_at`、`duration_seconds:30`、`source`、`exercise`、`heart_rate`/`hrv`/`cadence` 的 `mean`、`maximum`、`sample_count`、`valid_seconds`（HRV 不含 `valid_seconds`），不传原始样本或逐秒数组；服务端落库、180 天和专用窗口删除见 D18。登出在首个 `await` 前同步停采并使账号、令牌和账号密钥失效；队列落盘清理异步且可失败，短暂或持续读失败可能保留隔离加密队列证据，不能写成所有登出均已删除磁盘。仅已有明确 `explicit` 意图才发送服务端 `health:false`，普通登出不自动撤回线上同意；撤回失败仍保持本状态不可继续采集，并分别报告本机清理、健康撤回和服务端登出结果。显式撤回意图可跨登出重试但只匹配原账号；已到达云端的窗口不因登出或撤回自动删除，仍需专用窗口删除或 180 天清理；通用导出/删除未接线 | `health` / `2026-11`；设备授权按 Apple / Health Connect / Huawei 各自系统范围 | T28 客户端增量，不计入 `f60ace3` 的 42 项；静态代码与测试可核对，真机系统授权、后台恢复和厂商材料待验 |
 
 ## 3. 敏感字段加密核对
 
@@ -104,7 +105,7 @@ T25 后端增量新增 `profile_observations.fact_enc` 和 `activity_profile_con
 
 ## 6. 导出与删除验收清单
 
-- [ ] 固定基线通用 `GET /v1/me/export` 当前返回 `501 not_implemented`；T35 必须接线后才能验证模块清单覆盖 D01–D44 中应导出的个人数据，并排除密钥、HMAC、平台收据原文和他人数据。D37、D38、T25 的 D14/D39/D40、T21 的 D11/D12/D41/D42、T26 的 D43 及 T29 的 D44 均不计入 PG17 42 项，须另验设备端领取、场景冻结、双同意推理、回复删除后防重放、普通效果回执隔离、T26 调度投影和 T29 本机录音。模块内部导出/删除不等于 T35 公共入口。`[待 T35 对表]`
+- [ ] 固定基线通用 `GET /v1/me/export` 当前返回 `501 not_implemented`；T35 必须接线后才能验证模块清单覆盖 D01–D45 中应导出的个人数据，并排除密钥、HMAC、平台收据原文和他人数据。D37、D38、T25 的 D14/D39/D40、T21 的 D11/D12/D41/D42、T26 的 D43、T29 的 D44 及 T28 的 D45 均不计入 PG17 42 项，须另验设备端领取、场景冻结、双同意推理、回复删除后防重放、普通效果回执隔离、T26 调度投影、T29 本机录音和 T28 本机健康历史队列。模块内部导出/删除不等于 T35 公共入口。`[待 T35 对表]`
 - [ ] 固定基线通用 `DELETE /v1/me/data/:kind/:id` 当前返回 `501 not_implemented`；T35 接线后须能从源记录追到 `scores`、`growth_scores`、`growth_drill_schedules`、`ai_calls`、画像观察、计划和关联日志，并验证删除后重算不可回填。`[待 T35 对表]`
 - [ ] 注销冻结、15 天冷静期、撤销注销、按根清理和支付订单脱敏，分别核对线上签收。T23 已有账号注销前后显式清理 `review_tombstones` 的触发器与隔离后端断言；T35 仍须验证公共删除/注销入口的实际回执和全链路证明，不能把内部测试写成生产闭环。`[待 T35 对表]`
 - [ ] 健康/语音窗口专用时间删除保持按账号、渠道和 30 秒起点定位，越权、相邻窗口和其他账号不受影响；该能力与通用单条删除分开验收。`[待 T35 对表]`

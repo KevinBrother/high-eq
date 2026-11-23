@@ -8,6 +8,7 @@ facts from candidate evidence and keep unverified product goals marked as such.
 from __future__ import annotations
 
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -20,6 +21,16 @@ OLD_BASELINE = "bd6e34e0ce8f3b96da61f7eea2e391a40cdcf70c"
 
 def read(path: str | Path) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
+
+
+def git_show(path: str) -> str:
+    return subprocess.run(
+        ["git", "show", f"{BASELINE}:{path}"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
 
 
 def compliance_corpus() -> str:
@@ -61,24 +72,45 @@ class BaselineAndScopeContract(unittest.TestCase):
 
 class BaselineSourceFactsContract(unittest.TestCase):
     def test_android_and_ios_permissions_are_not_inflated(self) -> None:
+        baseline_manifest = git_show("app/android/app/src/main/AndroidManifest.xml")
+        baseline_permissions = re.findall(
+            r'android:name="android\.permission\.([^"]+)"', baseline_manifest
+        )
+        self.assertEqual(baseline_permissions, ["INTERNET"])
+
+        baseline_plist = git_show("app/ios/Runner/Info.plist")
+        baseline_entitlements = git_show("app/ios/Runner/Runner.entitlements")
+        self.assertNotIn("NSHealthShareUsageDescription", baseline_plist)
+        self.assertNotIn("NSMicrophoneUsageDescription", baseline_plist)
+        self.assertNotIn("com.apple.developer.healthkit", baseline_entitlements)
+
         manifest = read("app/android/app/src/main/AndroidManifest.xml")
-        permissions = re.findall(r'android:name="android\.permission\.([^"]+)"', manifest)
-        self.assertEqual(permissions, ["INTERNET", "RECORD_AUDIO"])
-        for forbidden in (
+        current_permissions = re.findall(
+            r'android:name="android\.permission\.([^"]+)"', manifest
+        )
+        for required in (
+            "INTERNET",
+            "RECORD_AUDIO",
             "ACTIVITY_RECOGNITION",
-            "READ_HEART_RATE",
-            "READ_HEART_RATE_VARIABILITY",
-            "READ_STEPS",
-            "READ_EXERCISE",
-            "health.READ",
+            "health.READ_HEART_RATE",
+            "health.READ_HEART_RATE_VARIABILITY",
+            "health.READ_STEPS",
+            "health.READ_EXERCISE",
         ):
-            self.assertNotIn(forbidden, manifest)
+            self.assertIn(required, current_permissions)
+        for forbidden in (
+            "health.WRITE_HEART_RATE",
+            "health.WRITE_STEPS",
+            "health.WRITE_EXERCISE",
+        ):
+            self.assertNotIn(forbidden, current_permissions)
 
         plist = read("app/ios/Runner/Info.plist")
         entitlements = read("app/ios/Runner/Runner.entitlements")
-        self.assertNotIn("NSHealthShareUsageDescription", plist)
+        self.assertIn("NSHealthShareUsageDescription", plist)
         self.assertIn("NSMicrophoneUsageDescription", plist)
-        self.assertNotIn("com.apple.developer.healthkit", entitlements)
+        self.assertNotIn("NSHealthUpdateUsageDescription", plist)
+        self.assertIn("<key>com.apple.developer.healthkit</key><true/>", entitlements)
 
         corpus = compliance_corpus()
         self.assertRegex(
@@ -87,7 +119,7 @@ class BaselineSourceFactsContract(unittest.TestCase):
         )
         self.assertRegex(
             corpus,
-            r"T29 归档[^\n]*(?:RECORD_AUDIO|麦克风)",
+            r"当前 T28 归档[^\n]*(?:ACTIVITY_RECOGNITION|Health Connect)",
         )
         self.assertRegex(
             corpus,
@@ -95,7 +127,7 @@ class BaselineSourceFactsContract(unittest.TestCase):
         )
         self.assertRegex(
             corpus,
-            r"iOS[^\n]*(?:没有|未包含|不存在)[^\n]*NSHealthShareUsageDescription",
+            r"当前 T28 归档[^\n]*(?:NSHealthShareUsageDescription|HealthKit)",
         )
 
     def test_incremental_modules_are_not_counted_as_baseline(self) -> None:
@@ -410,14 +442,26 @@ class BaselineSourceFactsContract(unittest.TestCase):
         self.assertRegex(privacy, r"/v1/me/export[^\n]*501 not_implemented")
         self.assertRegex(privacy, r"/v1/me/data/:kind/:id[^\n]*501 not_implemented")
 
+        baseline_plist = git_show("app/ios/Runner/Info.plist")
+        baseline_entitlements = git_show("app/ios/Runner/Runner.entitlements")
+        self.assertNotIn("NSHealthShareUsageDescription", baseline_plist)
+        self.assertNotIn("com.apple.developer.healthkit", baseline_entitlements)
+
         self.assertRegex(filings, r"固定基线[^\n]*Manifest[^\n]*仅[^\n]*INTERNET")
-        self.assertRegex(filings, r"T29 归档[^\n]*(?:RECORD_AUDIO|麦克风)")
         self.assertRegex(
             filings,
-            r"iOS[^\n]*(?:NSMicrophoneUsageDescription|麦克风用途说明)",
+            r"当前 T28 归档[^\n]*(?:ACTIVITY_RECOGNITION|Health Connect)",
         )
-        self.assertRegex(filings, r"iOS.*(?:没有|未包含|不存在).*NSHealthShareUsageDescription")
-        self.assertNotRegex(filings, r"ACTIVITY_RECOGNITION[^\n]*Manifest 已声明")
+        self.assertRegex(
+            filings,
+            r"当前 T28 归档[^\n]*(?:NSHealthShareUsageDescription|HealthKit)",
+        )
+        self.assertRegex(filings, r"iOS[^\n]*(?:NSMicrophoneUsageDescription|麦克风用途说明)")
+        self.assertRegex(filings, r"f60ace3[^\n]*仅声明[^\n]*INTERNET")
+        self.assertNotRegex(
+            filings,
+            r"固定基线[^\n]*ACTIVITY_RECOGNITION[^\n]*(?:已声明|已启用)",
+        )
         self.assertNotRegex(filings, r"HealthKit[^\n]*entitlement 和[^\n]*存在")
         self.assertNotRegex(filings, r"(?:9 个|九个).*(?:DNS|HTTP|不可达|未取得)")
 
@@ -1038,7 +1082,7 @@ class ProfileEvidenceContract(unittest.TestCase):
         self.assertIn('problem(c, 501, "not_implemented"', http)
 
         inventory = read("docs/compliance/data-inventory.md")
-        self.assertIn("D01–D44", inventory)
+        self.assertIn("D01–D45", inventory)
         self.assertRegex(inventory, r"模块内部导出/删除[^\n]*不等于[^\n]*T35")
         self.assertRegex(
             inventory,
@@ -1238,6 +1282,236 @@ class Pg17InventoryCoverageContract(unittest.TestCase):
         self.assertIn("REFERENCES activities ON DELETE CASCADE", quota_sql)
 
 
+class T28HealthStaticContract(unittest.TestCase):
+    def test_permissions_are_read_only_and_sources_are_history_only(self) -> None:
+        manifest = read("app/android/app/src/main/AndroidManifest.xml")
+        permissions = set(
+            re.findall(r'android:name="android\.permission\.([^"]+)"', manifest)
+        )
+        self.assertTrue(
+            {
+                "INTERNET",
+                "RECORD_AUDIO",
+                "ACTIVITY_RECOGNITION",
+                "health.READ_HEART_RATE",
+                "health.READ_HEART_RATE_VARIABILITY",
+                "health.READ_STEPS",
+                "health.READ_EXERCISE",
+            }.issubset(permissions)
+        )
+        self.assertFalse(any(permission.startswith("health.WRITE_") for permission in permissions))
+        self.assertNotIn("WRITE_HEALTH_DATA", manifest)
+        self.assertNotIn("insertRecords", read(
+            "app/android/app/src/main/kotlin/cn/higheq/high_eq/HealthHistory.kt"
+        ))
+
+        plist = read("app/ios/Runner/Info.plist")
+        entitlements = read("app/ios/Runner/Runner.entitlements")
+        self.assertIn("NSHealthShareUsageDescription", plist)
+        self.assertIn("NSMicrophoneUsageDescription", plist)
+        self.assertNotIn("NSHealthUpdateUsageDescription", plist)
+        self.assertIn("<key>com.apple.developer.healthkit</key><true/>", entitlements)
+        swift = read("app/ios/Runner/HealthHistory.swift")
+        self.assertIn(
+            "Read-only, foreground history. No background delivery, writes or Watch bridge.",
+            swift,
+        )
+        self.assertIn("store.requestAuthorization(toShare: [], read: types)", swift)
+        self.assertNotIn("save(", swift)
+
+        sync = read("app/lib/features/health/sync.dart")
+        windows = read("app/lib/features/health/windows.dart")
+        health_sources = sync + "\n" + windows
+        self.assertIn(
+            "_sources = {'apple_history', 'health_connect', 'huawei_history'}",
+            sync,
+        )
+        self.assertIn(
+            "{'apple_history', 'health_connect', 'huawei_history'}.contains(source)",
+            windows,
+        )
+        self.assertNotIn("watch_live", health_sources)
+        self.assertNotIn("background delivery", health_sources.lower())
+        self.assertNotIn("insertRecords", health_sources)
+
+    def test_huawei_is_restricted_and_windows_are_bounded(self) -> None:
+        gradle = read("app/android/app/build.gradle.kts")
+        self.assertIn(
+            'providers.gradleProperty("t28Distribution").orElse("platform")', gradle
+        )
+        self.assertIn('historyDistribution == "huaweiRestricted"', gradle)
+        self.assertIn('providers.gradleProperty("t28HuaweiAppId")', gradle)
+        self.assertIn('huaweiAppId.matches(Regex("[0-9]+"))', gradle)
+        self.assertIn('require(file("agconnect-services.json").isFile)', gradle)
+        self.assertIn('apply(plugin = "com.huawei.agconnect")', gradle)
+        plugin_branch = gradle.split("if (huaweiRestricted) {", 1)[1].split("android {", 1)[0]
+        self.assertIn('apply(plugin = "com.huawei.agconnect")', plugin_branch)
+
+        binding = read("app/lib/features/health/binding.dart")
+        self.assertIn("defaultValue: false", binding)
+        self.assertIn("source != 'huawei_history' || !huaweiApproved", binding)
+        self.assertIn("_UnavailableHealthPort", binding)
+
+        huawei = read("app/lib/features/health/huawei.dart")
+        read_scopes = re.search(
+            r"const huaweiReadScopes = <String>\{(.*?)\};", huawei, re.S
+        )
+        self.assertIsNotNone(read_scopes)
+        scopes = read_scopes.group(1)
+        for scope in (
+            "huaweiHeartRateReadScope",
+            "huaweiStepReadScope",
+            "huaweiActivityReadScope",
+        ):
+            self.assertIn(scope, scopes)
+        for scope in ("heartrate.read", "step.read", "activityrecord.read"):
+            self.assertIn(scope, huawei)
+        self.assertNotIn("heart_rate_variability", scopes)
+        self.assertNotIn("hrv", scopes)
+        self.assertIn("Read-only Huawei history adapter", huawei)
+
+        windows = read("app/lib/features/health/windows.dart")
+        sync = read("app/lib/features/health/sync.dart")
+        for needle in (
+            "const slotMs = 30000;",
+            "to - from > 600000",
+            "for (var slot = from; slot < to; slot += slotMs)",
+            "'duration_seconds': 30",
+        ):
+            self.assertIn(needle, windows)
+        for needle in (
+            "floorSlot(clock() - 86400000)",
+            "floorSlot(clock() - 300000)",
+            "from + 600000",
+            "s['pending_end'] = end;",
+            "range of slots, NOT cached measurements",
+        ):
+            self.assertIn(needle, sync)
+
+    def test_d45_withdrawal_and_evidence_boundaries_are_explicit(self) -> None:
+        inventory = read("docs/compliance/data-inventory.md")
+        d45 = next(
+            line for line in inventory.splitlines() if line.startswith("| D45 |")
+        )
+        for needle in (
+            "t28.history.v1",
+            "AES-GCM 256",
+            "AAD 绑定账号",
+            "`queue`",
+            "队列键",
+            "不缓存测量值",
+            "显式撤回意图",
+            "跨登出",
+            "同一账号凭据",
+            "普通登出不自动撤回线上同意",
+            "health:false",
+            "不因登出或撤回自动删除",
+            "24 小时",
+            "30 秒",
+            "10 分钟",
+            "pending_end",
+            "不计入 `f60ace3` 的 42 项",
+        ):
+            self.assertIn(needle, d45)
+        self.assertIn("D01–D45", inventory)
+        self.assertIn("D37–D45", inventory)
+
+        # Freeze only public, observable structure. Private cleanup helpers and
+        # source comments are implementation details and may change freely.
+        sessions = read("app/lib/core/session.dart")
+        self.assertRegex(
+            sessions, r"\benum\s+CacheKind\s*\{[^}]*\bqueue\b[^}]*\}"
+        )
+        self.assertRegex(
+            sessions,
+            r"\bstatic\s+const\s+healthQueueKey\s*=\s*'t28\.history\.v1'\s*;",
+        )
+        self.assertRegex(
+            sessions,
+            r"\benum\s+LogoutWithdrawalEvidence\s*\{[^}]*\bnone\b"
+            r"[^}]*\bexplicit\b[^}]*\bunknown\b[^}]*\bunavailable\b[^}]*\}",
+        )
+
+        logout_tests = read("app/test/health/logout_regression_test.dart")
+        self.assertIn("import 'package:flutter_test/flutter_test.dart';", logout_tests)
+        self.assertIn("void main() {", logout_tests)
+        registered_logout_tests = set(
+            re.findall(r"(?m)^\s*test(?:Widgets)?\(\s*'([^']+)'", logout_tests)
+        )
+        for name in (
+            "offline logout clears A queue; A reauth only withdraws and B cannot receive A",
+            "setup tombstone is recovered after exhausted reads and never withdraws",
+        ):
+            self.assertIn(name, registered_logout_tests)
+
+        sync_tests = read("app/test/health/sync_test.dart")
+        self.assertIn("import 'package:flutter_test/flutter_test.dart';", sync_tests)
+        self.assertIn("void main() {", sync_tests)
+        registered_sync_tests = set(
+            re.findall(r"(?m)^\s*test(?:Widgets)?\(\s*'([^']+)'", sync_tests)
+        )
+        for name in (
+            "queue-only explicit withdrawal survives offline logout and retries for A only",
+            "queue-only explicit withdrawal is flushed by online logout",
+            "direct logout with no queue sends no health withdrawal",
+            "failed withdrawal tombstone write cannot resume collection",
+        ):
+            self.assertIn(name, registered_sync_tests)
+
+        qa = read("docs/compliance/qa.md")
+        readme = read("docs/compliance/README.md")
+        t33 = read("docs/tasks/T33.md")
+        t28 = read("docs/tasks/T28.md")
+        self.assertIn("docs/tasks/T28.md", t33)
+        docs = qa + "\n" + readme + "\n" + t33 + "\n" + t28
+        self.assertNotIn("../handoff.md", docs)
+        self.assertRegex(
+            t28,
+            r"不冻结[^\n]*`Sessions`[^\n]*私有方法名[^\n]*注释[^\n]*实现细节",
+        )
+        self.assertRegex(
+            t28,
+            r"文档静态检查[^\n]*不能替代[^\n]*(?:Flutter|用例执行)",
+        )
+        # Receipt counts and elapsed times identify one host run; they are not
+        # stable CI or documentation contracts. Freeze the evidence layers and
+        # their claimed coverage instead.
+        for needle in (
+            "QA-36",
+            "部分通过（静态 + 本次合装回归回执）",
+            "固定基线静态",
+            "当前 T28 归档静态",
+            "本批宿主合装回执（非 CI 合同）",
+            "旧阶段",
+            "健康定向",
+            "health+voice",
+            "不能相加",
+            "代理哨兵",
+            "不构成文档静态契约",
+            "真机",
+            "Huawei",
+            "固定 SHA CI",
+            "未签收",
+        ):
+            self.assertIn(needle, docs)
+        self.assertIn("旧阶段", readme)
+        self.assertRegex(
+            readme,
+            r"旧阶段[^\n]*unknown-join",
+        )
+        for text in (qa, readme, t33):
+            self.assertIn("D01–D45", text)
+            self.assertIn("D37–D45", text)
+        self.assertRegex(
+            docs,
+            r"T28[^\n]*(?:未合入固定基线|不写成固定基线|候选)",
+        )
+        self.assertNotRegex(
+            docs,
+            r"T28[^\n]*(?:CI 已[^\n]*通过|真机已[^\n]*通过|已合入固定基线)",
+        )
+
+
 class T29VoiceStaticContract(unittest.TestCase):
     def test_voice_capture_static_contract_and_inventory_are_explicit(self) -> None:
         manifest = read("app/android/app/src/main/AndroidManifest.xml")
@@ -1377,7 +1651,7 @@ class T29VoiceStaticContract(unittest.TestCase):
             "不计入旧 42 项",
         ):
             self.assertIn(needle, d44)
-        self.assertIn("D01–D44", inventory)
+        self.assertIn("D01–D45", inventory)
 
         status = "T29 归档静态实现、未合入固定基线、真机待验"
         for path in (
@@ -1393,12 +1667,6 @@ class T29VoiceStaticContract(unittest.TestCase):
         ):
             self.assertIn(status, read(path), path)
 
-        self.assertNotIn("ACTIVITY_RECOGNITION", manifest)
-        self.assertNotIn("NSHealthShareUsageDescription", plist)
-        self.assertNotIn(
-            "com.apple.developer.healthkit",
-            read("app/ios/Runner/Runner.entitlements"),
-        )
 
     def test_voice_and_retention_revocation_docs_are_separate(self) -> None:
         text = read("docs/compliance/separate-consents.md")
@@ -1558,7 +1826,7 @@ class T29VoiceStaticContract(unittest.TestCase):
         ):
             self.assertIn(needle, row)
         self.assertNotIn("健康窗口专用删除已接线", row)
-        self.assertIn("D01–D44", inventory)
+        self.assertIn("D01–D45", inventory)
 
 
 class ConsentAndSourceRegisterContract(unittest.TestCase):

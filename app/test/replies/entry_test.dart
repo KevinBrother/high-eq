@@ -114,8 +114,10 @@ class _RouteApi extends AppApi {
     Map<String, String> path = const {},
     Map<String, String> query = const {},
     Json? body,
+    void Function()? beforeSend,
     void Function(int)? onStatus,
   }) {
+    beforeSend?.call();
     ops.add(op);
     if (op != AppOp.createReply || body == null) {
       throw StateError('unexpected streamed route: ${op.name}');

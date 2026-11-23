@@ -12,6 +12,8 @@ import 'features/replies/share_host.dart';
 import 'features/replies/route.dart';
 import 'features/marks/page.dart';
 import 'features/reviews/page.dart';
+import 'features/health/binding.dart';
+import 'features/health/page.dart';
 import 'features/practice/lobby.dart';
 import 'features/contacts/routes.dart';
 import 'features/onboarding/login.dart';
@@ -34,13 +36,25 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
   AccountScope? _navigatorScope;
   Type? _navigatorStatus;
   GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  LogoutResult? _logoutResult;
 
   void _selectNavigator(AccountScope? scope, Widget? status) {
     final statusType = status?.runtimeType;
     if (!identical(scope, _navigatorScope) || statusType != _navigatorStatus) {
+      if (scope != null) _logoutResult = null;
       _navigatorScope = scope;
       _navigatorStatus = statusType;
       _navigatorKey = GlobalKey<NavigatorState>();
+    }
+  }
+
+  Future<void> _logout(AppApi api, AccountScope scope) async {
+    try {
+      final result = await api.logoutWithResult(scope);
+      if (!mounted || !api.sessions.isCurrentLogout(result.round)) return;
+      setState(() => _logoutResult = result);
+    } on Object {
+      // A logout that never started has no round that can be shown safely.
     }
   }
 
@@ -122,9 +136,11 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
           ? ShareLoginNotice(
               pending: draft != null,
               discard: close,
+              result: _logoutResult,
+              dismissResult: () => setState(() => _logoutResult = null),
               child: child!,
             )
-          : child!,
+          : HealthForeground(scope, child!),
       onGenerateRoute: (settings) {
         Widget screen(BuildContext context) {
           if (status != null) return Scaffold(body: status);
@@ -190,12 +206,17 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
                       ),
                     ),
               );
+            case '/health':
+              return HealthPage(scope);
             case '/logout':
               return Scaffold(
                 body: Center(
                   child: AlertDialog(
                     title: const Text('退出当前账号？'),
-                    content: const Text('本机续答和草稿会被清除。'),
+                    content: const Text(
+                      '本机会立即清除续答、草稿和健康待发数据，并结束当前登录。'
+                      '清理、健康撤回和服务端登出会分别显示结果。',
+                    ),
                     actions: [
                       TextButton(
                         onPressed: () => Navigator.pop(context),
@@ -203,11 +224,8 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
                       ),
                       FilledButton(
                         onPressed: () async {
-                          try {
-                            await api!.logout(scope);
-                          } catch (_) {
-                            /* local session already invalidated */
-                          }
+                          Navigator.pop(context);
+                          await _logout(api!, scope);
                         },
                         child: const Text('确认退出'),
                       ),

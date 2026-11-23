@@ -58,9 +58,9 @@
 | --- | --- | --- | --- |
 | PLT-APPLE-001 | Apple Developer/App Store | 开发者主体、App ID、Bundle ID、签名团队、隐私标签、账号删除、订阅/恢复购买和审核回执 | `[待商户/平台确认]` |
 | PLT-APPLE-002 | Sign in with Apple / IAP | Service ID/能力、SKU、沙箱/生产验证、`appAccountToken` 归属、退款/续期回执 | `[待商户/平台确认]` |
-| PLT-HEALTH-IOS-001 | HealthKit | T28 候选目标；固定基线没有 HealthKit entitlement 或 `NSHealthShareUsageDescription`，需补齐用途说明、读取类型、审核材料、真实安装/授权/撤回和广告限制核验 | `[候选待对表]` `[待真机复核]` `[待商户/平台确认]` |
-| PLT-ANDROID-001 | Google Play/Android 分发 | 包名、签名、目标 SDK、隐私政策和数据安全表单；若 T28 合入，再补 Health Connect 权限声明与审核材料 | `[待商户/平台确认]` `[候选待对表]` `[待真机复核]` |
-| PLT-HUAWEI-001 | 华为 Health Kit/受限心率 | 开发者主体、应用 ID、发布签名、地区、受限权限申请、批准范围、有效期和官方插件版本 | 未取得批准/签名/真机证据 `[待商户/平台确认]` |
+| PLT-HEALTH-IOS-001 | HealthKit | 当前 T28 归档已有 `Runner.entitlements` 的 `com.apple.developer.healthkit=true` 和 `NSHealthShareUsageDescription`，iOS 15+ 只读心率、HRV SDNN、步数与外部训练，不申请写入、后台投递或实时 Watch 会话；仍需 App Store 审核、完整签名安装、真实授权/撤权重授、真实样本和广告限制回执 | `[已知：T28 归档静态实现]` `[待真机复核]` `[待商户/平台确认]` |
+| PLT-ANDROID-001 | Google Play/Android 分发 | 当前 T28 归档已声明运动识别及健康读取权限，默认 `platform` 渠道仅走 API 34+ 系统 `HealthConnectManager`，HRV 可选且不回退华为；仍需包名、发布签名、目标 SDK、Kotlin/APK 编译、隐私政策、数据安全表单、商店审核和真机回执 | `[已知：T28 归档静态实现]` `[待真机复核]` `[待商户/平台确认]` |
+| PLT-HUAWEI-001 | 华为 Health Kit/受限渠道 | 仅在显式 `-Pt28Distribution=huaweiRestricted` 构建中启用，必须提供数字 App ID、`agconnect-services.json`，并设置 Dart 编译期 `T28_HUAWEI_HEALTH_APPROVED=true`（默认 `false`）；锁定 `huawei_health 6.17.0+300`，显式申请 `heartrate.read`、`step.read`、`activityrecord.read`，不读 HRV。仍需开发者主体、发布签名、地区、受限权限批准范围、有效期和 HMS 真机回执 | 未取得批准/签名/真机证据 `[待商户/平台确认]` `[待真机复核]` |
 | PLT-WECHAT-001 | 微信开放平台登录/支付 | App ID、包名/签名、Universal Link、Associated Domains、商户号、审核回执和 SDK 版本 | `[待商户/平台确认]` |
 | PLT-ALIPAY-001 | 支付宝开放平台支付 | 商户主体、应用 ID、验签方式、回调域名、退款权限、SDK 版本和审核回执 | `[待商户/平台确认]` |
 | PLT-SMS-001 | 短信服务 | 服务商主体、签名/模板、发送资质、留存和删除条款 | `[待运营填写]` `[待官方来源核验]` |
@@ -70,9 +70,9 @@
 | 权限/能力 | 仓库事实 | 必须补的材料 | 状态 |
 | --- | --- | --- | --- |
 | Android `INTERNET` | 固定基线 Manifest 仅声明 `INTERNET` | 无敏感权限说明；网络安全配置待核 | `[已知]` |
-| Android `ACTIVITY_RECOGNITION` | 固定基线 Manifest 未声明；T28 候选拟申请 | 运行时申请、拒绝/撤回、商店说明和真机回执 | `[候选待对表]` `[待真机复核]` |
-| Android Health Connect 读取 | 固定基线 Manifest 未声明；T28 候选目标为心率、HRV、步数、训练读取 | Health Connect 审核、数据安全表单、权限最小化和 Android 编译/真机回执 | `[候选待对表]` `[待真机复核]` `[待商户/平台确认]` |
-| iOS HealthKit | 固定基线没有 HealthKit entitlement 或 `NSHealthShareUsageDescription`；T28 候选目标待对表 | 完整安装、系统授权、真实样本、撤权重授和审核回执 | `[候选待对表]` `[待真机复核]` |
+| Android `ACTIVITY_RECOGNITION` | 当前 T28 归档 Manifest 已声明；仅在有效会员、App 内 `health` 同意和 `ConsentGate` 复核后，于用户主动开启时请求，且先于健康读取权限 | 运行时拒绝/撤回、商店说明、Kotlin/APK 编译和真机回执 | `[已知：T28 归档静态实现]` `[待真机复核]` `[待商户/平台确认]` |
+| Android Health Connect 读取 | 当前 T28 归档已声明 `READ_HEART_RATE`、`READ_HEART_RATE_VARIABILITY`、`READ_STEPS`、`READ_EXERCISE`；默认 `platform` 渠道使用 API 34+ 系统 `HealthConnectManager`，运行时要求运动识别及心率/步数/训练读取，HRV 可选，并以手机计步器计算区间步频 | Health Connect/Play 审核、数据安全表单、权限最小化、Kotlin/APK 编译和真机回执 | `[已知：T28 归档静态实现]` `[待真机复核]` `[待商户/平台确认]` |
+| iOS HealthKit | 当前 T28 归档已有 `com.apple.developer.healthkit=true` 和 `NSHealthShareUsageDescription`，部署目标 15.0；只读心率、HRV SDNN、步数和外部训练，不申请写入、后台投递或实时 Watch 会话 | 完整签名安装、系统授权、真实样本、撤权重授、广告限制核验和 App Store 审核回执 | `[已知：T28 归档静态实现]` `[待真机复核]` `[待商户/平台确认]` |
 | 麦克风 | 固定基线 Manifest 仅声明 `INTERNET`；T29 归档声明 Android `RECORD_AUDIO`，iOS `Info.plist` 有 `NSMicrophoneUsageDescription`。原生层只向 Flutter 提供内存 PCM，不写文件、不转写、不联网 | 用途说明、实时状态、他人声音提示、系统权限拒绝/撤回、抓包、耗电和双平台真机回执 | T29 归档静态实现、未合入固定基线、真机待验；`[待真机复核]` `[待商户/平台确认]` |
 | 相机/定位 | 当前未找到相关权限 | 若上线前新增，重新评估必要性、同意和商店材料 | `[已知]` |
 | 健康数据广告限制 | 仓库未找到健康数据用于广告的代码或说明 | 平台政策和合同核对；不得在未核验时承诺或否认 | `[待官方来源核验]` `[待商户/平台确认]` |
@@ -84,7 +84,7 @@
 | 隐私政策 | 有草案；运营主体和联系方式为空 | 正式版本、生效日期、历史版本、通知记录和用户同意版本 | `[待运营填写]` `[待律师复核]` |
 | 用户协议 | 有草案；责任、争议、退款和商户规则待核 | 正式版本、生效日期、历史版本和同意记录 | `[待运营填写]` `[待律师复核]` |
 | 首次同意摘要 | T17 有主动勾选；版本 `2026-11` 为开发占位 | 与正式隐私政策/协议一一对应的版本号和界面截图 | `[待运营填写]` |
-| 健康单独同意 | `health` / `2026-11` 为候选文案；固定基线仅声明 `INTERNET`，系统健康权限未接线 | 文案、版本、触发时机、拒绝/撤回和真机截图 | `[候选待对表]` `[待真机复核]` |
+| 健康单独同意 | `health` / `2026-11` 为开发占位且服务端未做版本闭环；T28 归档已有“有效会员 → App 内健康用途明确同意 → `ConsentGate.readIfAllowed` 复核同一授权记录和会员 → 系统权限 → 读取/同步再次复核系统状态、同一授权记录和会员”的静态门禁。默认 Android 走系统 Health Connect，iOS 走 HealthKit，华为为默认关闭的受限构建；`f60ace3` 仅声明 `INTERNET` 是固定历史 | 正式文案与版本、各渠道触发时机、拒绝/撤回/重授、真实授权弹窗、真机截图和 T30 端到端回执 | `[已知：T28 归档静态实现]` `[待真机复核]` `[待 T35 对表]` |
 | 语音/录音单独同意 | T29 归档已有 `voice` 与独立 `audio_retention` 静态实现；录音保留默认关闭，本机 AES-GCM 256、3 天到期不可读并尽力删除 | 正式版本、实时状态、权限拒绝/撤回、杀进程/离线/换号、抓包、耗电和真机回执 | T29 归档静态实现、未合入固定基线、真机待验；`[待真机复核]` |
 | 对练/回复/关系人/复盘/标记 | 有部分客户端或服务端实现，版本不一致 | 正式文案、版本、触发时机、撤回和停采证据 | `[待实现/验收]` |
 | 模型/SDK 条款 | 无真实供应商证据 | 主模型、备用/灰度、审核、SDK 的合同/DPA/条款和证据编号 | `[待运营填写]` |
