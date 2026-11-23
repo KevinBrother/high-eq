@@ -13,11 +13,13 @@ import 'package:high_eq/core/session.dart';
 import 'package:high_eq/core/transport.dart';
 import 'package:high_eq/features/replies/share_host.dart';
 import 'package:high_eq/features/voice/controller.dart';
+import 'package:high_eq/features/voice/features.dart';
 import 'package:high_eq/features/voice/page.dart';
 import 'package:high_eq/features/voice/retention_janitor.dart';
 import 'package:high_eq/main.dart';
 
 import 'fakes.dart';
+import 'synthetic.dart';
 
 class _RouteTransport implements Transport {
   @override
@@ -99,6 +101,22 @@ Future<void> waitUntil(Future<bool> Function() predicate) async {
       fail('condition was not reached before timeout');
     }
     await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+}
+
+/// Drives UI cleanup started in the fake-async zone while its file I/O
+/// completes on the real event loop. Awaiting the cleanup in one [runAsync]
+/// call blocks the fake zone and prevents its continuations from running.
+Future<void> pumpUntil(WidgetTester tester, bool Function() predicate) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 2));
+  while (!predicate()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('condition was not reached before timeout');
+    }
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 5)),
+    );
+    await tester.pump();
   }
 }
 
@@ -216,6 +234,65 @@ void main() {
     expect(harness.controller.isCapturing, isFalse);
     expect(harness.platform.startCalls, 0);
     expect(harness.platform.stopCalls, greaterThan(0));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('revocation from page leaves an empty queue and no upload path', (
+    tester,
+  ) async {
+    late VoiceHarness harness;
+    final startsAt = DateTime.utc(2026, 11, 21, 9);
+    await tester.runAsync(() async {
+      harness = await VoiceHarness.create(clock: startsAt);
+      await harness.store.enqueue(
+        VoiceWindow(
+          startsAt: startsAt,
+          analysis: const VoiceAnalysis(voicedSeconds: 0),
+        ),
+      );
+      await harness.store.saveRecording(
+        startsAt,
+        tone(duration: const Duration(seconds: 1), syllableHz: 4),
+      );
+      await harness.controller.initialize();
+      expect(harness.controller.pendingCount, 1);
+      expect(await harness.store.recordings(now: startsAt), hasLength(1));
+      expect(await harness.controller.start(), isTrue);
+    });
+    addTearDown(harness.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(home: VoicePage(controller: harness.controller)),
+    );
+    await tester.pump();
+
+    final revoke = find.text('撤回语音授权并清除本机待发窗口');
+    await tester.scrollUntilVisible(revoke, 320);
+    expect(revoke, findsOneWidget);
+    await tester.tap(revoke);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('撤回语音授权？'), findsOneWidget);
+    await tester.tap(find.text('撤回并清除'));
+    await tester.pump();
+    await pumpUntil(
+      tester,
+      () => harness.controller.notice == '语音授权已撤回，采集、回听、待发窗口和本机录音均已处理确认。',
+    );
+    await tester.runAsync(() async {
+      expect(await harness.store.pending(), isEmpty);
+      expect(await harness.store.recordings(now: startsAt), isEmpty);
+    });
+    await tester.pump();
+
+    expect(harness.controller.pendingCount, 0);
+    expect(harness.controller.voiceConsent, isFalse);
+    expect(harness.controller.isCapturing, isFalse);
+    expect(harness.platform.stopCalls, greaterThan(0));
+    expect(harness.uploader.uploaded, isEmpty);
+    expect(harness.uploader.events, isNot(contains('upload')));
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });
