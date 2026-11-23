@@ -130,10 +130,15 @@ void main() {
       final uploaded = harness.uploader.uploaded.single;
       expect(uploaded.startsAt, aligned);
       expect(uploaded.analysis.voicedSeconds, greaterThan(20));
-      expect(uploaded.analysis.speechRate, isNotNull);
-      expectStatisticsOnly(uploaded.toWire());
-      expect(uploaded.toWire().toString(), isNot(contains('pcm')));
-      expect(uploaded.toWire().toString(), isNot(contains('transcript')));
+      final wire = uploaded.toWire();
+      expect(uploaded.analysis.speechRate, isNull);
+      expect(wire.containsKey('speech_rate'), isFalse);
+      expect(wire.containsKey('speech_rate_unit'), isFalse);
+      expect(wire['volume'], isNotNull);
+      expect(wire['pitch'], isNotNull);
+      expectStatisticsOnly(wire);
+      expect(wire.toString(), isNot(contains('pcm')));
+      expect(wire.toString(), isNot(contains('transcript')));
       expect(await harness.store.pending(), isEmpty);
       expect(harness.controller.transcriptionAvailable, isFalse);
     },
@@ -152,6 +157,8 @@ void main() {
 
     expect(harness.uploader.uploaded.map((window) => window.startsAt), [later]);
     expect(await harness.store.pending(), isEmpty);
+    expect(harness.controller.notice, contains('服务端拒绝'));
+    expect(harness.controller.notice, isNot(contains('语音统计窗口已上传')));
   });
 
   test('revoke persists the gate before stop and local purge', () async {

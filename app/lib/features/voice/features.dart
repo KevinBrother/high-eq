@@ -75,8 +75,6 @@ class VoiceWindow {
     'duration_seconds': 30,
     'exercise': false,
     'voiced_seconds': analysis.voicedSeconds,
-    if (analysis.speechRate != null)
-      'speech_rate': analysis.speechRate!.toWire(),
     if (analysis.volume != null) 'volume': analysis.volume!.toWire(),
     if (analysis.pitch != null) 'pitch': analysis.pitch!.toWire(),
   };

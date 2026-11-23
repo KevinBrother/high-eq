@@ -95,10 +95,53 @@ def check(name):
             assert not {'403', '429'} & ops[action]['responses'].keys()
         for action in ('getBaselines', 'uploadWindow', 'emotionSummary', 'reportSignalEvent'):
             assert '403' in ops[action]['responses']
+        baselines = ops['getBaselines']
+        for_window = next(p for p in baselines['parameters'] if p['name'] == 'for_window')
+        assert for_window['in'] == 'query' and not for_window['required']
+        assert for_window['schema'] == {'type': 'string', 'format': 'date-time', 'x-go-type': 'string'}
+        assert {'404', '503'} <= baselines['responses'].keys()
+        window_stat = spec['components']['schemas']['WindowStat']
+        assert set(window_stat['properties']) == set(window_stat['required']) == {
+            'mean', 'maximum', 'sample_count', 'valid_seconds',
+        }
+        assert window_stat['additionalProperties'] is False
         window = resolve(ops['uploadWindow']['requestBody'])['content']['application/json']
+        validator = OAS30Validator(window['schema'])
         for variant in window['examples'].values():
             for bad in ({'audio': 'x'}, {'samples': []}, {'transcript': 'x'}, {'duration_seconds': 1}):
-                assert not OAS30Validator(window['schema']).is_valid({**variant['value'], **bad})
+                assert not validator.is_valid({**variant['value'], **bad})
+        voice_base = {
+            'channel': 'voice',
+            'starts_at': '2026-11-21T09:00:00+08:00',
+            'duration_seconds': 30,
+            'exercise': False,
+            'voiced_seconds': 21,
+            'volume': {'mean': -31, 'maximum': -20, 'sample_count': 18, 'valid_seconds': 18},
+        }
+        speech = {'mean': 4, 'maximum': 5, 'sample_count': 17, 'valid_seconds': 17}
+        for good in (
+            voice_base,
+            {**voice_base, 'speech_rate': speech, 'speech_rate_unit': 'characters_per_second'},
+        ):
+            assert validator.is_valid(good), good
+        for bad in (
+            {**voice_base, 'speech_rate': speech},
+            {**voice_base, 'speech_rate_unit': 'characters_per_second'},
+            {**voice_base, 'speech_rate': speech, 'speech_rate_unit': ''},
+            {**voice_base, 'speech_rate': speech, 'speech_rate_unit': 'syllables_per_minute'},
+            {**voice_base, 'speech_rate': None, 'speech_rate_unit': 'characters_per_second'},
+            {**voice_base, 'speech_rate': speech, 'speech_rate_unit': None},
+            {
+                'channel': 'health',
+                'starts_at': '2026-11-21T09:00:00+08:00',
+                'duration_seconds': 30,
+                'exercise': False,
+                'source': 'watch_live',
+                'heart_rate': {'mean': 72, 'maximum': 78, 'sample_count': 5, 'valid_seconds': 24},
+                'speech_rate_unit': 'characters_per_second',
+            },
+        ):
+            assert not validator.is_valid(bad), bad
     elif name == 'admin':
         for action in ('createModel', 'updateModel', 'testModel', 'setRoute'):
             assert '403' in ops[action]['responses']

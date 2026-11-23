@@ -716,6 +716,7 @@ class VoiceController extends ChangeNotifier {
 
       _uploading = true;
       _notify();
+      var discardedWindow = false;
       while (true) {
         if (_voiceRevocationPending) break;
         final pending = await store.pending();
@@ -765,6 +766,7 @@ class VoiceController extends ChangeNotifier {
             // retrying. Discard it so it cannot poison the queue head.
             await store.removePending(window.startsAt);
             _notice = '服务端拒绝了不合法窗口，已丢弃并继续后续窗口。';
+            discardedWindow = true;
             continue;
           }
           if (error.status == 409) {
@@ -772,6 +774,7 @@ class VoiceController extends ChangeNotifier {
             // retry forever, so it is discarded rather than mutated.
             await store.removePending(window.startsAt);
             _notice = '服务端已有同时间窗口，冲突窗口未重复上传。';
+            discardedWindow = true;
             continue;
           }
           if (error.status == 403) {
@@ -782,7 +785,7 @@ class VoiceController extends ChangeNotifier {
         }
       }
       _pendingCount = 0;
-      _notice = '语音统计窗口已上传。';
+      if (!discardedWindow) _notice = '语音统计窗口已上传。';
       _notify();
       return true;
     } on SessionChanged {

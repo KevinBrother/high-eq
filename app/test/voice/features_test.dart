@@ -90,14 +90,54 @@ void main() {
       'duration_seconds',
       'exercise',
       'voiced_seconds',
-      'speech_rate',
       'volume',
       'pitch',
     });
     expect(wire['channel'], 'voice');
     expect(wire['starts_at'], '2026-11-21T01:00:00.000Z');
     expect(wire['duration_seconds'], 30);
+    expect(analysis.speechRate, isNotNull);
+    expect(wire.containsKey('speech_rate'), isFalse);
+    expect(wire.containsKey('speech_rate_unit'), isFalse);
+    expect(wire['volume'], isNotNull);
+    expect(wire['pitch'], isNotNull);
     expect(wire.toString(), isNot(contains('pcm')));
     expect(wire.toString(), isNot(contains('transcript')));
+  });
+
+  test('legacy queued acoustic proxy is removed at the upload boundary', () {
+    final legacy = VoiceWindow.fromWire({
+      'channel': 'voice',
+      'starts_at': '2026-11-21T01:00:00.000Z',
+      'duration_seconds': 30,
+      'exercise': false,
+      'voiced_seconds': 18,
+      'speech_rate': {
+        'mean': 238,
+        'maximum': 270,
+        'sample_count': 18,
+        'valid_seconds': 18,
+      },
+      'volume': {
+        'mean': -31,
+        'maximum': -20,
+        'sample_count': 18,
+        'valid_seconds': 18,
+      },
+      'pitch': {
+        'mean': 220,
+        'maximum': 240,
+        'sample_count': 18,
+        'valid_seconds': 18,
+      },
+    });
+
+    final wire = legacy.toWire();
+
+    expect(legacy.analysis.speechRate?.mean, 238);
+    expect(wire.containsKey('speech_rate'), isFalse);
+    expect(wire.containsKey('speech_rate_unit'), isFalse);
+    expect(wire['volume'], isNotNull);
+    expect(wire['pitch'], isNotNull);
   });
 }

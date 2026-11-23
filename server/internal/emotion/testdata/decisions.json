@@ -9,16 +9,17 @@
       "watch_released": true,
       "means": {
         "heart_rate": 96,
-        "speech_rate": 160,
+        "speech_rate": 4,
         "volume": -19,
         "pitch": 220
       },
       "thresholds": {
         "heart_rate": 96,
-        "speech_rate": 150,
+        "speech_rate": 3.75,
         "volume": -20,
         "pitch": 230
-      }
+      },
+      "speech_rate_unit": "characters_per_second"
     },
     "want": "self_fluctuation"
   },
@@ -32,16 +33,17 @@
       "watch_released": true,
       "means": {
         "heart_rate": 72,
-        "speech_rate": 160,
+        "speech_rate": 4,
         "volume": -19,
         "pitch": 220
       },
       "thresholds": {
         "heart_rate": 96,
-        "speech_rate": 150,
+        "speech_rate": 3.75,
         "volume": -20,
         "pitch": 230
-      }
+      },
+      "speech_rate_unit": "characters_per_second"
     },
     "want": "conversation_rhythm"
   },
@@ -54,15 +56,16 @@
       "source": "watch_live",
       "watch_released": true,
       "means": {
-        "speech_rate": 160,
+        "speech_rate": 4,
         "pitch": 240
       },
       "thresholds": {
         "heart_rate": 96,
-        "speech_rate": 150,
+        "speech_rate": 3.75,
         "volume": -20,
         "pitch": 230
-      }
+      },
+      "speech_rate_unit": "characters_per_second"
     },
     "want": "conversation_rhythm"
   },
@@ -79,7 +82,7 @@
       },
       "thresholds": {
         "heart_rate": 96,
-        "speech_rate": 150,
+        "speech_rate": 3.75,
         "volume": -20,
         "pitch": 230
       }
@@ -100,7 +103,7 @@
       },
       "thresholds": {
         "heart_rate": 96,
-        "speech_rate": 150,
+        "speech_rate": 3.75,
         "volume": -20,
         "pitch": 230
       }
@@ -117,14 +120,15 @@
       "watch_released": true,
       "means": {
         "heart_rate": 96,
-        "speech_rate": 160,
+        "speech_rate": 4,
         "volume": -19,
         "pitch": 220
       },
       "thresholds": {
         "heart_rate": 96,
         "volume": -20
-      }
+      },
+      "speech_rate_unit": "characters_per_second"
     },
     "want": "self_fluctuation"
   },
@@ -138,14 +142,15 @@
       "watch_released": true,
       "means": {
         "heart_rate": 96,
-        "speech_rate": 160,
+        "speech_rate": 4,
         "volume": -19,
         "pitch": 220
       },
       "thresholds": {
         "volume": -20,
-        "speech_rate": 150
-      }
+        "speech_rate": 3.75
+      },
+      "speech_rate_unit": "characters_per_second"
     },
     "want": "conversation_rhythm"
   },
@@ -159,11 +164,12 @@
       "watch_released": true,
       "means": {
         "heart_rate": 96,
-        "speech_rate": 160,
+        "speech_rate": 4,
         "volume": -19,
         "pitch": 220
       },
-      "thresholds": {}
+      "thresholds": {},
+      "speech_rate_unit": "characters_per_second"
     },
     "want": "none"
   },
@@ -177,17 +183,18 @@
       "watch_released": true,
       "means": {
         "heart_rate": 96,
-        "speech_rate": 160,
+        "speech_rate": 4,
         "volume": -19,
         "pitch": 220
       },
       "thresholds": {
         "heart_rate": 96,
-        "speech_rate": 150,
+        "speech_rate": 3.75,
         "volume": -20,
         "pitch": 230
       },
-      "exercise": true
+      "exercise": true,
+      "speech_rate_unit": "characters_per_second"
     },
     "want": "none"
   },
@@ -201,17 +208,18 @@
       "watch_released": true,
       "means": {
         "heart_rate": 96,
-        "speech_rate": 160,
+        "speech_rate": 4,
         "volume": -19,
         "pitch": 220
       },
       "thresholds": {
         "heart_rate": 96,
-        "speech_rate": 150,
+        "speech_rate": 3.75,
         "volume": -20,
         "pitch": 230
       },
-      "cadence_2m": 101
+      "cadence_2m": 101,
+      "speech_rate_unit": "characters_per_second"
     },
     "want": "none"
   },
@@ -225,17 +233,18 @@
       "watch_released": true,
       "means": {
         "heart_rate": 96,
-        "speech_rate": 160,
+        "speech_rate": 4,
         "volume": -19,
         "pitch": 220
       },
       "thresholds": {
         "heart_rate": 96,
-        "speech_rate": 150,
+        "speech_rate": 3.75,
         "volume": -20,
         "pitch": 230
       },
-      "cadence_2m": 100
+      "cadence_2m": 100,
+      "speech_rate_unit": "characters_per_second"
     },
     "want": "self_fluctuation"
   },
@@ -249,17 +258,18 @@
       "watch_released": true,
       "means": {
         "heart_rate": 96,
-        "speech_rate": 160,
+        "speech_rate": 4,
         "volume": -19,
         "pitch": 220
       },
       "thresholds": {
         "heart_rate": 96,
-        "speech_rate": 150,
+        "speech_rate": 3.75,
         "volume": -20,
         "pitch": 230
       },
-      "last_alert": "2026-11-21T11:50:01Z"
+      "last_alert": "2026-11-21T11:50:01Z",
+      "speech_rate_unit": "characters_per_second"
     },
     "want": "none"
   },
@@ -273,17 +283,18 @@
       "watch_released": true,
       "means": {
         "heart_rate": 96,
-        "speech_rate": 160,
+        "speech_rate": 4,
         "volume": -19,
         "pitch": 220
       },
       "thresholds": {
         "heart_rate": 96,
-        "speech_rate": 150,
+        "speech_rate": 3.75,
         "volume": -20,
         "pitch": 230
       },
-      "last_alert": "2026-11-21T11:50:00Z"
+      "last_alert": "2026-11-21T11:50:00Z",
+      "speech_rate_unit": "characters_per_second"
     },
     "want": "self_fluctuation"
   },
@@ -297,16 +308,17 @@
       "watch_released": true,
       "means": {
         "heart_rate": 96,
-        "speech_rate": 160,
+        "speech_rate": 4,
         "volume": -19,
         "pitch": 220
       },
       "thresholds": {
         "heart_rate": 96,
-        "speech_rate": 150,
+        "speech_rate": 3.75,
         "volume": -20,
         "pitch": 230
-      }
+      },
+      "speech_rate_unit": "characters_per_second"
     },
     "want": "conversation_rhythm"
   },
@@ -320,16 +332,17 @@
       "watch_released": false,
       "means": {
         "heart_rate": 96,
-        "speech_rate": 160,
+        "speech_rate": 4,
         "volume": -19,
         "pitch": 220
       },
       "thresholds": {
         "heart_rate": 96,
-        "speech_rate": 150,
+        "speech_rate": 3.75,
         "volume": -20,
         "pitch": 230
-      }
+      },
+      "speech_rate_unit": "characters_per_second"
     },
     "want": "conversation_rhythm"
   },
@@ -343,16 +356,17 @@
       "watch_released": true,
       "means": {
         "heart_rate": 96,
-        "speech_rate": 160,
+        "speech_rate": 4,
         "volume": -19,
         "pitch": 220
       },
       "thresholds": {
         "heart_rate": 96,
-        "speech_rate": 150,
+        "speech_rate": 3.75,
         "volume": -20,
         "pitch": 230
-      }
+      },
+      "speech_rate_unit": "characters_per_second"
     },
     "want": "conversation_rhythm"
   },
@@ -369,7 +383,7 @@
       },
       "thresholds": {
         "heart_rate": 96,
-        "speech_rate": 150,
+        "speech_rate": 3.75,
         "volume": -20,
         "pitch": 230
       }
@@ -390,7 +404,7 @@
       },
       "thresholds": {
         "heart_rate": 96,
-        "speech_rate": 150,
+        "speech_rate": 3.75,
         "volume": -20,
         "pitch": 230
       }
@@ -407,14 +421,98 @@
       "watch_released": true,
       "means": {
         "heart_rate": 96,
-        "speech_rate": 160,
+        "speech_rate": 4,
         "volume": -19,
         "pitch": 220
       },
       "thresholds": {
         "heart_rate": null,
-        "speech_rate": 150,
+        "speech_rate": 3.75,
         "volume": null
+      },
+      "speech_rate_unit": "characters_per_second"
+    },
+    "want": "none"
+  },
+  {
+    "name": "speech-exact-current-threshold",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "speech_rate_unit": "characters_per_second",
+      "means": {
+        "speech_rate": 3.75,
+        "volume": -19
+      },
+      "thresholds": {
+        "speech_rate": 3.75,
+        "volume": -20
+      }
+    },
+    "want": "conversation_rhythm"
+  },
+  {
+    "name": "speech-just-below-current-threshold",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "speech_rate_unit": "characters_per_second",
+      "means": {
+        "speech_rate": 3.749,
+        "volume": -19
+      },
+      "thresholds": {
+        "speech_rate": 3.75,
+        "volume": -20
+      }
+    },
+    "want": "none"
+  },
+  {
+    "name": "full-combination-at-current-boundary",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "speech_rate_unit": "characters_per_second",
+      "means": {
+        "heart_rate": 96,
+        "speech_rate": 3.75,
+        "volume": -19,
+        "pitch": 220
+      },
+      "thresholds": {
+        "heart_rate": 96,
+        "speech_rate": 3.75,
+        "volume": -20,
+        "pitch": 230
+      }
+    },
+    "want": "self_fluctuation"
+  },
+  {
+    "name": "legacy-unmarked-speech-is-ignored",
+    "input": {
+      "starts_at": "2026-11-21T12:00:00Z",
+      "health_at": "2026-11-21T12:00:00Z",
+      "voice_at": "2026-11-21T12:00:00Z",
+      "source": "watch_live",
+      "watch_released": true,
+      "means": {
+        "speech_rate": 180,
+        "volume": -19
+      },
+      "thresholds": {
+        "speech_rate": 150,
+        "volume": -20
       }
     },
     "want": "none"

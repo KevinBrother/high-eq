@@ -16,9 +16,21 @@ import (
 
 type record struct {
 	app.SignalEvent
-	Triggers    []string   `json:"triggers"`
-	FeedbackID  uuid.UUID  `json:"feedback_id,omitzero"`
-	ConfirmedAt *time.Time `json:"confirmed_at,omitempty"`
+	Triggers       []string   `json:"triggers"`
+	SpeechRateUnit string     `json:"speech_rate_unit,omitempty"`
+	FeedbackID     uuid.UUID  `json:"feedback_id,omitzero"`
+	ConfirmedAt    *time.Time `json:"confirmed_at,omitempty"`
+}
+
+// countNegativeTriggers preserves feedback for volume and pitch on legacy
+// events while excluding their acoustic speech proxy from current-unit caps.
+func countNegativeTriggers(counts map[string]int, r record) {
+	for _, trigger := range r.Triggers {
+		if trigger == "speech_rate" && r.SpeechRateUnit != SpeechRateUnitCharactersPerSecond {
+			continue
+		}
+		counts[trigger]++
+	}
 }
 
 func (s Service) event(ctx context.Context, tx pgx.Tx, u, id uuid.UUID, now time.Time) (record, error) {
@@ -104,7 +116,11 @@ func (s Service) Report(ctx context.Context, tx pgx.Tx, u uuid.UUID, in app.Repo
 	if d.Kind != kind {
 		return Invalid
 	}
-	r := record{SignalEvent: app.SignalEvent{Id: in.Id, StartsAt: at, Kind: app.SignalEventKind(kind), Confirmation: "pending"}, Triggers: d.Signals}
+	speechRateUnit := ""
+	if slices.Contains(d.Signals, "speech_rate") {
+		speechRateUnit = frame.SpeechRateUnit
+	}
+	r := record{SignalEvent: app.SignalEvent{Id: in.Id, StartsAt: at, Kind: app.SignalEventKind(kind), Confirmation: "pending"}, Triggers: d.Signals, SpeechRateUnit: speechRateUnit}
 	enc, e := s.seal(u, in.Id, "event", r)
 	if e != nil {
 		return e

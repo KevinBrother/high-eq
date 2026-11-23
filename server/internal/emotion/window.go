@@ -25,6 +25,11 @@ var (
 	Forbidden = errors.New("signal permission unavailable")
 )
 
+// SpeechRateUnitCharactersPerSecond identifies transcript-derived speaking
+// rate. Window values without this marker are legacy acoustic proxies and must
+// never be promoted to the current unit.
+const SpeechRateUnitCharactersPerSecond = "characters_per_second"
+
 type Service struct {
 	Fields *fieldcrypt.Cipher
 	Data   *privacy.Coordinator
@@ -48,12 +53,17 @@ type Window struct {
 	HRV      *Stat     `json:"hrv,omitempty"`
 	Cadence  *Stat     `json:"cadence,omitempty"`
 	Speech   *Stat     `json:"speech_rate,omitempty"`
-	Volume   *Stat     `json:"volume,omitempty"`
-	Pitch    *Stat     `json:"pitch,omitempty"`
+	// SpeechRateUnit is omitted by legacy encrypted windows. Current uploads
+	// must set it whenever speech_rate is present.
+	SpeechRateUnit        string `json:"speech_rate_unit,omitempty"`
+	speechRateUnitPresent bool
+	Volume                *Stat `json:"volume,omitempty"`
+	Pitch                 *Stat `json:"pitch,omitempty"`
 }
 
 func (w *Window) UnmarshalJSON(b []byte) error {
 	type plain Window
+	*w = Window{}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
 	if e := d.Decode((*plain)(w)); e != nil {
@@ -65,6 +75,7 @@ func (w *Window) UnmarshalJSON(b []byte) error {
 	if json.Unmarshal(b, &fields) != nil {
 		return Invalid
 	}
+	_, w.speechRateUnitPresent = fields["speech_rate_unit"]
 	for name, raw := range fields {
 		if string(raw) == "null" {
 			return Invalid
@@ -75,7 +86,7 @@ func (w *Window) UnmarshalJSON(b []byte) error {
 			if w.Channel != "health" {
 				return Invalid
 			}
-		case "voiced_seconds", "speech_rate", "volume", "pitch":
+		case "voiced_seconds", "speech_rate", "speech_rate_unit", "volume", "pitch":
 			if w.Channel != "voice" {
 				return Invalid
 			}
@@ -92,11 +103,12 @@ func (w Window) validate() error {
 	limit := 30
 	switch w.Channel {
 	case "health":
-		if !slices.Contains([]string{"watch_live", "apple_history", "health_connect", "huawei_history"}, w.Source) || w.Voiced != nil || w.Volume != nil || w.Pitch != nil || w.Speech != nil || (w.Heart == nil && w.HRV == nil && w.Cadence == nil) {
+		if !slices.Contains([]string{"watch_live", "apple_history", "health_connect", "huawei_history"}, w.Source) || w.Voiced != nil || w.Volume != nil || w.Pitch != nil || w.Speech != nil || w.speechRateUnitPresent || w.SpeechRateUnit != "" || (w.Heart == nil && w.HRV == nil && w.Cadence == nil) {
 			return Invalid
 		}
 	case "voice":
-		if w.Voiced == nil || *w.Voiced < 0 || *w.Voiced > 30 || w.Source != "" || w.Heart != nil || w.Cadence != nil || w.HRV != nil {
+		unitPresent := w.speechRateUnitPresent || w.SpeechRateUnit != ""
+		if w.Voiced == nil || *w.Voiced < 0 || *w.Voiced > 30 || w.Source != "" || w.Heart != nil || w.Cadence != nil || w.HRV != nil || (unitPresent && (w.Speech == nil || w.SpeechRateUnit != SpeechRateUnitCharactersPerSecond)) {
 			return Invalid
 		}
 		limit = *w.Voiced
@@ -117,6 +129,22 @@ func (w Window) validate() error {
 		} else if s.Seconds == nil || *s.Seconds < 0 || *s.Seconds > limit {
 			return Invalid
 		}
+	}
+	return nil
+}
+
+// validateForUpload separates current wire admission from legacy storage
+// validation. Existing encrypted windows may omit the unit, but a new value
+// carrying speech_rate must identify it as transcript-derived characters/sec.
+func (w Window) validateForUpload() error {
+	if e := w.validate(); e != nil {
+		return e
+	}
+	if w.Speech != nil && w.SpeechRateUnit != SpeechRateUnitCharactersPerSecond {
+		return Invalid
+	}
+	if w.Speech == nil && (w.speechRateUnitPresent || w.SpeechRateUnit != "") {
+		return Invalid
 	}
 	return nil
 }
@@ -153,7 +181,7 @@ func (s Service) open(u, id uuid.UUID, table string, b []byte, v any) error {
 	return json.Unmarshal(p, v)
 }
 func (s Service) Upload(ctx context.Context, tx pgx.Tx, u uuid.UUID, w Window, now time.Time) error {
-	if e := w.validate(); e != nil {
+	if e := w.validateForUpload(); e != nil {
 		return e
 	}
 	w.At = w.At.UTC()

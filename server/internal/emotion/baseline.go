@@ -69,9 +69,7 @@ func (s Service) baseline(ctx context.Context, tx pgx.Tx, u uuid.UUID, now, end 
 		if forWindow && (!r.StartsAt.Before(end) || !r.ConfirmedAt.Before(end)) {
 			return nil
 		}
-		for _, k := range r.Triggers {
-			counts[k]++
-		}
+		countNegativeTriggers(counts, r)
 		return nil
 	})
 	if e != nil {
@@ -148,6 +146,9 @@ func reduceWindows(loc *time.Location, end time.Time, forWindow bool, read func(
 		if v != nil {
 			f0.VoiceAt = v.At
 			f0.Exercise = f0.Exercise || *v.Exercise
+			if v.SpeechRateUnit == SpeechRateUnitCharactersPerSecond {
+				f0.SpeechRateUnit = v.SpeechRateUnit
+			}
 		}
 		inBaseline := !forWindow || slot.at.Before(end)
 		sample := func(k string, s *Stat) {
@@ -167,7 +168,9 @@ func reduceWindows(loc *time.Location, end time.Time, forWindow bool, read func(
 			}
 		}
 		if v != nil {
-			sample("speech_rate", v.Speech)
+			if v.SpeechRateUnit == SpeechRateUnitCharactersPerSecond {
+				sample("speech_rate", v.Speech)
+			}
 			sample("volume", v.Volume)
 			sample("pitch", v.Pitch)
 		}

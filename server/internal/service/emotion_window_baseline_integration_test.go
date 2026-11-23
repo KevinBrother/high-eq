@@ -4,6 +4,7 @@ package service
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/url"
@@ -95,7 +96,7 @@ func TestT32BWindowBaselinePostgres(t *testing.T) {
 					}
 					first := target.AddDate(0, 0, -d).Add(-30 * time.Minute)
 					for i := range n {
-						w := voice(first.Add(time.Duration(i)*30*time.Second), 120, -36)
+						w := voice(first.Add(time.Duration(i)*30*time.Second), 4, -36)
 						if err := f.s.Emotion.Upload(f.ctx, tx, user.UserId, w, now); err != nil {
 							return err
 						}
@@ -104,7 +105,7 @@ func TestT32BWindowBaselinePostgres(t *testing.T) {
 				return nil
 			}))
 			if tc.newerFirst {
-				f.call("POST", "signal-windows", user.AccessToken, voice(target.Add(30*time.Second), 120, -12), 200, nil)
+				f.call("POST", "signal-windows", user.AccessToken, voice(target.Add(30*time.Second), 4, -12), 200, nil)
 			}
 			f.call("GET", windowQuery(target), user.AccessToken, nil, 404, nil)
 			var current emotion.Baselines
@@ -118,7 +119,7 @@ func TestT32BWindowBaselinePostgres(t *testing.T) {
 			if tc.newerFirst {
 				readCurrent()
 			}
-			f.call("POST", "signal-windows", user.AccessToken, voice(target, 150, -30), 200, nil)
+			f.call("POST", "signal-windows", user.AccessToken, voice(target, 5, -30), 200, nil)
 			var committed bool
 			f.must(f.s.db.QueryRow(f.ctx, `select exists(select from signal_windows where user_id=$1 and starts_at=$2 and channel='voice')`,
 				user.UserId, target).Scan(&committed))
@@ -136,7 +137,7 @@ func TestT32BWindowBaselinePostgres(t *testing.T) {
 				base      float64
 				threshold float64
 			}{
-				{"speech", scoped.Speech, 120, 150},
+				{"speech", scoped.Speech, 4, 5},
 				{"volume", scoped.Volume, -36, -30},
 			} {
 				p := want.progress
@@ -168,13 +169,56 @@ func TestT32BWindowBaselinePostgres(t *testing.T) {
 				exercise := true
 				health.Exercise = &exercise
 				f.call("POST", "signal-windows", user.AccessToken, health, 200, nil)
-				f.call("POST", "signal-windows", user.AccessToken, voice(motionAt, 200, -20), 200, nil)
+				f.call("POST", "signal-windows", user.AccessToken, voice(motionAt, 6, -20), 200, nil)
 				f.call("GET", windowQuery(motionAt), user.AccessToken, nil, 200, &scoped)
 				if !scoped.Speech.Ready || !scoped.Volume.Ready {
 					t.Fatalf("movement changed readiness of historical baselines: %+v", scoped)
 				}
 				report.Id, report.StartsAt = uuid.New(), motionAt
 				f.call("POST", "signal-events", user.AccessToken, report, 400, nil)
+
+				t.Run("feedback_units_and_cutoff", func(t *testing.T) {
+					f := signalsFor(t, fixture.s, fixture.ctx)
+					// Seed confirmed records as stored by T30, including one from before
+					// events carried a unit. Current GET includes confirmation at target.
+					for _, row := range []struct {
+						at, confirmed time.Time
+						unit          string
+						triggers      []string
+					}{
+						{target.Add(-3 * time.Hour), target.Add(-time.Hour), "", []string{"speech_rate", "volume"}},
+						{target.Add(-2 * time.Hour), target.Add(-time.Minute), emotion.SpeechRateUnitCharactersPerSecond, []string{"speech_rate"}},
+						{target.Add(-time.Hour), target, emotion.SpeechRateUnitCharactersPerSecond, []string{"speech_rate"}},
+					} {
+						id := uuid.New()
+						payload := map[string]any{
+							"id": id, "starts_at": row.at, "kind": emotion.Self, "confirmation": "no",
+							"triggers": row.triggers, "confirmed_at": row.confirmed,
+						}
+						if row.unit != "" {
+							payload["speech_rate_unit"] = row.unit
+						}
+						raw, err := json.Marshal(payload)
+						f.must(err)
+						enc, err := f.s.Emotion.Fields.Seal(raw, []byte("event/"+user.UserId.String()+"/"+id.String()))
+						f.must(err)
+						f.exec(`insert into signal_events(id,user_id,occurred_at,event_enc) values($1,$2,$3,$4)`, id, user.UserId, row.at, enc)
+					}
+					checkThreshold := func(name string, p emotion.Progress, want float64) {
+						t.Helper()
+						if p.Threshold == nil || math.Abs(*p.Threshold-want) > 1e-10 {
+							t.Fatalf("%s threshold = %+v, want %v", name, p, want)
+						}
+					}
+					var b emotion.Baselines
+					f.call("GET", windowQuery(target), user.AccessToken, nil, 200, &b)
+					checkThreshold("as of window speech", b.Speech, 5.25)
+					checkThreshold("as of window volume", b.Volume, -29.7)
+					f.call("GET", "signal-baselines", user.AccessToken, nil, 200, &b)
+					// Only the committed target contributes one extra sample at 5 chars/s.
+					checkThreshold("current speech", b.Speech, (4+1.0/421)*1.25*1.05*1.05)
+					checkThreshold("current volume", b.Volume, tc.wantCurrentVolume+0.3)
+				})
 			}
 		})
 	}
@@ -215,7 +259,7 @@ func TestT32BWindowBaselinePostgres(t *testing.T) {
 		owner, other := newUser(f), newUser(f)
 		f.call("POST", "signal-windows", owner.AccessToken, synthetic(target, "health", false), 200, nil)
 		f.call("GET", windowQuery(target), owner.AccessToken, nil, 404, nil)
-		f.call("POST", "signal-windows", owner.AccessToken, voice(target, 150, -30), 200, nil)
+		f.call("POST", "signal-windows", owner.AccessToken, voice(target, 5, -30), 200, nil)
 		f.call("GET", windowQuery(target), "", nil, 401, nil)
 		f.call("GET", windowQuery(target), other.AccessToken, nil, 404, nil)
 		f.call("GET", windowQuery(target.In(time.FixedZone("", 8*3600))), owner.AccessToken, nil, 200, nil)
@@ -239,11 +283,11 @@ func TestT32BWindowBaselinePostgres(t *testing.T) {
 		f.exec(`insert into consents(user_id,purpose,version) values($1,'voice','v2')`, owner.UserId)
 		f.call("GET", windowQuery(target), owner.AccessToken, nil, 403, nil)
 		f.exec(`update consents set granted_at=$2 where user_id=$1 and purpose='voice' and withdrawn_at is null`, owner.UserId, target)
-		f.call("POST", "signal-windows", other.AccessToken, voice(target, 150, -30), 200, nil)
+		f.call("POST", "signal-windows", other.AccessToken, voice(target, 5, -30), 200, nil)
 		f.call("DELETE", "signal-windows?channel=voice&starts_at="+url.QueryEscape(target.Format(time.RFC3339)), owner.AccessToken, nil, 200, nil)
 		f.call("GET", windowQuery(target), owner.AccessToken, nil, 404, nil)
 		f.call("GET", windowQuery(target), other.AccessToken, nil, 200, nil)
-		f.call("POST", "signal-windows", owner.AccessToken, voice(target, 150, -30), 200, nil)
+		f.call("POST", "signal-windows", owner.AccessToken, voice(target, 5, -30), 200, nil)
 		f.exec(`update entitlements set starts_at=$2 where user_id=$1`, owner.UserId, target.Add(time.Second))
 		f.call("GET", windowQuery(target), owner.AccessToken, nil, 403, nil)
 		f.exec(`update entitlements set ends_at=now() where user_id=$1`, owner.UserId)

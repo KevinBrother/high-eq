@@ -25,7 +25,7 @@ func TestWindowBaselineThresholdTiming(t *testing.T) {
 			voice := func(at time.Time, speech, volume float64) Window {
 				stat := func(v float64) *Stat { return &Stat{Mean: &v, Maximum: &v, Count: 30, Seconds: &seconds} }
 				return Window{At: at, Channel: "voice", Exercise: &exercise, Duration: 30,
-					Voiced: &seconds, Speech: stat(speech), Volume: stat(volume)}
+					Voiced: &seconds, Speech: stat(speech), SpeechRateUnit: SpeechRateUnitCharactersPerSecond, Volume: stat(volume)}
 			}
 			for d := 6; d >= 0; d-- {
 				n := 60
@@ -34,11 +34,11 @@ func TestWindowBaselineThresholdTiming(t *testing.T) {
 				}
 				first := target.AddDate(0, 0, -d).Add(-30 * time.Minute)
 				for i := range n {
-					history = append(history, voice(first.Add(time.Duration(i)*30*time.Second), 120, -36))
+					history = append(history, voice(first.Add(time.Duration(i)*30*time.Second), 4, -36))
 				}
 			}
-			atTarget := voice(target, 150, -30)
-			newer := voice(target.Add(30*time.Second), 120, -12)
+			atTarget := voice(target, 5, -30)
+			newer := voice(target.Add(30*time.Second), 4, -12)
 			fold := func(end time.Time, forWindow, targetCommitted bool) (Baselines, Frame) {
 				t.Helper()
 				rows := append([]Window(nil), history...)
@@ -70,7 +70,8 @@ func TestWindowBaselineThresholdTiming(t *testing.T) {
 				t.Fatalf("current volume = %+v, want threshold %v", b.Volume, tc.wantCurrent)
 			}
 			b, f := fold(target, true, true)
-			if !f.VoiceAt.Equal(target) || f.Means["speech_rate"] == nil || *f.Means["speech_rate"] != 150 ||
+			if !f.VoiceAt.Equal(target) || f.SpeechRateUnit != SpeechRateUnitCharactersPerSecond ||
+				f.Means["speech_rate"] == nil || *f.Means["speech_rate"] != 5 ||
 				f.Means["volume"] == nil || *f.Means["volume"] != -30 {
 				t.Fatalf("target missing from decision frame: %+v", f)
 			}
@@ -81,8 +82,8 @@ func TestWindowBaselineThresholdTiming(t *testing.T) {
 					}
 				}
 			} else if !b.Speech.Ready || !b.Volume.Ready || b.Speech.Threshold == nil || b.Volume.Threshold == nil ||
-				*b.Speech.Threshold != 150 || *b.Volume.Threshold != -30 {
-				t.Fatalf("window thresholds differ from 150 and -30: %+v", b)
+				*b.Speech.Threshold != 5 || *b.Volume.Threshold != -30 {
+				t.Fatalf("window thresholds differ from 5 characters/s and -30 dB: %+v", b)
 			}
 			f.Thresholds = map[string]*float64{"speech_rate": b.Speech.Threshold, "volume": b.Volume.Threshold}
 			if got := Decide(f).Kind; got != tc.wantDecision {
@@ -95,7 +96,7 @@ func TestWindowBaselineThresholdTiming(t *testing.T) {
 func TestWindowBaselineExcludesTargetHealthButKeepsDecisionFrame(t *testing.T) {
 	at := time.Date(2026, 11, 22, 8, 0, 30, 0, time.UTC)
 	exercise, active, seconds := false, true, 30
-	heart, hrv, cadence, speech := 120., 42., 110., 150.
+	heart, hrv, cadence, speech := 120., 42., 110., 5.
 	duration := func(value *float64) *Stat {
 		return &Stat{Mean: value, Maximum: value, Count: 2, Seconds: &seconds}
 	}
@@ -103,7 +104,7 @@ func TestWindowBaselineExcludesTargetHealthButKeepsDecisionFrame(t *testing.T) {
 		Heart: duration(&heart), HRV: &Stat{Count: 2}, Cadence: duration(&cadence)}
 	health := Window{At: at, Channel: "health", Exercise: &active, Source: "watch_live",
 		Heart: duration(&heart), HRV: &Stat{Mean: &hrv, Maximum: &hrv, Count: 3}}
-	voice := Window{At: at, Channel: "voice", Exercise: &exercise, Speech: duration(&speech)}
+	voice := Window{At: at, Channel: "voice", Exercise: &exercise, Speech: duration(&speech), SpeechRateUnit: SpeechRateUnitCharactersPerSecond}
 	read := func(visit func(Window) error) error {
 		for _, w := range []Window{history, health, voice} {
 			if err := visit(w); err != nil {

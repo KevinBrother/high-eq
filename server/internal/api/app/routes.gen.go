@@ -355,6 +355,11 @@ const (
 	VoiceWindowDurationSecondsN30 VoiceWindowDurationSeconds = 30
 )
 
+// Defines values for VoiceWindowSpeechRateUnit.
+const (
+	VoiceWindowSpeechRateUnitCharactersPerSecond VoiceWindowSpeechRateUnit = "characters_per_second"
+)
+
 // Defines values for ListCardsParamsScene.
 const (
 	ListCardsParamsSceneFamily  ListCardsParamsScene = "family"
@@ -1230,16 +1235,19 @@ type UpdateMeInput struct {
 	Timezone string `json:"timezone"`
 }
 
-// VoiceWindow 零人声可不带任何特征；不能拿静音累计基线。
+// VoiceWindow 零人声可不带任何特征；不能拿静音累计基线。speech_rate 必须与 speech_rate_unit=characters_per_second 同时出现；不提供旧声学峰/分钟代理的隐式换算。
 type VoiceWindow struct {
 	Channel         VoiceWindowChannel         `json:"channel"`
 	DurationSeconds VoiceWindowDurationSeconds `json:"duration_seconds"`
 	Exercise        bool                       `json:"exercise"`
 	Pitch           *WindowStat                `json:"pitch,omitempty"`
 	SpeechRate      *WindowStat                `json:"speech_rate,omitempty"`
-	StartsAt        time.Time                  `json:"starts_at"`
-	VoicedSeconds   int                        `json:"voiced_seconds"`
-	Volume          *WindowStat                `json:"volume,omitempty"`
+
+	// SpeechRateUnit 语速单位为辨认得到的 Unicode 字母/数字 grapheme 数每秒；存在 speech_rate 时必填，旧无单位窗口不得作为新上传。
+	SpeechRateUnit *VoiceWindowSpeechRateUnit `json:"speech_rate_unit,omitempty"`
+	StartsAt       time.Time                  `json:"starts_at"`
+	VoicedSeconds  int                        `json:"voiced_seconds"`
+	Volume         *WindowStat                `json:"volume,omitempty"`
 }
 
 // VoiceWindowChannel defines model for VoiceWindow.Channel.
@@ -1247,6 +1255,9 @@ type VoiceWindowChannel string
 
 // VoiceWindowDurationSeconds defines model for VoiceWindow.DurationSeconds.
 type VoiceWindowDurationSeconds int
+
+// VoiceWindowSpeechRateUnit 语速单位为辨认得到的 Unicode 字母/数字 grapheme 数每秒；存在 speech_rate 时必填，旧无单位窗口不得作为新上传。
+type VoiceWindowSpeechRateUnit string
 
 // WindowStat defines model for WindowStat.
 type WindowStat struct {

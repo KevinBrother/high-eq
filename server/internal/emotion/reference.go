@@ -17,16 +17,17 @@ const (
 var signals = []string{"heart_rate", "speech_rate", "volume", "pitch"}
 
 type Frame struct {
-	Start         time.Time           `json:"starts_at"`
-	HealthAt      time.Time           `json:"health_at"`
-	VoiceAt       time.Time           `json:"voice_at"`
-	Source        string              `json:"source"`
-	WatchReleased bool                `json:"watch_released"`
-	Exercise      bool                `json:"exercise"`
-	Cadence       float64             `json:"cadence_2m"`
-	Last          *time.Time          `json:"last_alert"`
-	Means         map[string]*float64 `json:"means"`
-	Thresholds    map[string]*float64 `json:"thresholds"`
+	Start          time.Time           `json:"starts_at"`
+	HealthAt       time.Time           `json:"health_at"`
+	VoiceAt        time.Time           `json:"voice_at"`
+	Source         string              `json:"source"`
+	WatchReleased  bool                `json:"watch_released"`
+	Exercise       bool                `json:"exercise"`
+	Cadence        float64             `json:"cadence_2m"`
+	Last           *time.Time          `json:"last_alert"`
+	Means          map[string]*float64 `json:"means"`
+	Thresholds     map[string]*float64 `json:"thresholds"`
+	SpeechRateUnit string              `json:"speech_rate_unit,omitempty"`
 }
 type Decision struct {
 	Kind    string
@@ -44,6 +45,9 @@ func Decide(f Frame) Decision {
 		v := f.Means[name]
 		t := f.Thresholds[name]
 		if v != nil && t != nil && *v >= *t {
+			if name == "speech_rate" && f.SpeechRateUnit != SpeechRateUnitCharactersPerSecond {
+				continue
+			}
 			if name == "heart_rate" && (!f.Start.Equal(f.HealthAt) || f.Source != "watch_live" || !f.WatchReleased) {
 				continue
 			}

@@ -190,18 +190,21 @@ void _expectStatisticsOnly(Json body) {
     'duration_seconds',
     'exercise',
     'voiced_seconds',
-    'speech_rate',
     'volume',
     'pitch',
   };
   expect(body.keys.toSet().difference(allowedTopLevel), isEmpty);
+  expect(
+    body.keys.toSet().intersection({'speech_rate', 'speech_rate_unit'}),
+    isEmpty,
+  );
   expect(body['channel'], 'voice');
   expect(body['duration_seconds'], 30);
   expect(body['exercise'], false);
   expect(body['voiced_seconds'], isA<int>());
 
   const allowedStat = {'mean', 'maximum', 'sample_count', 'valid_seconds'};
-  for (final name in ['speech_rate', 'volume', 'pitch']) {
+  for (final name in ['volume', 'pitch']) {
     final stat = body[name];
     if (stat == null) continue;
     if (stat is! Json) {
@@ -438,7 +441,8 @@ void main() {
       expect(firstStored['duration_seconds'], 30);
       expect(firstStored['exercise'], false);
       expect(firstStored['voiced_seconds'], greaterThan(20));
-      expect(firstStored['speech_rate'], isNotNull);
+      expect(firstStored.containsKey('speech_rate'), isFalse);
+      expect(firstStored.containsKey('speech_rate_unit'), isFalse);
       expect(firstStored['volume'], isNotNull);
       expect(firstStored['pitch'], isNotNull);
 
@@ -497,6 +501,7 @@ void main() {
       final silentStored = _storedWindow(windows, silenceStart);
       expect(silentStored['voiced_seconds'], 0);
       expect(silentStored.containsKey('speech_rate'), isFalse);
+      expect(silentStored.containsKey('speech_rate_unit'), isFalse);
       expect(silentStored.containsKey('volume'), isFalse);
       expect(silentStored.containsKey('pitch'), isFalse);
 

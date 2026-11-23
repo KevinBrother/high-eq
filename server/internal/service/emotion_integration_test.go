@@ -125,11 +125,12 @@ func synthetic(at time.Time, k string, high bool) emotion.Window {
 		w.Heart = stat(v)
 	} else {
 		w.Voiced = &secs
+		w.SpeechRateUnit = emotion.SpeechRateUnitCharactersPerSecond
 		if high {
-			w.Speech = stat(200)
+			w.Speech = stat(6)
 			w.Volume = stat(-20)
 		} else {
-			w.Speech = stat(120)
+			w.Speech = stat(4)
 			w.Volume = stat(-40)
 		}
 	}

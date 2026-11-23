@@ -2471,7 +2471,7 @@ paths:
     post:
       operationId: uploadWindow
       summary: 提交一个已授权渠道的 30 秒统计窗口
-      description: UTC 30 秒对齐；账号、starts_at、channel 幂等。同键不同值 409。缺失特征省略；有效秒不超过覆盖时长或该窗人声秒数，静音为 0。心率 bpm、HRV ms、步频步/分、语速字/分、音量 dB、音调 Hz。会员到期或相应用途同意撤回后拒收，不补传。
+      description: UTC 30 秒对齐；账号、starts_at、channel 幂等。同键不同值 409。缺失特征省略；有效秒不超过覆盖时长或该窗人声秒数，静音为 0。心率 bpm、HRV ms、步频步/分、语速为辨认得到的 Unicode 字母/数字 grapheme 数每秒、音量 dB、音调 Hz。语音窗口含 speech_rate 时必须同时提交 speech_rate_unit=characters_per_second；不得把旧声学代理值换算后冒充新单位。旧无单位窗口只为读取兼容，不能作为新窗口上传。会员到期或相应用途同意撤回后拒收，不补传。
       requestBody:
         required: true
         content:
@@ -2490,16 +2490,36 @@ paths:
                     maximum: 78
                     sample_count: 5
                     valid_seconds: 24
-              voice:
+              voice_without_speech:
+                summary: 当前手机发送：保留音量与音调，省略无单位的声学代理
                 value:
                   starts_at: '2026-11-21T09:00:00+08:00'
                   duration_seconds: 30
                   exercise: false
                   channel: voice
                   voiced_seconds: 21
+                  volume:
+                    mean: -31
+                    maximum: -20
+                    sample_count: 17
+                    valid_seconds: 17
+                  pitch:
+                    mean: 220
+                    maximum: 240
+                    sample_count: 17
+                    valid_seconds: 17
+              voice_with_speech:
+                summary: 未来设备端转写接通后：语速与单位成对发送
+                value:
+                  starts_at: '2026-11-21T09:00:00+08:00'
+                  duration_seconds: 30
+                  exercise: false
+                  channel: voice
+                  voiced_seconds: 21
+                  speech_rate_unit: characters_per_second
                   speech_rate:
-                    mean: 180
-                    maximum: 205
+                    mean: 4
+                    maximum: 5
                     sample_count: 17
                     valid_seconds: 17
       responses:
@@ -2551,6 +2571,7 @@ paths:
         省略 for_window 时返回当前进度。指定时返回 T30 判定该窗所用的基线投影，从保留期内仍存的记录重算。统计及误报调整只使用该窗起点之前的历史，今日时长按账号时区的目标窗日期统计。
         按窗查询需要当前连续采集权益和语音授权覆盖目标时间，失权时返回 403。当前账号没有该起点的已存储语音窗口时返回 404。响应仅含基线进度，事件判定仍由服务端执行。
         各信号分别按非运动有效时长或人声特征有效时长统计，1800 秒为一个有效日、7 日就绪。threshold 是与对应窗口均值比较的绝对上界（单位同上传接口），未就绪为 null。HRV 只按读数及采样日统计，永不参与或阻塞提醒。
+        当前进度和按窗投影的 speech_rate 都仅累计 speech_rate_unit=characters_per_second 的窗口。历史无单位窗口的音量和音调仍可累计。
       parameters:
       - name: for_window
         in: query
@@ -3892,9 +3913,17 @@ components:
         exercise: {type: boolean}
         voiced_seconds: {type: integer, minimum: 0, maximum: 30}
         speech_rate: {$ref: '#/components/schemas/WindowStat'}
+        speech_rate_unit:
+          type: string
+          enum: [characters_per_second]
+          description: 语速单位为辨认得到的 Unicode 字母/数字 grapheme 数每秒；存在 speech_rate 时必填，旧无单位窗口不得作为新上传。
         volume: {$ref: '#/components/schemas/WindowStat'}
         pitch: {$ref: '#/components/schemas/WindowStat'}
-      description: 零人声可不带任何特征；不能拿静音累计基线。
+      not:
+        oneOf:
+        - required: [speech_rate]
+        - required: [speech_rate_unit]
+      description: 零人声可不带任何特征；不能拿静音累计基线。speech_rate 必须与 speech_rate_unit=characters_per_second 同时出现；不提供旧声学峰/分钟代理的隐式换算。
     WindowUpload:
       oneOf:
       - {$ref: '#/components/schemas/HealthWindow'}
