@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
-import 'package:flutter/foundation.dart' show ValueNotifier;
+import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier;
 import '../../core/api.dart';
 import '../../core/app_op.g.dart';
 import '../../core/consent.dart';
@@ -18,6 +18,17 @@ class _ExpiredDuringCheck implements Exception {
 class _UploadGateClosed implements Exception {
   final bool denied;
   const _UploadGateClosed(this.denied);
+}
+
+/// A checked T28 collection boundary with synchronous local invalidation.
+class HealthReplayLease {
+  const HealthReplayLease({
+    required this.collectionFrom,
+    required this.isCurrent,
+  });
+
+  final int collectionFrom;
+  final bool Function() isCurrent;
 }
 
 /// One owner per authenticated foreground session. The durable retry queue is a
@@ -49,12 +60,22 @@ class HealthSync {
   static const _withdrawal = 'withdrawal';
   static const _explicitWithdrawal = 'explicit';
   int _epoch = 0;
+  final _replayRevision = ValueNotifier(0);
+  int _replayCheckSequence = 0;
+  int _latestApprovedReplayCheck = 0;
+  (Object?, Object?, Object?, Object?, Object?)? _replayState;
   bool _busy = false, _active = true, _restored = false;
   bool _prompting = false, _promptInterrupted = false;
   int? _promptGeneration;
   Timer? _expiry;
   Json? _volatileState;
   final mode = ValueNotifier<String?>(null);
+
+  /// Signals synchronous invalidation of leases held by mounted replay pages.
+  ValueListenable<int> get replayChanges => _replayRevision;
+
+  void _invalidateReplay() => _replayRevision.value++;
+
   Future<void> _mutations = Future.value();
   Future<T> _ordered<T>(Future<T> Function() action) {
     final f = _mutations.then((_) => action());
@@ -80,10 +101,122 @@ class HealthSync {
         : jsonDecode(utf8.decode(bytes)) as Json;
   }
 
+  /// Read-only collection boundary for local replay. This deliberately does
+  /// not tick, save, upload, request permission, or start collection. Every
+  /// call re-runs the same consent/grant, membership, foreground, and source
+  /// checks used by collection, so a replay read cannot outlive a regrant.
+  Future<int?> replayCollectionFrom() async =>
+      (await replayLease())?.collectionFrom;
+
+  Future<HealthReplayLease?> replayLease() async {
+    if (!_active || _busy || !_restored) return null;
+    final gen = _epoch;
+    final revision = _replayRevision.value;
+    final check = ++_replayCheckSequence;
+    try {
+      final s = await state();
+      _check(gen);
+      final paidUntil = s['paid_until'];
+      final grant = s['grant'];
+      final boundary = s['collection_from'];
+      if (s['mode'] != 'on' ||
+          paidUntil is! int ||
+          paidUntil <= clock() ||
+          grant is! String ||
+          boundary is! int ||
+          !_sources.contains(s['source'])) {
+        return null;
+      }
+
+      var allowed = false;
+      var denied = false;
+      DateTime? expiry;
+      final granted = await gate.readIfAllowed(
+        scope,
+        CollectionPurpose.health,
+        systemGranted: port.queryable,
+        acceptsGrant: (record) =>
+            record['version'] == '2026-11' && record['updated_at'] == grant,
+        onDenied: () => denied = true,
+        onExpiry: (value) => expiry = value,
+        beginRead: () {
+          _check(gen);
+          if (!_active || _busy || !_restored || clock() >= paidUntil) {
+            throw StateError('健康回放授权不可用');
+          }
+          api.sessions.require(scope);
+          allowed = true;
+        },
+      );
+      _check(gen);
+      // A delayed denial must not invalidate a newer approved replay.
+      if (denied &&
+          revision == _replayRevision.value &&
+          check > _latestApprovedReplayCheck) {
+        _invalidateReplay();
+      }
+      final expires = expiry;
+      if (!granted ||
+          !allowed ||
+          denied ||
+          expires == null ||
+          !_active ||
+          _busy ||
+          !_restored ||
+          clock() >= paidUntil) {
+        return null;
+      }
+
+      // A concurrent tick may have paused collection or advanced the boundary
+      // while the gate query was in flight. Only return the exact state that
+      // passed the gate; the replay port validates this again after every
+      // asynchronous native read.
+      final after = await state();
+      _check(gen);
+      bool isCurrent() =>
+          _active &&
+          _restored &&
+          gen == _epoch &&
+          revision == _replayRevision.value &&
+          identical(api.sessions.active, scope) &&
+          !api.sessions.hasWithdrawalIntent(scope) &&
+          !api.sessions.hasUnknownWithdrawal(scope) &&
+          clock() < paidUntil &&
+          expires.isAfter(DateTime.now());
+      if (after['mode'] != 'on' ||
+          after['grant'] != grant ||
+          after['collection_from'] != boundary ||
+          after['paid_until'] != paidUntil ||
+          after['source'] != s['source'] ||
+          _busy ||
+          !isCurrent()) {
+        return null;
+      }
+      _latestApprovedReplayCheck = max(_latestApprovedReplayCheck, check);
+      return HealthReplayLease(
+        collectionFrom: ceilSlot(boundary),
+        isCurrent: isCurrent,
+      );
+    } on Object {
+      return null;
+    }
+  }
+
   Future<void> _save(Json s) async {
     final snapshot = Map<String, dynamic>.of(s);
     final savingMode = snapshot['mode'] as String;
+    final replayState = (
+      savingMode,
+      snapshot['grant'],
+      snapshot['collection_from'],
+      snapshot['source'],
+      snapshot['paid_until'],
+    );
     _volatileState = snapshot;
+    if (replayState != _replayState) {
+      _replayState = replayState;
+      _invalidateReplay();
+    }
     mode.value = savingMode;
     try {
       await api.sessions.put(
@@ -168,6 +301,7 @@ class HealthSync {
   // Called only for an explicit confirmation, never on page load/resume.
   Future<void> enable() {
     final gen = ++_epoch;
+    _invalidateReplay();
     return _ordered(() async {
       if (api.sessions.hasUnknownWithdrawal(scope)) {
         throw StateError('请先确认上次健康授权状态');
@@ -267,6 +401,7 @@ class HealthSync {
 
   void _halt() {
     _epoch++;
+    _invalidateReplay();
     _prompting = false;
     _promptGeneration = null;
     _promptInterrupted = false;

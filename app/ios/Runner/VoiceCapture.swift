@@ -20,6 +20,7 @@ final class VoiceCapture: NSObject, FlutterStreamHandler {
   private var eventChannel: FlutterEventChannel?
   private var tapInstalled = false
   private var playing = false
+  private var playbackGeneration = 0
   private var pendingPermission: FlutterResult?
 
   func install(messenger: FlutterBinaryMessenger) {
@@ -219,6 +220,8 @@ final class VoiceCapture: NSObject, FlutterStreamHandler {
       return
     }
     stopPlayback()
+    playbackGeneration += 1
+    let generation = playbackGeneration
     do {
       let session = AVAudioSession.sharedInstance()
       try session.setCategory(.playback, mode: .spokenAudio, options: [])
@@ -256,7 +259,9 @@ final class VoiceCapture: NSObject, FlutterStreamHandler {
       playing = true
       playbackPlayer.scheduleBuffer(buffer, at: nil, options: []) { [weak self] in
         DispatchQueue.main.async {
-          guard let self, self.playing else { return }
+          guard let self,
+                self.playing,
+                generation == self.playbackGeneration else { return }
           self.stopPlayback()
         }
       }
@@ -273,6 +278,7 @@ final class VoiceCapture: NSObject, FlutterStreamHandler {
   }
 
   private func stopPlayback() {
+    playbackGeneration += 1
     playing = false
     playbackPlayer.stop()
     playbackEngine.stop()
