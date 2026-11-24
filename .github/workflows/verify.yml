@@ -26,6 +26,28 @@ jobs:
       - name: Migrate, exercise constraints, roll back and reapply
         run: ./server/tests/migrations.sh
 
+  compliance:
+    name: Privacy contracts and voice behavior
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run privacy and compliance contracts
+        run: python3 -B -m unittest discover -s docs/compliance
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: '3.38.10'
+          cache: false
+      - name: Install locked Flutter dependencies
+        working-directory: app
+        run: flutter pub get --enforce-lockfile
+      - name: Test T29 voice consent, capture and revocation behavior
+        working-directory: app
+        run: flutter test --no-pub test/voice
+
   contracts:
     name: OpenAPI examples and Gin code generation
     runs-on: ubuntu-24.04

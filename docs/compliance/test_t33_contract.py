@@ -7,10 +7,39 @@ facts from candidate evidence and keep unverified product goals marked as such.
 
 from __future__ import annotations
 
+import copy
 import re
 import subprocess
 import unittest
+from collections.abc import Mapping
 from pathlib import Path
+
+try:  # Supports both `python -m unittest` and direct script execution.
+    from .t33_contract_support import (
+        WorkflowJob,
+        android_permission_callback_errors,
+        command_execution_issues,
+        ios_runner_source_files,
+        load_historical_evidence,
+        parse_workflow_jobs,
+        uses_ignored_build_path,
+        workflow_event_names,
+        workflow_path_is_triggered,
+        workflow_trigger_paths,
+    )
+except ImportError:  # pragma: no cover - exercised by the documented CLI form.
+    from t33_contract_support import (  # type: ignore[no-redef]
+        WorkflowJob,
+        android_permission_callback_errors,
+        command_execution_issues,
+        ios_runner_source_files,
+        load_historical_evidence,
+        parse_workflow_jobs,
+        uses_ignored_build_path,
+        workflow_event_names,
+        workflow_path_is_triggered,
+        workflow_trigger_paths,
+    )
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPLIANCE = ROOT / "docs" / "compliance"
@@ -21,6 +50,24 @@ OLD_BASELINE = "bd6e34e0ce8f3b96da61f7eea2e391a40cdcf70c"
 
 def read(path: str | Path) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
+
+
+def insert_workflow_path(workflow: str, event: str, anchor: str, path: str) -> str:
+    """Insert one path rule inside a named trigger without touching the other event."""
+    lines = workflow.splitlines(keepends=True)
+    start = lines.index(f"  {event}:\n")
+    end = next(
+        (
+            index
+            for index in range(start + 1, len(lines))
+            if re.match(r"^  [A-Za-z_][A-Za-z0-9_-]*:\s*$", lines[index])
+        ),
+        len(lines),
+    )
+    rule = f"      - '{path}'\n"
+    insert_at = lines.index(anchor, start, end) + 1
+    lines.insert(insert_at, rule)
+    return "".join(lines)
 
 
 def git_show(path: str) -> str:
@@ -37,6 +84,523 @@ def compliance_corpus() -> str:
     return "\n".join(
         p.read_text(encoding="utf-8") for p in sorted(COMPLIANCE.glob("*.md"))
     )
+
+
+VOICE_REQUIRED_BEHAVIORS = {
+    "app/test/voice/features_test.dart": (
+        "transcription is explicitly unavailable and never cloud-backed",
+        "window wire body is a strict statistics whitelist",
+    ),
+    "app/test/voice/aggregator_test.dart": (
+        "aligns capture to UTC 30 second windows and carries overflow",
+        "drops leading fragments and starts at the next UTC boundary",
+        "drops an incomplete window instead of uploading a false 30 seconds",
+    ),
+    "app/test/voice/controller_test.dart": (
+        "cancelling the final gate never starts native capture",
+        "disposing during native start stops the late recorder",
+        "only a strict 30-second statistics object reaches the uploader",
+        "revoke persists the gate before stop and local purge",
+        "failed revoke stays fail-closed and purges stale data on restart",
+        "membership expiry immediately stops and clears pending windows",
+        "revocation before upload never marks or sends the queued window",
+    ),
+    "app/test/voice/page_test.dart": (
+        "voice route waits on the shared consent provider and fails closed",
+        "capture banner stays visible and lifecycle pause stops capture",
+        "lifecycle pause cancels a start still awaiting consent",
+        "revocation from page leaves an empty queue and no upload path",
+    ),
+    "app/test/voice/platform_test.dart": (
+        "parses PCM together with its UTC sample capture time",
+        "rejects a PCM event without a native capture timestamp",
+    ),
+    "app/test/voice/store_test.dart": (
+        "queue is encrypted and clears before revoke sync",
+        "switching accounts invalidates the old scope and hides all data",
+        "recordings expire after three days and are not readable",
+    ),
+}
+
+VOICE_CI_REQUIRED = (
+    "pull_request:",
+    "runs-on: ubuntu-24.04",
+    "fetch-depth: 0",
+    "subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2",
+    "flutter-version: '3.38.10'",
+    "cache: false",
+    "python3 -B -m unittest discover -s docs/compliance",
+    "working-directory: app",
+    "flutter pub get --enforce-lockfile",
+    "flutter test --no-pub test/voice",
+)
+
+T29_LIVE_LOG = "build/t29/live-published.ToeY3h/t30-live.log"
+T29_LIVE_RUN_TREE = "33149cab1d768881c2b6d9b24c62e294fafa0811"
+T29_LIVE_FROZEN_TREE = "2825621d921f40b44248f9c1a7ef79c24b5a91de"
+T29_HISTORICAL_EVIDENCE = "docs/compliance/t29-historical-evidence.json"
+
+T29_WIRE_STEPS_REQUIRED = (
+    "fetch-depth: 0",
+    "bash app/tool/t29/live.sh",
+)
+
+VERIFY_REQUIRED_COMMANDS = (
+    ("python3 -B -m unittest discover -s docs/compliance", ""),
+    ("flutter pub get --enforce-lockfile", "app"),
+    ("flutter test --no-pub test/voice", "app"),
+)
+
+T29_WIRE_REQUIRED_COMMANDS = (
+    ("flutter pub get --enforce-lockfile", "app"),
+    (
+        "dart format --output=none --set-exit-if-changed "
+        "lib/features/voice test/voice tool/t29",
+        "app",
+    ),
+    ("dart analyze lib/features/voice tool/t29", "app"),
+    (
+        "./tool/t29/with_sentinel_proxy.sh flutter --no-version-check "
+        "--suppress-analytics test --no-pub -r expanded "
+        "tool/t29/proxy_isolation_test.dart",
+        "app",
+    ),
+    ("bash app/tool/t29/live.sh", ""),
+)
+
+T29_WIRE_TRIGGER_PATHS = (
+    "app/pubspec.yaml",
+    "app/pubspec.lock",
+    "app/lib/main.dart",
+    "app/lib/core/api.dart",
+    "app/lib/core/consent.dart",
+    "app/lib/core/sse.dart",
+    "app/lib/features/voice/**",
+    "app/test/voice/**",
+    "app/tool/t29/**",
+    "app/android/app/src/main/AndroidManifest.xml",
+    "app/android/app/src/main/kotlin/cn/higheq/high_eq/MainActivity.kt",
+    "app/android/app/src/main/kotlin/cn/higheq/high_eq/VoiceCapture.kt",
+    "app/ios/Runner/AppDelegate.swift",
+    "app/ios/Runner/Info.plist",
+    "app/ios/Runner/VoiceCapture.swift",
+    "app/ios/Runner/VoicePCMConverter.swift",
+    "app/ios/Runner/VoicePCMCaptureSession.swift",
+    "app/ios/Runner.xcodeproj/project.pbxproj",
+    "server/Dockerfile",
+    "server/go.mod",
+    "server/go.sum",
+    "server/cmd/api/main.go",
+    "server/internal/api/app/routes.gen.go",
+    "server/internal/fieldcrypt/cipher.go",
+    "server/internal/service/entitlements_http.go",
+    ".github/workflows/t29-t30-wire.yml",
+)
+
+T29_WIRE_FORBIDDEN_TRIGGER_PATHS = (
+    "docs/compliance/README.md",
+    "docs/api/events.md",
+    "docs/tasks/T29.md",
+    "docs/tasks/T33.md",
+    ".github/workflows/verify.yml",
+)
+
+HISTORICAL_SCOPE_OVERCLAIM_PATTERNS = (
+    re.compile(
+        r"(?:旧日志|历史日志|历史证据|历史记录)(?:已)?"
+        r"(?:证明|显示|确认|表明|意味着).{0,40}当前.{0,40}"
+        r"(?:CI|Actions|流水线|生产|线上).{0,40}(?:通过|成功|已核验|已验证)"
+    ),
+    re.compile(
+        r"(?:旧日志|历史日志|历史证据|历史记录)(?:已)?"
+        r"(?:证明|显示|确认|表明|意味着).{0,60}"
+        r"(?:CI|Actions|流水线|生产|线上)(?:已经|均已|已)?"
+        r"(?:通过|成功|核验|验证)"
+    ),
+)
+
+T29_WIRE_DUPLICATE_COMMANDS = (
+    (
+        "python3 -B -m unittest discover -s docs/compliance",
+        "T29 wire workflow must not duplicate Verify's compliance job",
+    ),
+    (
+        "flutter test --no-pub test/voice",
+        "T29 wire workflow must not duplicate Verify's voice unit-test job",
+    ),
+)
+
+
+def voice_static_and_behavior_errors(
+    *,
+    manifest: str,
+    plist: str,
+    ios_project: str,
+    android_entry: str,
+    ios_entry: str,
+    native_sources: Mapping[str, str],
+    behavior_sources: Mapping[str, str],
+) -> list[str]:
+    errors: list[str] = []
+    if 'android:name="android.permission.RECORD_AUDIO"' not in manifest:
+        errors.append("Android Manifest is missing RECORD_AUDIO")
+    if "NSMicrophoneUsageDescription" not in plist:
+        errors.append("iOS Info.plist is missing NSMicrophoneUsageDescription")
+
+    for needle in ("VoiceCapture(this)", "voiceCapture.install"):
+        if needle not in android_entry:
+            errors.append(f"Android entry is missing {needle}")
+    for needle in ("VoiceCapture()", "voiceCapture.install"):
+        if needle not in ios_entry:
+            errors.append(f"iOS entry is missing {needle}")
+
+    ios_source_root = ROOT / "app" / "ios"
+    runner_sources = ios_runner_source_files(ios_project)
+    for source_path in (
+        "Runner/VoiceCapture.swift",
+        "Runner/VoicePCMConverter.swift",
+        "Runner/VoicePCMCaptureSession.swift",
+    ):
+        if (
+            source_path not in runner_sources
+            or not (ios_source_root / source_path).is_file()
+        ):
+            errors.append(
+                f"iOS Xcode Sources is missing {source_path.rsplit('/', 1)[-1]}"
+            )
+
+    errors.extend(android_permission_callback_errors(android_entry, native_sources))
+
+    for path, source in native_sources.items():
+        for forbidden in ("URLSession", "SpeechRecognizer", "SFSpeech"):
+            if forbidden in source:
+                errors.append(f"{path} contains forbidden native path {forbidden}")
+
+    for path, tests in VOICE_REQUIRED_BEHAVIORS.items():
+        source = behavior_sources.get(path)
+        if source is None:
+            errors.append(f"missing voice behavior source {path}")
+            continue
+        for test_name in tests:
+            if test_name not in source:
+                errors.append(f"{path} is missing behavior gate {test_name!r}")
+    return errors
+
+
+def required_command_errors(
+    job: WorkflowJob,
+    command: str,
+    *,
+    workflow_name: str,
+    missing_message: str,
+    working_directory: str = "",
+) -> list[str]:
+    """Require one executable command to participate in step failure propagation."""
+    matching = [step for step in job.steps if step.run_has(command)]
+    if not matching:
+        return [missing_message]
+
+    errors: list[str] = []
+    if any(step.if_condition for step in matching):
+        errors.append(f"{workflow_name} step {command!r} must not be conditional")
+    if any(
+        step.continue_on_error.strip().lower() not in ("", "false")
+        for step in matching
+    ):
+        errors.append(f"{workflow_name} step {command!r} must not allow failure")
+    if working_directory and not any(
+        step.working_directory == working_directory for step in matching
+    ):
+        errors.append(
+            f"{workflow_name} step {command!r} must run in "
+            f"working-directory: {working_directory}"
+        )
+
+    issues = {
+        issue
+        for step in matching
+        for issue in command_execution_issues(step.run, command)
+    }
+    if "conditional" in issues:
+        errors.append(
+            f"{workflow_name} command {command!r} must run as an unconditional "
+            "top-level command"
+        )
+    if "early-exit" in issues:
+        errors.append(
+            f"{workflow_name} command {command!r} must not be preceded by a shell "
+            "early exit"
+        )
+    if "failure-swallowed" in issues:
+        errors.append(
+            f"{workflow_name} command {command!r} must propagate shell failure"
+        )
+    return errors
+
+
+def required_command_order_errors(
+    job: WorkflowJob,
+    commands: tuple[tuple[str, str], ...],
+    *,
+    workflow_name: str,
+) -> list[str]:
+    positions: list[int] = []
+    for command, _ in commands:
+        position = next(
+            (index for index, step in enumerate(job.steps) if step.run_has(command)),
+            None,
+        )
+        if position is not None:
+            positions.append(position)
+    if positions == sorted(positions):
+        return []
+    return [f"{workflow_name} required commands must execute in order"]
+
+
+def voice_ci_errors(workflow: str) -> list[str]:
+    errors: list[str] = []
+    events = workflow_event_names(workflow)
+    if not {"push", "pull_request"}.issubset(events):
+        errors.append(
+            "hosted Verify workflow must trigger on both push and pull_request"
+        )
+    for event in ("push", "pull_request"):
+        if workflow_trigger_paths(workflow, event):
+            errors.append(
+                f"hosted Verify workflow {event} must not use path filters"
+            )
+
+    jobs = parse_workflow_jobs(workflow)
+    job = jobs.get("compliance")
+    if job is None:
+        return ["hosted Verify workflow is missing the compliance job"]
+
+    if job.runs_on != "ubuntu-24.04":
+        errors.append("hosted Verify workflow is missing 'runs-on: ubuntu-24.04'")
+    if any("self-hosted" in item.runs_on.lower() for item in jobs.values()):
+        errors.append("hosted Verify workflow must not use a self-hosted runner")
+    if job.if_condition:
+        errors.append("hosted Verify compliance job must not be conditional")
+    if job.continue_on_error.strip().lower() not in ("", "false"):
+        errors.append("hosted Verify compliance job must not allow failure")
+
+    checkout = next(
+        (step for step in job.steps if step.uses.startswith("actions/checkout@")), None
+    )
+    if checkout is None:
+        errors.append("hosted Verify workflow is missing actions/checkout")
+    else:
+        checkout_with = checkout.with_values or {}
+        if checkout_with.get("fetch-depth") != "0":
+            errors.append("hosted Verify checkout is missing fetch-depth: 0")
+        if checkout_with.get("persist-credentials") != "false":
+            errors.append("hosted Verify checkout must not persist credentials")
+
+    flutter_action = next(
+        (step for step in job.steps if step.uses.startswith("subosito/flutter-action@")),
+        None,
+    )
+    if flutter_action is None:
+        errors.append("hosted Verify workflow is missing subosito/flutter-action")
+    else:
+        action_with = flutter_action.with_values or {}
+        if action_with.get("flutter-version") != "3.38.10":
+            errors.append("hosted Verify workflow is missing Flutter 3.38.10")
+        if action_with.get("cache") != "false":
+            errors.append("hosted Verify Flutter action must disable cache")
+
+    for command, working_directory in VERIFY_REQUIRED_COMMANDS:
+        errors.extend(
+            required_command_errors(
+                job,
+                command,
+                workflow_name="hosted Verify workflow",
+                missing_message=(
+                    f"hosted Verify workflow is missing executable {command!r}"
+                ),
+                working_directory=working_directory,
+            )
+        )
+    errors.extend(
+        required_command_order_errors(
+            job,
+            VERIFY_REQUIRED_COMMANDS,
+            workflow_name="hosted Verify workflow",
+        )
+    )
+
+    if any(
+        _run_uses_ignored_build(step.run)
+        or uses_ignored_build_path(step.working_directory)
+        for step in job.steps
+    ):
+        errors.append("hosted Verify workflow must not consume ignored build/ evidence")
+    return errors
+
+
+def _run_uses_ignored_build(run: str) -> bool:
+    return uses_ignored_build_path(run)
+
+
+def t29_wire_workflow_errors(workflow: str) -> list[str]:
+    errors: list[str] = []
+    events = workflow_event_names(workflow)
+    if not {"push", "pull_request"}.issubset(events):
+        errors.append(
+            "T29 wire workflow must trigger on both push and pull_request"
+        )
+
+    jobs = parse_workflow_jobs(workflow)
+    job = jobs.get("voice-wire")
+    if job is None:
+        return ["T29 wire workflow is missing the voice-wire job"]
+
+    if job.runs_on != "ubuntu-24.04":
+        errors.append("T29 wire workflow must use a GitHub-hosted runner")
+    if any("self-hosted" in item.runs_on.lower() for item in jobs.values()):
+        errors.append("T29 wire workflow must use a GitHub-hosted runner")
+    if job.if_condition:
+        errors.append("T29 wire workflow voice-wire job must not be conditional")
+    if job.continue_on_error.strip().lower() not in ("", "false"):
+        errors.append("T29 wire workflow voice-wire job must not allow failure")
+
+    if any(_run_uses_ignored_build(step.run) for step in job.steps):
+        errors.append("T29 wire workflow must not consume ignored build/ evidence")
+
+    checkout = next(
+        (step for step in job.steps if step.uses.startswith("actions/checkout@")), None
+    )
+    if checkout is None:
+        errors.append("T29 wire workflow is missing actions/checkout")
+    else:
+        checkout_with = checkout.with_values or {}
+        if checkout_with.get("fetch-depth") != "0":
+            errors.append("T29 wire workflow is missing 'fetch-depth: 0'")
+        if checkout_with.get("persist-credentials") != "false":
+            errors.append("T29 wire workflow must not persist checkout credentials")
+
+    for command, working_directory in T29_WIRE_REQUIRED_COMMANDS:
+        errors.extend(
+            required_command_errors(
+                job,
+                command,
+                workflow_name="T29 wire workflow",
+                missing_message=f"T29 wire workflow is missing {command!r}",
+                working_directory=working_directory,
+            )
+        )
+    errors.extend(
+        required_command_order_errors(
+            job,
+            T29_WIRE_REQUIRED_COMMANDS,
+            workflow_name="T29 wire workflow",
+        )
+    )
+
+    for command, duplicate_error in T29_WIRE_DUPLICATE_COMMANDS:
+        if any(step.run_has(command) for step in job.steps):
+            errors.append(duplicate_error)
+
+    for event in ("push", "pull_request"):
+        if not workflow_trigger_paths(workflow, event):
+            errors.append(f"T29 wire workflow has no {event} path filter")
+            continue
+        for path in T29_WIRE_TRIGGER_PATHS:
+            if not workflow_path_is_triggered(workflow, event, path):
+                errors.append(
+                    f"T29 wire workflow {event} paths do not trigger {path!r}"
+                )
+        for path in T29_WIRE_FORBIDDEN_TRIGGER_PATHS:
+            if workflow_path_is_triggered(workflow, event, path):
+                errors.append(
+                    f"T29 wire workflow {event} must not trigger documentation-only "
+                    f"input {path!r}"
+                )
+    return errors
+
+
+def t29_live_evidence_errors(
+    *,
+    t29: str,
+    t33: str,
+    evidence: Mapping[str, object] | None = None,
+) -> list[str]:
+    """Validate the historical record structurally, not through prose patterns."""
+    errors: list[str] = []
+    for name, text in (("T29", t29), ("T33", t33)):
+        if "../real-grant.log" in text:
+            errors.append(f"{name} references the retired real-grant log")
+        if T29_HISTORICAL_EVIDENCE not in text:
+            errors.append(f"{name} must reference {T29_HISTORICAL_EVIDENCE}")
+
+    record = evidence if evidence is not None else load_historical_evidence(
+        ROOT / T29_HISTORICAL_EVIDENCE
+    )
+    if record is None:
+        errors.append("structured T29 historical evidence record is missing or invalid")
+        return errors
+
+    expected_fields = (
+        (("schema_version",), 1),
+        (("kind",), "recorded-host-execution"),
+        (("artifact", "path"), T29_LIVE_LOG),
+        (("artifact", "in_archive"), False),
+        (("versions", "run_tree"), T29_LIVE_RUN_TREE),
+        (("versions", "frozen_tree"), T29_LIVE_FROZEN_TREE),
+        (("versions", "components_match"), True),
+        (("versions", "workflow_path"), ".github/workflows/t29-t30-wire.yml"),
+        (("versions", "workflow_status"), "different"),
+        (("execution", "environment"), "host-isolated-compose"),
+        (("execution", "host_status"), "passed"),
+        (("execution", "ci_status"), "unverified"),
+        (("input", "pcm"), "synthetic"),
+        (("scope", "current_tree"), False),
+        (("scope", "real_device"), False),
+        (("scope", "production"), False),
+    )
+    for path, expected in expected_fields:
+        actual: object = record
+        for key in path:
+            actual = actual.get(key) if isinstance(actual, Mapping) else None
+        if actual != expected:
+            errors.append(
+                "structured T29 historical evidence field "
+                f"{'.'.join(path)} must be {expected!r}"
+            )
+
+    for name, text in (("T29", t29), ("T33", t33)):
+        for line in text.splitlines():
+            if any(
+                pattern.search(line) for pattern in HISTORICAL_SCOPE_OVERCLAIM_PATTERNS
+            ):
+                errors.append(
+                    f"{name} historical evidence must not extend the recorded scope "
+                    "to a current CI or production pass"
+                )
+
+    if "CI 未核验" not in t33:
+        errors.append(
+            "T33 historical evidence must retain the recorded CI-unverified scope"
+        )
+
+    expected_components = ["app/", "server/", "docker-compose.yml"]
+    versions = record.get("versions")
+    components = versions.get("unchanged_components") if isinstance(versions, Mapping) else None
+    if components != expected_components:
+        errors.append(
+            "structured T29 historical evidence field "
+            "versions.unchanged_components must be ['app/', 'server/', "
+            "'docker-compose.yml']"
+        )
+
+    history_rows = [
+        line
+        for line in t29.splitlines()
+        if "历史证据" in line and T29_LIVE_LOG in line
+    ]
+    if len(history_rows) != 1:
+        errors.append("T29 must bind the archived run to an explicit historical-evidence row")
+    return errors
 
 
 class BaselineAndScopeContract(unittest.TestCase):
@@ -1512,120 +2076,30 @@ class T28HealthStaticContract(unittest.TestCase):
         )
 
 
-class T29VoiceStaticContract(unittest.TestCase):
+class T29VoiceEvidenceContract(unittest.TestCase):
     def test_voice_capture_static_contract_and_inventory_are_explicit(self) -> None:
-        manifest = read("app/android/app/src/main/AndroidManifest.xml")
-        plist = read("app/ios/Runner/Info.plist")
-        self.assertIn('android:name="android.permission.RECORD_AUDIO"', manifest)
-        self.assertIn("NSMicrophoneUsageDescription", plist)
-
-        android_entry = read(
-            "app/android/app/src/main/kotlin/cn/higheq/high_eq/MainActivity.kt"
+        errors = voice_static_and_behavior_errors(
+            manifest=read("app/android/app/src/main/AndroidManifest.xml"),
+            plist=read("app/ios/Runner/Info.plist"),
+            ios_project=read("app/ios/Runner.xcodeproj/project.pbxproj"),
+            android_entry=read(
+                "app/android/app/src/main/kotlin/cn/higheq/high_eq/MainActivity.kt"
+            ),
+            ios_entry=read("app/ios/Runner/AppDelegate.swift"),
+            native_sources={
+                path: read(path)
+                for path in (
+                    "app/android/app/src/main/kotlin/cn/higheq/high_eq/VoiceCapture.kt",
+                    "app/ios/Runner/VoiceCapture.swift",
+                    "app/ios/Runner/VoicePCMConverter.swift",
+                    "app/ios/Runner/VoicePCMCaptureSession.swift",
+                )
+            },
+            behavior_sources={
+                path: read(path) for path in VOICE_REQUIRED_BEHAVIORS
+            },
         )
-        self.assertIn("VoiceCapture(this)", android_entry)
-        self.assertIn("voiceCapture.install", android_entry)
-        self.assertIn("handlePermissionResult", android_entry)
-        ios_entry = read("app/ios/Runner/AppDelegate.swift")
-        self.assertIn("VoiceCapture()", ios_entry)
-        self.assertIn("voiceCapture.install", ios_entry)
-
-        kotlin = read("app/android/app/src/main/kotlin/cn/higheq/high_eq/VoiceCapture.kt")
-        swift = read("app/ios/Runner/VoiceCapture.swift")
-        self.assertIn("no file, transcription, or network path", kotlin)
-        for native in (kotlin, swift):
-            self.assertNotIn("URLSession", native)
-            self.assertNotIn("SpeechRecognizer", native)
-            self.assertNotIn("SFSpeech", native)
-
-        controller = read("app/lib/features/voice/controller.dart")
-        start = controller.split("Future<bool> start()", 1)[1].split(
-            "void _onIdentityChanged", 1
-        )[0]
-        ordered = (
-            "access.hasConsent(scope, CollectionPurpose.voice)",
-            "access.memberExpiry(scope)",
-            "CollectionPurpose.audioRetention",
-            "_memberActive",
-            "platform.checkPermission()",
-            "platform.requestPermission()",
-            "access.readIfAllowed(",
-            "platform.start()",
-        )
-        positions = [start.index(item) for item in ordered]
-        self.assertEqual(positions, sorted(positions))
-        self.assertIn("bool _retentionConsent = false", controller)
-        self.assertIn("bool _retainAudio = false", controller)
-        self.assertIn("Future<bool> enableRetention()", controller)
-        self.assertIn("语音特征分析不受影响", controller)
-
-        aggregator = read("app/lib/features/voice/aggregator.dart")
-        for needle in (
-            "complete UTC-aligned 30-second windows",
-            "leading fragment",
-            "partial windows are never",
-            "windowWidth = Duration(seconds: 30)",
-            "_discardPartial()",
-            "_floorWindow(",
-        ):
-            self.assertIn(needle, aggregator)
-
-        features = read("app/lib/features/voice/features.dart")
-        wire = re.search(
-            r"class VoiceWindow.*?Map<String, dynamic> toWire\(\) => \{(.*?)\n  \};",
-            features,
-            re.S,
-        )
-        self.assertIsNotNone(wire)
-        wire_block = wire.group(1)
-        for field in (
-            "'channel': 'voice'",
-            "'starts_at'",
-            "'duration_seconds': 30",
-            "'exercise': false",
-            "'voiced_seconds'",
-            "'speech_rate'",
-            "'volume'",
-            "'pitch'",
-        ):
-            self.assertIn(field, wire_block)
-        for forbidden in ("pcm", "transcript", "samples", "per_second"):
-            self.assertNotIn(forbidden, wire_block)
-        self.assertIn("enum TranscriptionStatus { unavailable }", features)
-        self.assertIn("requiresCloudTranscription => false", features)
-        self.assertIn("syllable-peak proxy", features)
-        self.assertIn("speechRateLabel => '声学音节速率代理'", controller)
-
-        sessions = read("app/lib/core/session.dart")
-        self.assertIn("AesGcm.with256bits()", sessions)
-        self.assertIn(
-            "aad: utf8.encode('${scope.account}:${kind.name}:$id')", sessions
-        )
-        self.assertIn("entry.path.endsWith('.new')", sessions)
-        self.assertIn("entry.path.endsWith('.audio')", sessions)
-        self.assertIn("const Duration(days: 3)", sessions)
-
-        store = read("app/lib/features/voice/store.dart")
-        self.assertIn("startsAt.add(const Duration(days: 3))", store)
-        self.assertIn("!at.isBefore(parsed.expiresAt)", store)
-        self.assertIn("Future<void> purgeExpired", store)
-        janitor = read("app/lib/features/voice/retention_janitor.dart")
-        self.assertIn("Duration(minutes: 1)", janitor)
-        self.assertIn("AppLifecycleState.resumed", janitor)
-        self.assertIn("purgeExpired(now: now().toUtc())", janitor)
-
-        cleanup = read("app/lib/features/voice/cleanup.dart")
-        cleanup_order = (
-            "store.setVoiceRevoked(true)",
-            "platform.stop()",
-            "store.clearPending()",
-            "store.deleteAllRecordings()",
-            "access.setConsent(scope, CollectionPurpose.voice, false)",
-        )
-        cleanup_positions = [cleanup.index(item) for item in cleanup_order]
-        self.assertEqual(cleanup_positions, sorted(cleanup_positions))
-        self.assertIn("本机不会恢复采集或补传旧窗口", controller)
-        self.assertIn("撤回标记保留，不会补传", controller)
-        self.assertIn("续费后不会补传", controller)
+        self.assertEqual(errors, [])
 
         inventory = read("docs/compliance/data-inventory.md")
         d44 = next(
@@ -1667,6 +2141,142 @@ class T29VoiceStaticContract(unittest.TestCase):
         ):
             self.assertIn(status, read(path), path)
 
+    def test_voice_behavior_runs_in_regular_hosted_ci(self) -> None:
+        self.assertEqual(voice_ci_errors(read(".github/workflows/verify.yml")), [])
+
+    def test_voice_evidence_rejects_synthetic_gate_removals(self) -> None:
+        manifest = read("app/android/app/src/main/AndroidManifest.xml")
+        plist = read("app/ios/Runner/Info.plist")
+        ios_project = read("app/ios/Runner.xcodeproj/project.pbxproj")
+        behavior_sources = {
+            path: read(path) for path in VOICE_REQUIRED_BEHAVIORS
+        }
+        native_sources = {
+            path: read(path)
+            for path in (
+                "app/android/app/src/main/kotlin/cn/higheq/high_eq/VoiceCapture.kt",
+                "app/ios/Runner/VoiceCapture.swift",
+                "app/ios/Runner/VoicePCMConverter.swift",
+                "app/ios/Runner/VoicePCMCaptureSession.swift",
+            )
+        }
+        workflow = read(".github/workflows/verify.yml")
+        base = {
+            "manifest": manifest,
+            "plist": plist,
+            "ios_project": ios_project,
+            "android_entry": read(
+                "app/android/app/src/main/kotlin/cn/higheq/high_eq/MainActivity.kt"
+            ),
+            "ios_entry": read("app/ios/Runner/AppDelegate.swift"),
+            "native_sources": native_sources,
+            "behavior_sources": behavior_sources,
+        }
+        self.assertEqual(voice_static_and_behavior_errors(**base), [])
+        self.assertEqual(voice_ci_errors(workflow), [])
+
+        no_permission = dict(base)
+        no_permission["manifest"] = manifest.replace(
+            'android:name="android.permission.RECORD_AUDIO"', ""
+        )
+        with self.subTest(gate="microphone permission"):
+            self.assertIn(
+                "Android Manifest is missing RECORD_AUDIO",
+                voice_static_and_behavior_errors(**no_permission),
+            )
+
+        no_ios_permission = dict(base)
+        no_ios_permission["plist"] = plist.replace(
+            "NSMicrophoneUsageDescription", ""
+        )
+        with self.subTest(gate="iOS microphone permission declaration"):
+            self.assertIn(
+                "iOS Info.plist is missing NSMicrophoneUsageDescription",
+                voice_static_and_behavior_errors(**no_ios_permission),
+            )
+
+        no_ios_pcm_source = dict(base)
+        no_ios_pcm_source["ios_project"] = ios_project.replace(
+            "VoicePCMConverter.swift", ""
+        )
+        with self.subTest(gate="iOS PCM source in Xcode target"):
+            self.assertIn(
+                "iOS Xcode Sources is missing VoicePCMConverter.swift",
+                voice_static_and_behavior_errors(**no_ios_pcm_source),
+            )
+
+        no_native_network_guard = dict(base)
+        no_native_network_guard["native_sources"] = dict(native_sources)
+        ios_capture_path = "app/ios/Runner/VoiceCapture.swift"
+        no_native_network_guard["native_sources"][ios_capture_path] += (
+            "\nURLSession.shared\n"
+        )
+        with self.subTest(gate="native audio remains local"):
+            self.assertTrue(
+                any(
+                    ios_capture_path in error and "URLSession" in error
+                    for error in voice_static_and_behavior_errors(
+                        **no_native_network_guard
+                    )
+                )
+            )
+
+        no_revoke_behavior = dict(base)
+        no_revoke_behavior["behavior_sources"] = dict(behavior_sources)
+        page_path = "app/test/voice/page_test.dart"
+        no_revoke_behavior["behavior_sources"][page_path] = behavior_sources[
+            page_path
+        ].replace("revocation from page leaves an empty queue and no upload path", "")
+        with self.subTest(gate="page revocation behavior"):
+            self.assertTrue(
+                any(
+                    page_path in error and "revocation from page" in error
+                    for error in voice_static_and_behavior_errors(
+                        **no_revoke_behavior
+                    )
+                )
+            )
+
+        no_controller_revoke = dict(base)
+        no_controller_revoke["behavior_sources"] = dict(behavior_sources)
+        controller_path = "app/test/voice/controller_test.dart"
+        no_controller_revoke["behavior_sources"][controller_path] = behavior_sources[
+            controller_path
+        ].replace("revoke persists the gate before stop and local purge", "")
+        with self.subTest(gate="controller revoke ordering"):
+            self.assertTrue(
+                any(
+                    controller_path in error and "revoke persists" in error
+                    for error in voice_static_and_behavior_errors(
+                        **no_controller_revoke
+                    )
+                )
+            )
+
+        no_flutter_test = workflow.replace(
+            "flutter test --no-pub test/voice", ""
+        )
+        with self.subTest(gate="hosted Flutter voice test"):
+            self.assertTrue(
+                any(
+                    "flutter test --no-pub test/voice" in error
+                    for error in voice_ci_errors(no_flutter_test)
+                )
+            )
+
+        self_hosted = workflow.replace(
+            "runs-on: ubuntu-24.04", "runs-on: self-hosted"
+        )
+        with self.subTest(gate="ordinary GitHub-hosted runner"):
+            errors = voice_ci_errors(self_hosted)
+            self.assertIn(
+                "hosted Verify workflow is missing 'runs-on: ubuntu-24.04'",
+                errors,
+            )
+            self.assertIn(
+                "hosted Verify workflow must not use a self-hosted runner",
+                errors,
+            )
 
     def test_voice_and_retention_revocation_docs_are_separate(self) -> None:
         text = read("docs/compliance/separate-consents.md")
@@ -1752,29 +2362,577 @@ class T29VoiceStaticContract(unittest.TestCase):
         )
         self.assertIn("删除失败时回听保持关闭并提示重试", task)
 
-    def test_t29_live_evidence_uses_archived_log_and_marks_ci_unverified(self) -> None:
-        log_path = "build/t29/live-published.ToeY3h/t30-live.log"
-        run_tree = "33149cab1d768881c2b6d9b24c62e294fafa0811"
-        frozen_tree = "2825621d921f40b44248f9c1a7ef79c24b5a91de"
-        for path in ("docs/tasks/T29.md", "docs/tasks/T33.md"):
-            text = read(path)
-            self.assertNotIn("../real-grant.log", text, path)
-            self.assertIn(log_path, text, path)
-            self.assertIn(run_tree, text, path)
-            self.assertIn(frozen_tree, text, path)
-            self.assertIn("CI 未核验", text, path)
+    def test_t29_live_evidence_uses_structured_record_without_inflating_scope(self) -> None:
+        t29 = read("docs/tasks/T29.md")
+        t33 = read("docs/tasks/T33.md")
+        self.assertEqual(t29_live_evidence_errors(t29=t29, t33=t33), [])
+        self.assertIn(T29_HISTORICAL_EVIDENCE, t29)
+        self.assertIn(T29_HISTORICAL_EVIDENCE, t33)
+
+    def test_t29_wire_workflow_covers_native_and_compliance_inputs(self) -> None:
+        workflow = read(".github/workflows/t29-t30-wire.yml")
+        self.assertEqual(t29_wire_workflow_errors(workflow), [])
+
+        missing_native_path = workflow.replace(
+            "      - 'app/**'\n",
+            "",
+            1,
+        )
+        self.assertNotEqual(missing_native_path, workflow)
+        errors = t29_wire_workflow_errors(missing_native_path)
+        self.assertTrue(any("VoiceCapture.swift" in error for error in errors))
+
+        reads_temporary_evidence = workflow.replace(
+            "      - name: Check T29 formatting",
+            "      - name: Read temporary log\n        run: cat build/t29/live.log\n"
+            "      - name: Check T29 formatting",
+            1,
+        )
+        errors = t29_wire_workflow_errors(reads_temporary_evidence)
+        self.assertIn("T29 wire workflow must not consume ignored build/ evidence", errors)
+
+    def test_voice_static_gate_rejects_non_executable_permission_and_sources(self) -> None:
+        base = {
+            "manifest": read("app/android/app/src/main/AndroidManifest.xml"),
+            "plist": read("app/ios/Runner/Info.plist"),
+            "ios_project": read("app/ios/Runner.xcodeproj/project.pbxproj"),
+            "android_entry": read(
+                "app/android/app/src/main/kotlin/cn/higheq/high_eq/MainActivity.kt"
+            ),
+            "ios_entry": read("app/ios/Runner/AppDelegate.swift"),
+            "native_sources": {
+                path: read(path)
+                for path in (
+                    "app/android/app/src/main/kotlin/cn/higheq/high_eq/VoiceCapture.kt",
+                    "app/ios/Runner/VoiceCapture.swift",
+                    "app/ios/Runner/VoicePCMConverter.swift",
+                    "app/ios/Runner/VoicePCMCaptureSession.swift",
+                )
+            },
+            "behavior_sources": {
+                path: read(path) for path in VOICE_REQUIRED_BEHAVIORS
+            },
+        }
+
+        pcm_build_file = "E72900000000000000000003 /* VoicePCMConverter.swift in Sources */,"
+        disabled_pcm = dict(base)
+        disabled_pcm["ios_project"] = base["ios_project"].replace(pcm_build_file, "", 1)
+        self.assertNotEqual(disabled_pcm["ios_project"], base["ios_project"])
+        self.assertIn(
+            "iOS Xcode Sources is missing VoicePCMConverter.swift",
+            voice_static_and_behavior_errors(**disabled_pcm),
+        )
+
+        missing_pcm_path = dict(base)
+        missing_pcm_path["ios_project"] = base["ios_project"].replace(
+            "path = VoicePCMConverter.swift;",
+            "path = Missing/VoicePCMConverter.swift;",
+            1,
+        )
+        self.assertNotEqual(
+            missing_pcm_path["ios_project"], base["ios_project"]
+        )
+        self.assertIn(
+            "iOS Xcode Sources is missing VoicePCMConverter.swift",
+            voice_static_and_behavior_errors(**missing_pcm_path),
+        )
+
+        permission_delegate = (
+            "voiceCapture.handlePermissionResult(requestCode, permissions, grantResults)"
+        )
+        commented_delegate = dict(base)
+        commented_delegate["android_entry"] = base["android_entry"].replace(
+            permission_delegate,
+            f"// {permission_delegate}",
+            1,
+        )
+        self.assertNotEqual(
+            commented_delegate["android_entry"], base["android_entry"]
+        )
+        self.assertIn(
+            "Android MainActivity does not delegate microphone permission results",
+            voice_static_and_behavior_errors(**commented_delegate),
+        )
+
+        conditional_delegate = dict(base)
+        conditional_delegate["android_entry"] = base["android_entry"].replace(
+            "        voiceCapture.handlePermissionResult(requestCode, permissions, grantResults)\n",
+            "        if(false) {\n"
+            "            voiceCapture.handlePermissionResult(requestCode, permissions, grantResults)\n"
+            "        }\n",
+            1,
+        )
+        self.assertNotEqual(
+            conditional_delegate["android_entry"], base["android_entry"]
+        )
+        self.assertIn(
+            "Android MainActivity does not delegate microphone permission results",
+            voice_static_and_behavior_errors(**conditional_delegate),
+        )
+
+        unbraced_conditional_delegate = dict(base)
+        unbraced_conditional_delegate["android_entry"] = base["android_entry"].replace(
+            "        voiceCapture.handlePermissionResult(requestCode, permissions, grantResults)\n",
+            "        if(false)\n\n"
+            "            voiceCapture.handlePermissionResult(requestCode, permissions, grantResults)\n",
+            1,
+        )
+        self.assertNotEqual(
+            unbraced_conditional_delegate["android_entry"], base["android_entry"]
+        )
+        self.assertIn(
+            "Android MainActivity does not delegate microphone permission results",
+            voice_static_and_behavior_errors(**unbraced_conditional_delegate),
+        )
+
+        no_permission_result = dict(base)
+        no_permission_result["native_sources"] = dict(base["native_sources"])
+        voice_capture_path = (
+            "app/android/app/src/main/kotlin/cn/higheq/high_eq/VoiceCapture.kt"
+        )
+        no_permission_result["native_sources"][voice_capture_path] = base[
+            "native_sources"
+        ][voice_capture_path].replace(
+            "        pending.success(\n"
+            "            grantResults.isNotEmpty() &&\n"
+            "                grantResults[0] == PackageManager.PERMISSION_GRANTED,\n"
+            "        )\n",
+            "",
+            1,
+        )
+        self.assertNotEqual(
+            no_permission_result["native_sources"][voice_capture_path],
+            base["native_sources"][voice_capture_path],
+        )
+        self.assertIn(
+            "Android VoiceCapture does not handle microphone permission results",
+            voice_static_and_behavior_errors(**no_permission_result),
+        )
+
+        conditional_permission_result = dict(base)
+        conditional_permission_result["native_sources"] = dict(base["native_sources"])
+        conditional_permission_result["native_sources"][voice_capture_path] = base[
+            "native_sources"
+        ][voice_capture_path].replace(
+            "        pending.success(\n"
+            "            grantResults.isNotEmpty() &&\n"
+            "                grantResults[0] == PackageManager.PERMISSION_GRANTED,\n"
+            "        )\n",
+            "        if(false) {\n"
+            "            pending.success(\n"
+            "                grantResults.isNotEmpty() &&\n"
+            "                    grantResults[0] == PackageManager.PERMISSION_GRANTED,\n"
+            "            )\n"
+            "        }\n",
+            1,
+        )
+        self.assertNotEqual(
+            conditional_permission_result["native_sources"][voice_capture_path],
+            base["native_sources"][voice_capture_path],
+        )
+        self.assertIn(
+            "Android VoiceCapture does not handle microphone permission results",
+            voice_static_and_behavior_errors(**conditional_permission_result),
+        )
+
+        unbraced_permission_result = dict(base)
+        unbraced_permission_result["native_sources"] = dict(base["native_sources"])
+        unbraced_permission_result["native_sources"][voice_capture_path] = base[
+            "native_sources"
+        ][voice_capture_path].replace(
+            "        pending.success(\n"
+            "            grantResults.isNotEmpty() &&\n"
+            "                grantResults[0] == PackageManager.PERMISSION_GRANTED,\n"
+            "        )\n",
+            "        if(false)\n\n"
+            "            pending.success(\n"
+            "                grantResults.isNotEmpty() &&\n"
+            "                    grantResults[0] == PackageManager.PERMISSION_GRANTED,\n"
+            "            )\n",
+            1,
+        )
+        self.assertNotEqual(
+            unbraced_permission_result["native_sources"][voice_capture_path],
+            base["native_sources"][voice_capture_path],
+        )
+        self.assertIn(
+            "Android VoiceCapture does not handle microphone permission results",
+            voice_static_and_behavior_errors(**unbraced_permission_result),
+        )
+
+    def test_hosted_verify_requires_executable_commands_and_clean_inputs(self) -> None:
+        workflow = read(".github/workflows/verify.yml")
+        commented = workflow.replace(
+            "        run: flutter test --no-pub test/voice",
+            "        # run: flutter test --no-pub test/voice",
+            1,
+        )
+        self.assertNotEqual(commented, workflow)
+        self.assertIn(
+            "hosted Verify workflow is missing executable 'flutter test --no-pub test/voice'",
+            voice_ci_errors(commented),
+        )
+
+        ignored_input = workflow.replace(
+            "      - name: Install locked Flutter dependencies",
+            "      - name: Read ignored evidence\n"
+            "        run: cat build/t29/live.log\n"
+            "      - name: Install locked Flutter dependencies",
+            1,
+        )
+        self.assertNotEqual(ignored_input, workflow)
+        self.assertIn(
+            "hosted Verify workflow must not consume ignored build/ evidence",
+            voice_ci_errors(ignored_input),
+        )
+
+    def test_wire_workflow_tracks_direct_inputs_without_duplicate_unit_loops(self) -> None:
+        workflow = read(".github/workflows/t29-t30-wire.yml")
+        for event in ("push", "pull_request"):
+            paths = workflow_trigger_paths(workflow, event)
+            for path in (
+                "app/**",
+                "server/**",
+                "docs/api/*.yaml",
+            ):
+                with self.subTest(event=event, path=path):
+                    self.assertIn(path, paths)
+
+            for path in (
+                "app/pubspec.yaml",
+                "app/pubspec.lock",
+                "app/lib/main.dart",
+                "app/android/app/src/main/AndroidManifest.xml",
+                "app/ios/Runner/AppDelegate.swift",
+                "server/Dockerfile",
+                "server/go.mod",
+                "server/go.sum",
+                "server/migrations/20261122001532_manual_mark_tombstones.up.sql",
+                "server/internal/service/entitlements_http.go",
+                "app/lib/core/sse.dart",
+                "app/lib/core/api.dart",
+                "app/lib/core/consent.dart",
+                "docs/api/app.yaml",
+            ):
+                with self.subTest(event=event, actual_input=path):
+                    self.assertTrue(
+                        workflow_path_is_triggered(workflow, event, path),
+                        f"{event} must trigger the actual build or import input {path}",
+                    )
+
+        errors = t29_wire_workflow_errors(workflow)
+        self.assertNotIn(
+            "T29 wire workflow must not duplicate Verify's compliance job",
+            errors,
+        )
+        self.assertNotIn(
+            "T29 wire workflow must not duplicate Verify's voice unit-test job",
+            errors,
+        )
+
+    def test_wire_covers_direct_go_packages_routes_and_entry_for_both_events(self) -> None:
+        workflow = read(".github/workflows/t29-t30-wire.yml")
+        for event in ("push", "pull_request"):
+            for path in (
+                "server/cmd/api/main.go",
+                "server/internal/api/app/routes.gen.go",
+                "server/internal/fieldcrypt/cipher.go",
+            ):
+                with self.subTest(event=event, path=path):
+                    self.assertTrue(
+                        workflow_path_is_triggered(workflow, event, path),
+                        f"{event} must trigger the direct Go input {path}",
+                    )
+
+    def test_wire_path_negation_and_document_only_rules_are_effective(self) -> None:
+        workflow = read(".github/workflows/t29-t30-wire.yml")
+        for event in ("push", "pull_request"):
+            anchor = "      - 'app/**'\n"
+            negated_lock = insert_workflow_path(
+                workflow,
+                event,
+                anchor,
+                "!app/pubspec.lock",
+            )
+            with self.subTest(event=event, rule="lock negation"):
+                self.assertIn(
+                    f"T29 wire workflow {event} paths do not trigger 'app/pubspec.lock'",
+                    t29_wire_workflow_errors(negated_lock),
+                )
+
+            negated_api = insert_workflow_path(
+                workflow,
+                event,
+                anchor,
+                "!app/lib/core/api.dart",
+            )
+            with self.subTest(event=event, rule="API import negation"):
+                self.assertIn(
+                    f"T29 wire workflow {event} paths do not trigger "
+                    "'app/lib/core/api.dart'",
+                    t29_wire_workflow_errors(negated_api),
+                )
+
+            docs_only = insert_workflow_path(
+                workflow,
+                event,
+                anchor,
+                "docs/**",
+            )
+            with self.subTest(event=event, rule="docs-only wildcard"):
+                self.assertIn(
+                    f"T29 wire workflow {event} must not trigger documentation-only "
+                    "input 'docs/compliance/README.md'",
+                    t29_wire_workflow_errors(docs_only),
+                )
+
+    def test_verify_required_work_cannot_be_skipped_or_tolerate_failure(self) -> None:
+        workflow = read(".github/workflows/verify.yml")
+        step = "      - name: Test T29 voice consent, capture and revocation behavior\n"
+        mutations = (
+            (
+                "step if false",
+                workflow.replace(step, step + "        if: false\n", 1),
+                "hosted Verify workflow step 'flutter test --no-pub test/voice' "
+                "must not be conditional",
+            ),
+            (
+                "step continue-on-error",
+                workflow.replace(
+                    step,
+                    step + "        continue-on-error: true\n",
+                    1,
+                ),
+                "hosted Verify workflow step 'flutter test --no-pub test/voice' "
+                "must not allow failure",
+            ),
+        )
+        for label, altered, expected in mutations:
+            self.assertNotEqual(altered, workflow, label)
+            with self.subTest(gate=label):
+                self.assertIn(expected, voice_ci_errors(altered))
+
+        job = "  compliance:\n    name: Privacy contracts and voice behavior\n"
+        skipped_job = workflow.replace(job, job + "    if: false\n", 1)
+        self.assertNotEqual(skipped_job, workflow)
+        with self.subTest(gate="job if false"):
             self.assertIn(
-                "`app/`、`server/` 和 `docker-compose.yml` 一致",
-                text,
-                path,
+                "hosted Verify compliance job must not be conditional",
+                voice_ci_errors(skipped_job),
             )
 
+        without_pull_request = workflow.replace("  pull_request:\n", "", 1)
+        self.assertNotEqual(without_pull_request, workflow)
+        with self.subTest(gate="pull request event"):
+            self.assertIn(
+                "hosted Verify workflow must trigger on both push and pull_request",
+                voice_ci_errors(without_pull_request),
+            )
+
+        push_with_paths = workflow.replace(
+            "  push:\n",
+            "  push:\n    paths:\n      - 'docs/**'\n",
+            1,
+        )
+        self.assertNotEqual(push_with_paths, workflow)
+        with self.subTest(gate="push path filter"):
+            self.assertIn(
+                "hosted Verify workflow push must not use path filters",
+                voice_ci_errors(push_with_paths),
+            )
+
+        python_command = "python3 -B -m unittest discover -s docs/compliance"
+        early_exit = workflow.replace(
+            f"        run: {python_command}\n",
+            "        run: |\n"
+            "          exit 0\n"
+            f"          {python_command}\n",
+            1,
+        )
+        self.assertNotEqual(early_exit, workflow)
+        with self.subTest(gate="early exit"):
+            self.assertIn(
+                f"hosted Verify workflow command {python_command!r} must not be "
+                "preceded by a shell early exit",
+                voice_ci_errors(early_exit),
+            )
+
+        swallowed_python = workflow.replace(
+            f"        run: {python_command}\n",
+            f"        run: {python_command} || true\n",
+            1,
+        )
+        self.assertNotEqual(swallowed_python, workflow)
+        with self.subTest(gate="swallowed Python failure"):
+            self.assertIn(
+                f"hosted Verify workflow command {python_command!r} must propagate "
+                "shell failure",
+                voice_ci_errors(swallowed_python),
+            )
+
+        flutter_command = "flutter test --no-pub test/voice"
+        swallowed_flutter = workflow.replace(
+            f"        run: {flutter_command}\n",
+            f"        run: {flutter_command} || true\n",
+            1,
+        )
+        self.assertNotEqual(swallowed_flutter, workflow)
+        with self.subTest(gate="swallowed Flutter failure"):
+            self.assertIn(
+                f"hosted Verify workflow command {flutter_command!r} must propagate "
+                "shell failure",
+                voice_ci_errors(swallowed_flutter),
+            )
+
+        reordered = workflow.replace(
+            f"        run: {python_command}\n",
+            "        run: __T29_REORDER__\n",
+            1,
+        ).replace(
+            f"        run: {flutter_command}\n",
+            f"        run: {python_command}\n",
+            1,
+        ).replace(
+            "        run: __T29_REORDER__\n",
+            f"        run: {flutter_command}\n",
+            1,
+        )
+        self.assertNotEqual(reordered, workflow)
+        with self.subTest(gate="command order"):
+            self.assertIn(
+                "hosted Verify workflow required commands must execute in order",
+                voice_ci_errors(reordered),
+            )
+
+    def test_wire_events_and_required_steps_fail_closed(self) -> None:
+        workflow = read(".github/workflows/t29-t30-wire.yml")
+
+        without_pull_request = workflow.replace("  pull_request:\n", "", 1)
+        self.assertNotEqual(without_pull_request, workflow)
+        with self.subTest(gate="pull request event"):
+            self.assertIn(
+                "T29 wire workflow must trigger on both push and pull_request",
+                t29_wire_workflow_errors(without_pull_request),
+            )
+
+        live_step = "      - name: Exercise T29 client against disposable T30 HTTP/PG/Redis\n"
+        conditional_live = workflow.replace(
+            live_step,
+            live_step + "        if: false\n",
+            1,
+        )
+        self.assertNotEqual(conditional_live, workflow)
+        with self.subTest(gate="live step conditional"):
+            self.assertIn(
+                "T29 wire workflow step 'bash app/tool/t29/live.sh' must not be "
+                "conditional",
+                t29_wire_workflow_errors(conditional_live),
+            )
+
+        live_command = "bash app/tool/t29/live.sh"
+        early_exit = workflow.replace(
+            f"        run: {live_command}\n",
+            "        run: |\n"
+            "          exit 0\n"
+            f"          {live_command}\n",
+            1,
+        )
+        self.assertNotEqual(early_exit, workflow)
+        with self.subTest(gate="live early exit"):
+            self.assertIn(
+                f"T29 wire workflow command {live_command!r} must not be preceded "
+                "by a shell early exit",
+                t29_wire_workflow_errors(early_exit),
+            )
+
+        swallowed_live = workflow.replace(
+            f"        run: {live_command}\n",
+            f"        run: {live_command} || true\n",
+            1,
+        )
+        self.assertNotEqual(swallowed_live, workflow)
+        with self.subTest(gate="swallowed live failure"):
+            self.assertIn(
+                f"T29 wire workflow command {live_command!r} must propagate shell "
+                "failure",
+                t29_wire_workflow_errors(swallowed_live),
+            )
+
+    def test_verify_cannot_read_or_escape_into_ignored_build_evidence(self) -> None:
+        workflow = read(".github/workflows/verify.yml")
+        ignored_from_app = workflow.replace(
+            "      - name: Install locked Flutter dependencies",
+            "      - name: Read ignored evidence\n"
+            "        working-directory: app\n"
+            "        run: cat ../build/t29/live.log\n"
+            "      - name: Install locked Flutter dependencies",
+            1,
+        )
+        self.assertNotEqual(ignored_from_app, workflow)
+        with self.subTest(gate="run from app"):
+            self.assertIn(
+                "hosted Verify workflow must not consume ignored build/ evidence",
+                voice_ci_errors(ignored_from_app),
+            )
+
+        escaped_directory = workflow.replace(
+            "      - name: Test T29 voice consent, capture and revocation behavior\n"
+            "        working-directory: app",
+            "      - name: Test T29 voice consent, capture and revocation behavior\n"
+            "        working-directory: app/../build/t29",
+            1,
+        )
+        self.assertNotEqual(escaped_directory, workflow)
+        with self.subTest(gate="working-directory"):
+            self.assertIn(
+                "hosted Verify workflow must not consume ignored build/ evidence",
+                voice_ci_errors(escaped_directory),
+            )
+
+    def test_historical_attribution_uses_a_structured_evidence_record(self) -> None:
+        evidence = ROOT / "docs/compliance/t29-historical-evidence.json"
+        self.assertTrue(evidence.is_file(), evidence)
+        record = load_historical_evidence(evidence)
+        self.assertIsInstance(record, Mapping)
+        assert record is not None
+
         t29 = read("docs/tasks/T29.md")
-        self.assertIn("宿主实跑通过，CI 未核验", t29)
-        self.assertNotRegex(t29, r"CI 已(?:实际)?执行通过")
-        self.assertNotRegex(
-            read("docs/tasks/T33.md"),
-            r"CI 已(?:实际)?执行通过",
+        t33 = read("docs/tasks/T33.md")
+        mutations = (
+            ("versions", "run_tree", "0" * 40, "versions.run_tree"),
+            (
+                "versions",
+                "workflow_path",
+                ".github/workflows/verify.yml",
+                "versions.workflow_path",
+            ),
+            ("versions", "workflow_status", "same", "versions.workflow_status"),
+            ("execution", "ci_status", "passed", "execution.ci_status"),
+            ("scope", "current_tree", True, "scope.current_tree"),
+        )
+        for section, key, value, field in mutations:
+            altered = copy.deepcopy(record)
+            nested = altered[section]
+            self.assertIsInstance(nested, dict)
+            nested[key] = value
+            errors = t29_live_evidence_errors(
+                t29=t29,
+                t33=t33,
+                evidence=altered,
+            )
+            self.assertTrue(
+                any(f"field {field} must be" in error for error in errors),
+                (field, errors),
+            )
+
+    def test_t33_historical_claims_cannot_escape_the_recorded_scope(self) -> None:
+        t29 = read("docs/tasks/T29.md")
+        t33 = read("docs/tasks/T33.md")
+        unsupported = t33 + "\n旧日志证明当前 CI／生产通过。\n"
+        errors = t29_live_evidence_errors(t29=t29, t33=unsupported)
+        self.assertTrue(
+            any("historical evidence" in error for error in errors),
+            errors,
         )
 
     def test_d18_inventory_records_server_voice_aggregation(self) -> None:
