@@ -1719,6 +1719,37 @@ class ReviewInventoryContract(unittest.TestCase):
 class ProfileEvidenceContract(unittest.TestCase):
     PROMPT_ID = "b935fb60-5a85-4c12-82c0-401afd649325"
 
+    def test_go_owner_parser_handles_function_typed_result_without_losing_body(self) -> None:
+        source = GoSource(
+            '''package profile
+func build() (string, error) { return "ready", nil }
+func (s *Service) authorize(
+    owner uuid.UUID,
+) func(context.Context, func(pgx.Tx) error) error {
+    return func(ctx context.Context, send func(pgx.Tx) error) error {
+        return sendAuthorized(ctx, owner)
+    }
+}
+'''
+        )
+        self.assertEqual(source.body("build"), ' return "ready", nil ')
+        self.assertEqual(source.parameter_names("authorize"), frozenset({"owner"}))
+        self.assertIn("sendAuthorized(ctx, owner)", source.body("authorize"))
+        self.assertEqual(
+            tuple(source.calls("sendAuthorized")),
+            (GoCall("authorize", 7, (("ctx",), ("owner",))),),
+        )
+
+    def test_go_owner_parser_rejects_declaration_without_body(self) -> None:
+        for declaration in (
+            "func declaredOnly() error",
+            "func declaredWithCallback() func() error",
+            "func (s *Service) methodDeclaredOnly() (string, error)",
+        ):
+            with self.subTest(declaration=declaration):
+                with self.assertRaisesRegex(AssertionError, "missing Go body"):
+                    GoSource(declaration)
+
     def test_go_owner_call_parser_preserves_arguments_and_enclosing_functions(self) -> None:
         source = GoSource(
             '''package profile
@@ -1768,7 +1799,7 @@ func invalidateInference(values ...any) error { return nil }
         infer = GoSource(read("server/internal/profile/infer.go"))
         request = read("server/internal/profile/inference_request.go")
         infer_call = "if e = invalidateInference(ctx, tx, u, id, in.RequestId, stored.owner)"
-        request_call = "return invalidateInference(ctx, tx, u, contact, request, got.owner)"
+        request_call = "return true, invalidateInference(ctx, tx, u, contact, request, got.owner)"
         self.assertIn(infer_call, infer.source)
         self.assertIn(request_call, request)
         for declaration in (
@@ -1817,7 +1848,7 @@ func invalidateInference(values ...any) error { return nil }
                  ("stored", ".", "owner")),
             ),
             (
-                request, "inference_request.go", "checkInferenceAttempt", 4,
+                request, "inference_request.go", "checkInferenceAttemptTx", 4,
                 (("ctx",), ("tx",), ("u",), ("contact",), ("request",),
                  ("got", ".", "owner")),
             ),
@@ -1877,13 +1908,13 @@ func invalidateInference(values ...any) error { return nil }
         )
 
         attempt_calls = tuple(
-            request.calls("invalidateInference", function="checkInferenceAttempt")
+            request.calls("invalidateInference", function="checkInferenceAttemptTx")
         )
         self._assert_parameter_bindings(
-            request, "checkInferenceAttempt", "ctx", "u", "contact", "request", "owner",
+            request, "checkInferenceAttemptTx", "ctx", "u", "contact", "request", "owner",
         )
         self._assert_current_record_binding(
-            request, "checkInferenceAttempt", "got",
+            request, "checkInferenceAttemptTx", "got",
             (
                 "got, e := scanInferenceRecord(tx.QueryRow(ctx, `select contact_id,"
                 "chat_consent_id,contacts_consent_id,input_digest,state,owner_id,\n"
@@ -1892,6 +1923,7 @@ func invalidateInference(values ...any) error { return nil }
                 "for update`, u, request))"
             ),
             attempt_calls,
+            function_level=True,
         )
 
         reserve_calls = tuple(
@@ -1943,15 +1975,17 @@ func invalidateInference(values ...any) error { return nil }
         name: str,
         statement: str,
         calls: tuple[GoCall, ...],
+        *,
+        function_level: bool = False,
     ) -> None:
         changes = tuple(source.binding_changes(function, name))
         self.assertEqual(
             len(changes), 1,
             f"{function}: {name} must keep its current row binding",
         )
-        self.assertFalse(
-            changes[0].function_level,
-            f"{function}: {name} must bind the current row inside the session callback",
+        self.assertEqual(
+            changes[0].function_level, function_level,
+            f"{function}: {name} must bind the current row at the expected scope",
         )
         self.assertEqual(
             changes[0].statement, GoSource(statement).tokens,
@@ -1962,26 +1996,74 @@ func invalidateInference(values ...any) error { return nil }
             f"{function}: {name} must be bound before invalidation",
         )
 
-    def _assert_before_attempt(self, infer: GoSource) -> None:
-        calls = tuple(infer.calls("checkInferenceAttempt", function="Infer"))
-        self.assertEqual(len(calls), 1, "Infer must call checkInferenceAttempt directly once")
-        call = calls[0]
-        expected = tuple(GoSource(argument).tokens for argument in (
-            "attemptCtx", "session", "u", "id", "in.RequestId",
-            "reserved.chatConsent", "reserved.contactsConsent", "digest", "reserved.owner",
-            "func(tx pgx.Tx) error { return s.write(attemptCtx, tx, u, &id) }",
+    def _assert_authorizer_dispatch(self, infer: GoSource, request: GoSource) -> None:
+        authorizer_calls = tuple(
+            infer.calls("s", ".", "inferenceAuthorizer", function="Infer")
+        )
+        self.assertEqual(len(authorizer_calls), 1, "Infer must bind one inferenceAuthorizer")
+        authorizer = authorizer_calls[0]
+        binding = GoSource("call.Authorize =").tokens
+        self.assertEqual(
+            infer.tokens[authorizer.position - len(binding):authorizer.position],
+            binding,
+            "Infer must bind inferenceAuthorizer as call.Authorize",
+        )
+        expected_authorizer = tuple(GoSource(argument).tokens for argument in (
+            "session", "u", "id", "in.RequestId", "reserved.chatConsent",
+            "reserved.contactsConsent", "digest", "reserved.owner",
         ))
         self.assertEqual(
-            tuple(tuple(token for token in argument if token != ";") for argument in call.arguments),
-            expected,
-            "BeforeAttempt must pass reserved.owner, both exact consents and the authorization callback",
+            authorizer.arguments, expected_authorizer,
+            "Authorize must bind reserved.owner, both exact consents and the attempt session",
         )
+
+        checks = tuple(infer.calls("checkInferenceAttemptTx", function="inferenceAuthorizer"))
+        self.assertEqual(len(checks), 1, "inferenceAuthorizer must delegate to one attempt check")
+        check = checks[0]
+        expected_check = tuple(GoSource(argument).tokens for argument in (
+            "controlCtx", "tx", "u", "contact", "request", "chatConsent", "contactsConsent",
+            "digest", "owner",
+            "func(tx pgx.Tx) error { return s.write(controlCtx, tx, u, &contact) }",
+            "func(tx pgx.Tx) error { return send(attemptCtx, inferenceControlTx{Tx: tx, ctx: controlCtx}) }",
+        ))
+        self.assertEqual(
+            check.arguments, expected_check,
+            "authorization must pass the exact owner, consents and locked send callback",
+        )
+        self._assert_parameter_bindings(
+            infer, "inferenceAuthorizer", "session", "u", "contact", "request",
+            "chatConsent", "contactsConsent", "digest", "owner",
+        )
+        self._assert_parameter_bindings(
+            request, "checkInferenceAttemptTx", "ctx", "u", "contact", "request",
+            "chatConsent", "contactsConsent", "digest", "owner",
+        )
+
+        sessions = tuple(infer.calls("session", function="inferenceAuthorizer"))
+        self.assertEqual(len(sessions), 1, "inferenceAuthorizer must open one guarded session")
+        session = sessions[0]
+        self.assertEqual(len(session.arguments), 2, "session must receive context and callback")
+        self.assertEqual(session.arguments[0], ("controlCtx",))
+        spans = tuple(infer._argument_spans(session.position + 1))
+        self.assertEqual(len(spans), 2, "session must receive context and callback")
+        callback = spans[1]
+        self.assertLessEqual(callback[0], check.position)
+        self.assertLess(check.position, callback[1])
+        conflict = GoSource(
+            "if e == nil && changed { return membership.ErrConflict }"
+        ).tokens
+        authorizer_tokens = infer.body_tokens("inferenceAuthorizer")
         self.assertTrue(
-            infer.callback_returns_call(
-                "call.BeforeAttempt", "func(attemptCtx context.Context) error", call,
+            any(
+                authorizer_tokens[start:start + len(conflict)] == conflict
+                for start in range(len(authorizer_tokens) - len(conflict) + 1)
             ),
-            "Infer must return the checkInferenceAttempt call from BeforeAttempt",
+            "inferenceAuthorizer must fail closed when the attempt was invalidated",
         )
+
+        runs = tuple(infer.calls("s", ".", "AI", ".", "Run", function="Infer"))
+        self.assertEqual(len(runs), 1, "Infer must dispatch one AI run")
+        self.assertLess(authorizer.position, runs[0].position)
 
     def _assert_claim_owner(self, source: GoSource, call: GoCall) -> None:
         function = call.function
@@ -2184,7 +2266,7 @@ func invalidateInference(values ...any) error { return nil }
         self.assertLess(chat_consent, contacts_consent)
         self.assertLess(contacts_consent, reservation)
 
-        self._assert_before_attempt(parsed_infer)
+        self._assert_authorizer_dispatch(parsed_infer, parsed_request)
 
         # The result path rechecks both exact consent records and the writable
         # contact identity before it can store or complete the reservation.
@@ -2209,16 +2291,18 @@ func invalidateInference(values ...any) error { return nil }
         # A superseded or expired owner exits before either path can invalidate
         # the replacement. Matching owners still need the exact row predicate.
         self._assert_profile_invalidation_calls(parsed_infer, parsed_request)
-        for source, function, path, guard in (
+        for source, function, path, guard, error_check in (
             (
                 parsed_infer, "Infer", "result",
                 "if !stored.owner.Valid || stored.owner.UUID != reserved.owner || stored.expired "
                 "{ stale = true\n return nil }",
+                "if e != nil { return e }",
             ),
             (
-                parsed_request, "checkInferenceAttempt", "attempt",
+                parsed_request, "checkInferenceAttemptTx", "attempt",
                 "if !got.owner.Valid || got.owner.UUID != owner || got.expired "
-                "{ changed = true\n return nil }",
+                "{ return true, nil }",
+                "if e != nil { return false, e }",
             ),
         ):
             self.assertNotIn("goto", source.body_tokens(function), f"{path} path must not use goto")
@@ -2226,6 +2310,7 @@ func invalidateInference(values ...any) error { return nil }
                 source.guards_calls(
                     function, guard,
                     tuple(source.calls("invalidateInference", function=function)),
+                    error_check,
                 ),
                 f"{path} path must reject a superseded or expired owner directly after the error check",
             )

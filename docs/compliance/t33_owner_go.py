@@ -96,12 +96,36 @@ class GoSource:
                 params = self.ends[params] + 1
             if self.tokens[params] != "(":
                 continue
-            for body in self._level(self.ends[params] + 1, len(self.tokens)):
-                if self.tokens[body] in ("func", ";"):
-                    raise AssertionError(f"missing Go body for {self.tokens[name]}")
-                if self.tokens[body] == "{" and self.tokens[body - 1] not in ("struct", "interface"):
-                    yield _Function(self.tokens[name], params, body)
-                    break
+            body = self._declaration_body(params, self.tokens[name])
+            yield _Function(self.tokens[name], params, body)
+
+    def _declaration_body(self, params: int, name: str) -> int:
+        """Find the body after a signature whose result may itself be a func type."""
+        cursor = self.ends[params] + 1
+        has_result = False
+        while cursor < len(self.tokens):
+            if (
+                has_result
+                and cursor > self.ends[params] + 1
+                and self._statement_break(cursor - 1, cursor)
+            ):
+                break
+            token = self.tokens[cursor]
+            if token in (";", "}"):
+                break
+            if token == "{":
+                return cursor
+
+            # Anonymous result types contain braces that are not the function body.
+            if token in ("struct", "interface") and self.tokens[cursor + 1] == "{":
+                cursor = self.ends[cursor + 1] + 1
+            # A function result type has its own parameter group before the body.
+            elif token == "func" and self.tokens[cursor + 1] == "(":
+                cursor = self.ends[cursor + 1] + 1
+            else:
+                cursor = self.ends.get(cursor, cursor) + 1
+            has_result = True
+        raise AssertionError(f"missing Go body for {name}")
 
     def body(self, name: str) -> str:
         function = self._named(name)
@@ -164,27 +188,41 @@ class GoSource:
             == ((call.position - 1, self.ends[call.position + 1] + 1),)
         )
 
-    def guards_calls(self, function: str, guard: str, calls: tuple[GoCall, ...]) -> bool:
-        """Require the guard directly after the error check in the session callback."""
+    def guards_calls(
+        self,
+        function: str,
+        guard: str,
+        calls: tuple[GoCall, ...],
+        error_check: str = "if e != nil { return e }",
+    ) -> bool:
+        """Require the guard directly after the error check around all calls."""
         if not calls:
             return False
-        signature = GoSource("func(tx pgx.Tx) error").tokens
-        error_check = GoSource("if e != nil { return e }").tokens
+        error_tokens = GoSource(error_check).tokens
         expected = GoSource(guard).tokens
+
+        def guarded(block: int) -> bool:
+            for before, current in pairwise(self._statements(block)):
+                if (
+                    self._code(*before) == error_tokens
+                    and self._code(*current) == expected
+                    and all(current[1] <= call.position < self.ends[block] for call in calls)
+                ):
+                    return True
+            return False
+
+        scope = self._named(function)
+        if guarded(scope.body):
+            return True
+
+        signature = GoSource("func(tx pgx.Tx) error").tokens
         for session in self.calls("session", function=function, reject_indirect=False):
             if len(session.arguments) != 2 or session.arguments[0] != ("ctx",):
                 continue
             _, callback = self._argument_spans(session.position + 1)
             block = self._block_after(*callback, signature)
-            if block is None:
-                continue
-            for before, current in pairwise(self._statements(block)):
-                if (
-                    self._code(*before) == error_check
-                    and self._code(*current) == expected
-                    and all(current[1] <= call.position < self.ends[block] for call in calls)
-                ):
-                    return True
+            if block is not None and guarded(block):
+                return True
         return False
 
     def _named(self, name: str) -> _Function:

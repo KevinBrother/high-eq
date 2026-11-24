@@ -29,8 +29,8 @@ RESULT_SITE = (
     "invalidateInference(ctx, tx, u, id, in.RequestId, stored.owner)"
 )
 ATTEMPT_SITE = (
-    'got.state != "processing" {\n\t\t\tchanged = true\n\t\t\t'
-    "return invalidateInference(ctx, tx, u, contact, request, got.owner)"
+    'got.state != "processing" {\n\t\t'
+    "return true, invalidateInference(ctx, tx, u, contact, request, got.owner)"
 )
 SQL_AND_ARGS = "\n\t\t  and owner_id is not distinct from $4::uuid`, u, request, contact, owner)"
 RESULT_GUARD = (
@@ -38,8 +38,8 @@ RESULT_GUARD = (
     "\t\t\tstale = true\n\t\t\treturn nil\n\t\t}\n"
 )
 ATTEMPT_GUARD = (
-    "\t\tif !got.owner.Valid || got.owner.UUID != owner || got.expired {\n"
-    "\t\t\tchanged = true\n\t\t\treturn nil\n\t\t}\n"
+    "\tif !got.owner.Valid || got.owner.UUID != owner || got.expired {\n"
+    "\t\treturn true, nil\n\t}\n"
 )
 CLAIM_OWNER = "owner := uuid.New()\n\ttag, e := tx.Exec"
 INVALIDATE_EXEC = (
@@ -47,10 +47,9 @@ INVALIDATE_EXEC = (
     "\t_, e := tx.Exec"
 )
 INVALIDATED_CASE = 'case "invalidated":\n\t\treturn inferenceReservation{}, membership.ErrConflict'
-BEFORE_ATTEMPT_RETURN = (
-    "\t\treturn checkInferenceAttempt(attemptCtx, session, u, id, in.RequestId, "
-    "reserved.chatConsent, reserved.contactsConsent, digest, reserved.owner, func(tx pgx.Tx) error {\n"
-    "\t\t\treturn s.write(attemptCtx, tx, u, &id)\n\t\t})\n"
+AUTHORIZE_BINDING = (
+    "\tcall.Authorize = s.inferenceAuthorizer(session, u, id, in.RequestId, "
+    "reserved.chatConsent, reserved.contactsConsent, digest, reserved.owner)\n"
 )
 
 RUN_OVERLAY = """
@@ -101,7 +100,7 @@ MUTATIONS = (
         "invalidateInference arguments must be",
     ),
     Mutation(
-        "checkInferenceAttempt, current row mismatch path: pass request as owner",
+        "checkInferenceAttemptTx, current row mismatch path: pass request as owner",
         "inference_request.go",
         ATTEMPT_SITE,
         ATTEMPT_SITE.removesuffix("got.owner)") + "request)",
@@ -153,11 +152,13 @@ REVIEW_MUTATIONS = (
         "stored must keep its current row binding",
     ),
     Mutation(
-        "checkInferenceAttempt: overwrite owner before a later selector target",
+        "checkInferenceAttemptTx: overwrite owner before a later selector target",
         "inference_request.go",
         ATTEMPT_SITE,
-        ATTEMPT_SITE.replace("return invalidateInference",
-                             'owner, got.state = request, "processing"\n\t\t\treturn invalidateInference'),
+        ATTEMPT_SITE.replace(
+            "return true, invalidateInference",
+            'owner, got.state = request, "processing"\n\t\treturn true, invalidateInference',
+        ),
         "owner must keep its enclosing binding",
     ),
     Mutation(
@@ -189,7 +190,7 @@ REVIEW_MUTATIONS = (
         "invalidateInference calls must be exactly",
     ),
     Mutation(
-        "checkInferenceAttempt: return without invalidating one branch",
+        "checkInferenceAttemptTx: return without invalidating one branch",
         "inference_request.go",
         ATTEMPT_SITE,
         ATTEMPT_SITE.replace("invalidateInference(ctx, tx, u, contact, request, got.owner)", "nil"),
@@ -203,7 +204,7 @@ REVIEW_MUTATIONS = (
         "result path must reject a superseded or expired owner",
     ),
     Mutation(
-        "checkInferenceAttempt: turn the attempt owner guard into a block comment",
+        "checkInferenceAttemptTx: turn the attempt owner guard into a block comment",
         "inference_request.go",
         ATTEMPT_GUARD,
         "\t\t/*\n" + ATTEMPT_GUARD + "\t\t*/\n",
@@ -235,12 +236,12 @@ SECOND_REVIEW_MUTATIONS = (
         "invalidated reservations must return a conflict",
     ),
     Mutation(
-        "BeforeAttempt: leave the correct call in a comment and pass in.RequestId as owner",
+        "Authorize: leave the correct binding in a comment and pass in.RequestId as owner",
         "infer.go",
-        BEFORE_ATTEMPT_RETURN,
-        "\t\t/*\n" + BEFORE_ATTEMPT_RETURN + "\t\t*/\n"
-        + BEFORE_ATTEMPT_RETURN.replace("digest, reserved.owner,", "digest, in.RequestId,"),
-        "BeforeAttempt must pass reserved.owner",
+        AUTHORIZE_BINDING,
+        "\t/*\n" + AUTHORIZE_BINDING + "\t*/\n"
+        + AUTHORIZE_BINDING.replace("digest, reserved.owner)", "digest, in.RequestId)"),
+        "Authorize must bind reserved.owner",
     ),
     *(
         mutation
