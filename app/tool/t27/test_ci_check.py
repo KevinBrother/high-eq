@@ -103,6 +103,38 @@ class CiReceiptTests(unittest.TestCase):
         self.check_cli("history", "T27_HISTORY_STAGE=go.startup\nRESULT: PASS",
                        2, "NOT RUN", 2, "go.startup")
 
+    def test_ledger_durability_failure_is_a_fixed_prerequisite(self):
+        self.check_cli("history", f"NOT RUN(redis.ledger-durability): {PRIVATE}\n"
+                       "T27_HISTORY_STAGE=redis.ledger-durability", 2, "NOT RUN", 2,
+                       "redis.ledger-durability")
+
+    def test_contact_delete_failure_exposes_only_fixed_http_evidence(self):
+        stage = "T27_HISTORY_STAGE=page.contact-deleted"
+        ack = "OBSERVED(page.delete-ack): DELETE returned 200 with ok=true"
+        for receipts, expected in (
+            (ack, "acknowledged"),
+            ("OBSERVED(page.delete-http): 500", "http-500"),
+            ("OBSERVED(page.delete-http): 503", "http-503"),
+            ("OBSERVED(page.delete-http): 403", "http-403"),
+            ("OBSERVED(page.delete-http): unacknowledged", "unacknowledged"),
+            (f"{ack} {PRIVATE}", "unobserved"),
+            (f"{ack}\n{ack}", "multiple"),
+        ):
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as directory:
+                github_output = Path(directory) / "github-output"
+                raw = f"{PRIVATE}\n{receipts}\n{stage}"
+                result = subprocess.run(
+                    [sys.executable, "-B", str(CI), "history", sys.executable, "-c",
+                     f"print({raw!r}); raise SystemExit(1)"],
+                    env={**os.environ, "GITHUB_OUTPUT": str(github_output)},
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(result.stdout, f"FAIL\nStage: page.contact-deleted\nDelete HTTP: {expected}\n")
+                self.assertEqual(result.stderr, "")
+                self.assertEqual(github_output.read_text(),
+                                 f"receipt=FAIL\nstage=page.contact-deleted\ndelete_http={expected}\n")
+
     def test_history_cli_rejects_unknown_decorated_and_multiple_stage_receipts(self):
         for output in (f"T27_HISTORY_STAGE={PRIVATE}",
                        f"T27_HISTORY_STAGE=postgres.initdb {PRIVATE}",
@@ -207,6 +239,31 @@ class HistoryPrerequisiteTests(unittest.TestCase):
                 self.assertEqual(failure.exception.stage, stage)
                 self.assertFalse((state / "initdb-password").exists())
 
+    def test_owned_ledger_must_acknowledge_disk_before_go_starts(self):
+        args = self.setup_tools()
+        self.tool("pg17/postgres", 'if [ "$1" = --version ]; then echo "postgres (PostgreSQL) 17.9"; exit; fi\n'
+                  'echo "database system is ready to accept connections"\nexec sleep 30')
+        self.tool("redis-server", 'echo "Ready to accept connections"\nexec sleep 30')
+        listeners = [SimpleNamespace(getsockname=lambda port=port: ("127.0.0.1", port),
+                                     close=lambda: None) for port in (10001, 10002, 10003)]
+        with (
+            tempfile.TemporaryDirectory(dir=self.root) as directory,
+            patch.object(history_journey, "reserve", side_effect=listeners),
+            patch.object(history_journey.socket, "create_connection") as connect,
+            patch.object(history_journey, "run_test") as go_test,
+            redirect_stdout(io.StringIO()),
+        ):
+            state = Path(directory)
+            connection = connect.return_value.__enter__.return_value
+            connection.makefile.return_value.__enter__.return_value = io.BytesIO(
+                b"+OK\r\n+OK\r\n-ERR unknown command 'WAITAOF'\r\n"
+            )
+            with self.assertRaises(history_journey.NotRun) as failure:
+                history_journey.run_services(args, state, state, {"PATH": os.defpath})
+            self.assertEqual(failure.exception.stage, "redis.ledger-durability")
+            connect.assert_called_once_with(("127.0.0.1", 10003), timeout=5)
+            go_test.assert_not_called()
+
     def test_launcher_reports_missing_postgres_stage_through_ci(self):
         launcher = self.root / "app/tool/t27/history_journey.py"
         launcher.parent.mkdir(parents=True)
@@ -222,6 +279,46 @@ class HistoryPrerequisiteTests(unittest.TestCase):
         self.assertEqual(result.stdout, "NOT RUN\nStage: postgres.binary\n")
         self.assertEqual(result.stderr, "")
         self.assertEqual(github_output.read_text(), "receipt=NOT RUN\nstage=postgres.binary\n")
+
+
+class LedgerDurabilityTests(unittest.TestCase):
+    def check_responses(self, durability_reply, *, cleanup_reply=b":1\r\n"):
+        with patch.object(history_journey.socket, "create_connection") as connect:
+            connection = connect.return_value.__enter__.return_value
+            connection.makefile.return_value.__enter__.return_value = io.BytesIO(
+                b"+OK\r\n+OK\r\n" + durability_reply + cleanup_reply
+            )
+            with redirect_stdout(io.StringIO()) as receipt:
+                try:
+                    history_journey.verify_ledger(12345, "synthetic-secret")
+                    stage = None
+                except history_journey.NotRun as error:
+                    stage = error.stage
+            connect.assert_called_once_with(("127.0.0.1", 12345), timeout=5)
+            sent = [call.args[0] for call in connection.sendall.call_args_list]
+        self.assertEqual(sent[:3], [
+            b"*2\r\n$4\r\nAUTH\r\n$16\r\nsynthetic-secret\r\n",
+            b"*3\r\n$3\r\nSET\r\n$20\r\nt27:durability-probe\r\n$1\r\n1\r\n",
+            b"*4\r\n$7\r\nWAITAOF\r\n$1\r\n1\r\n$1\r\n0\r\n$4\r\n3000\r\n",
+        ])
+        return stage, receipt.getvalue(), sent[3:]
+
+    def test_same_connection_requires_local_fsync_then_removes_probe_key(self):
+        stage, receipt, remaining = self.check_responses(b"*2\r\n:1\r\n:0\r\n")
+        self.assertIsNone(stage)
+        self.assertEqual(receipt, "PASS(redis.ledger-durability)\n")
+        self.assertEqual(remaining, [b"*2\r\n$3\r\nDEL\r\n$20\r\nt27:durability-probe\r\n"])
+
+    def test_no_fsync_or_wrong_reply_is_rejected_without_retry(self):
+        for reply in (b"*2\r\n:0\r\n:0\r\n", b"+OK\r\n", b"*1\r\n:1\r\n"):
+            with self.subTest(reply=reply):
+                self.assertEqual(self.check_responses(reply), ("redis.ledger-durability", "", []))
+
+    def test_probe_must_be_removed_before_returning_a_pass(self):
+        stage, receipt, sent = self.check_responses(b"*2\r\n:1\r\n:0\r\n", cleanup_reply=b":0\r\n")
+        self.assertEqual(stage, "redis.ledger-durability")
+        self.assertEqual(receipt, "")
+        self.assertEqual(len(sent), 1)
 
 
 class HistoryReceiptTests(unittest.TestCase):

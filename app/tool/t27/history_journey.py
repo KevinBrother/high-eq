@@ -46,6 +46,7 @@ class Stage(str, Enum):
     POSTGRES_STARTUP = "postgres.startup"
     REDIS_CACHE_STARTUP = "redis.cache-startup"
     REDIS_LEDGER_STARTUP = "redis.ledger-startup"
+    REDIS_LEDGER_DURABILITY = "redis.ledger-durability"
     SERVICE_CLEANUP = "services.cleanup"
     GO_STARTUP = "go.startup"
     PAGE_STARTUP = "page.startup"
@@ -184,6 +185,72 @@ def await_ready(process, path, marker):
     raise NotRun(f"{path.stem} exceeded its 20s readiness deadline, see {path}")
 
 
+def start_redis(redis, owned, listener, port, password, state, logs, env, *, ledger):
+    name = "ledger" if ledger else "cache"
+    stage = Stage.REDIS_LEDGER_STARTUP if ledger else Stage.REDIS_CACHE_STARTUP
+    with prerequisite(stage):
+        directory = state / name
+        directory.mkdir()
+        text = (
+            f"bind 127.0.0.1\nport {port}\nrequirepass {password}\n"
+            f'dir "{directory}"\nsave ""\n'
+        )
+        if ledger:
+            text += (
+                "appendonly yes\nappendfsync always\nno-appendfsync-on-rewrite no\n"
+                "maxmemory-policy noeviction\naof-load-truncated no\n"
+            )
+        else:
+            text += "appendonly no\n"
+        with tempfile.TemporaryFile(dir=directory) as settings:
+            settings.write(text.encode())
+            settings.seek(0)
+            listener.close()
+            path = logs / f"{name}.log"
+            proc = spawn(owned, [redis, "-"], env, path, stdin=settings)
+            await_ready(proc, path, b"Ready to accept connections")
+
+
+def redis_expect(connection, response, *args, lines):
+    request = f"*{len(args)}\r\n".encode("ascii")
+    for arg in args:
+        data = arg.encode("ascii")
+        request += f"${len(data)}\r\n".encode("ascii") + data + b"\r\n"
+    connection.sendall(request)
+    for expected in lines:
+        if response.readline(256) != expected:
+            raise NotRun(f"disposable ledger did not return the required {args[0]} acknowledgment")
+
+
+def verify_ledger(port, password):
+    with prerequisite(Stage.REDIS_LEDGER_DURABILITY):
+        with (
+            socket.create_connection(("127.0.0.1", port), timeout=5) as connection,
+            connection.makefile("rb") as response,
+        ):
+            key = "t27:durability-probe"
+            redis_expect(connection, response, "AUTH", password, lines=(b"+OK\r\n",))
+            redis_expect(connection, response, "SET", key, "1", lines=(b"+OK\r\n",))
+            # Match the production ledger's write and WAITAOF on the same connection.
+            redis_expect(connection, response, "WAITAOF", "1", "0", "3000",
+                         lines=(b"*2\r\n", b":1\r\n", b":0\r\n"))
+            # The production ledger binds only to an empty database.
+            redis_expect(connection, response, "DEL", key, lines=(b":1\r\n",))
+    print("PASS(redis.ledger-durability)", flush=True)
+
+
+def run_ledger_only(args, state, logs, env):
+    with prerequisite(Stage.REDIS_BINARY):
+        redis = executable(args.redis, "redis-server")
+    with prerequisite(Stage.SERVICE_CLEANUP), ExitStack() as owned:
+        with prerequisite(Stage.LOOPBACK):
+            listener = reserve(owned)
+            port = listener.getsockname()[1]
+        password = secrets.token_hex(24)
+        start_redis(redis, owned, listener, port, password, state, logs, env, ledger=True)
+        verify_ledger(port, password)
+
+
 def run_services(args, state, logs, env):
     pg, initdb, redis, go, dart, snapshot = setup(args, env)
     with prerequisite(Stage.SERVICE_CLEANUP), ExitStack() as owned:
@@ -224,32 +291,11 @@ def run_services(args, state, logs, env):
             await_ready(proc, pg_log, b"database system is ready to accept connections")
 
         redis_password = secrets.token_hex(24)
-        for name, listener, port, stage in (
-            ("cache", cache_listener, cache_port, Stage.REDIS_CACHE_STARTUP),
-            ("ledger", ledger_listener, ledger_port, Stage.REDIS_LEDGER_STARTUP),
-        ):
-            with prerequisite(stage):
-                directory = state / name
-                directory.mkdir()
-                config = directory / "redis.conf"
-                text = (
-                    f"bind 127.0.0.1\nport {port}\nrequirepass {redis_password}\n"
-                    f'dir "{directory}"\nsave ""\n'
-                )
-                if name == "ledger":
-                    text += (
-                        "appendonly yes\nappendfsync always\n"
-                        "maxmemory-policy noeviction\naof-load-truncated no\n"
-                    )
-                else:
-                    text += "appendonly no\n"
-                config.write_text(text)
-                with config.open("rb") as settings:
-                    listener.close()
-                    path = logs / f"{name}.log"
-                    proc = spawn(owned, [redis, "-"], env, path, stdin=settings)
-                    await_ready(proc, path, b"Ready to accept connections")
-                config.unlink()
+        start_redis(redis, owned, cache_listener, cache_port, redis_password,
+                    state, logs, env, ledger=False)
+        start_redis(redis, owned, ledger_listener, ledger_port, redis_password,
+                    state, logs, env, ledger=True)
+        verify_ledger(ledger_port, redis_password)
         print("PASS(services.disposable)", flush=True)
 
         env.update(
@@ -313,11 +359,15 @@ def run_test(go, env, log):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pg-bin", required=True, type=Path)
+    parser.add_argument("--pg-bin", type=Path)
     parser.add_argument("--redis", required=True, type=Path)
+    parser.add_argument("--ledger-only", action="store_true",
+                        help="check local AOF acknowledgment on a fresh Redis without running the journey")
     parser.add_argument("--go", default=shutil.which("go"))
     parser.add_argument("--flutter", default=shutil.which("flutter"))
     args = parser.parse_args()
+    if not args.ledger_only and args.pg_bin is None:
+        parser.error("--pg-bin is required for the full journey")
 
     os.umask(0o077)
     logs_dir = ROOT / "build/t27-history"
@@ -338,7 +388,10 @@ def main():
             GOPROXY="off", GOSUMDB="off", GOTOOLCHAIN="local", GOENV="off", GOWORK="off",
             FLUTTER_SUPPRESS_ANALYTICS="true", DART_SUPPRESS_ANALYTICS="true",
         )
-        run_services(args, state, logs, env)
+        if args.ledger_only:
+            run_ledger_only(args, state, logs, env)
+        else:
+            run_services(args, state, logs, env)
 
 
 if __name__ == "__main__":

@@ -196,7 +196,7 @@ void main() {
         await frames.real(() async {
           final state = await Directory.systemTemp.createTemp('t27-history-');
           addTearDown(() => state.deleteSync(recursive: true));
-          wire = JourneyWire(origin);
+          wire = JourneyWire(origin, contactId: contactId);
           addTearDown(wire.close);
           storage = JourneyStorage(state);
           api = AppApi(origin, wire, storage.open());
@@ -303,9 +303,6 @@ void main() {
         expect(wire.deletions, [
           (path: '/v1/contacts/$contactId', status: 200, ok: true),
         ]);
-        debugPrintSynchronously(
-          'OBSERVED(page.delete-ack): DELETE returned 200 with ok=true',
-        );
         expect(person, findsNothing);
         await frames.backTo(me, contacts);
       });

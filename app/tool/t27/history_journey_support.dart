@@ -290,8 +290,9 @@ class JourneyStorage {
 class _RealHttpOverrides extends HttpOverrides {}
 
 class JourneyWire implements Transport {
-  JourneyWire(this.origin)
-    : _http = HttpTransport(
+  JourneyWire(this.origin, {required String contactId})
+    : _deletePath = '/v1/contacts/$contactId',
+      _http = HttpTransport(
         HttpOverrides.runWithHttpOverrides(
           () => IOClient(HttpClient()..findProxy = (_) => 'DIRECT'),
           _RealHttpOverrides(),
@@ -299,6 +300,7 @@ class JourneyWire implements Transport {
       );
 
   final Uri origin;
+  final String _deletePath;
   final HttpTransport _http;
   final _reads = <HistoryRead>[];
   final _deletions = <({String path, int status, bool ok})>[];
@@ -378,11 +380,19 @@ class JourneyWire implements Transport {
         ),
       );
     } else if (op == AppOp.deleteContact) {
-      _deletions.add((
-        path: request.url.path,
-        status: status,
-        ok: json['ok'] == true,
-      ));
+      final ok = json['ok'] == true;
+      _deletions.add((path: request.url.path, status: status, ok: ok));
+      if (request.method == 'DELETE' && request.url.path == _deletePath) {
+        // Record the real HTTP response before the widget handles it.
+        debugPrintSynchronously(switch (status) {
+          200 when ok =>
+            'OBSERVED(page.delete-ack): DELETE returned 200 with ok=true',
+          403 => 'OBSERVED(page.delete-http): 403',
+          500 => 'OBSERVED(page.delete-http): 500',
+          503 => 'OBSERVED(page.delete-http): 503',
+          _ => 'OBSERVED(page.delete-http): unacknowledged',
+        });
+      }
     }
     return http.StreamedResponse(
       Stream.value(body),

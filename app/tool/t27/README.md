@@ -1,6 +1,6 @@
 # T27 成长档案与关系人删除验收
 
-从仓库根目录运行。需要已安装的 Go 1.26、缓存完整的项目 Flutter SDK 和锁定依赖、本机 PostgreSQL 17 与支持 AOF 的 Redis。Go 模块须已在默认缓存或 `GOMODCACHE` 中。App 的 `app/.dart_tool/package_config.json` 和 `package_graph.json` 须由已准备好的 Flutter SDK 使用锁定依赖生成。
+从仓库根目录运行。需要已安装的 Go 1.26、缓存完整的项目 Flutter SDK 和锁定依赖、本机 PostgreSQL 17，以及支持 `WAITAOF` 的 Redis。Go 模块须已在默认缓存或 `GOMODCACHE` 中。App 的 `app/.dart_tool/package_config.json` 和 `package_graph.json` 须由已准备好的 Flutter SDK 使用锁定依赖生成。
 
 ```sh
 python3 app/tool/t27/history_journey.py \
@@ -11,6 +11,8 @@ python3 app/tool/t27/history_journey.py \
 ```
 
 `--flutter` 和 `--go` 缺省时从 PATH 解析。启动器在三个随机回环端口启动全新的 PG17、普通 Redis 和独立 AOF Redis，复跑正式服务路由和 Flutter widget 用例，退出后停止进程、清除临时数据。仅使用合成账号、一次性登录票据和本地脚本化的评分/审核供应商。Flutter 用已缓存的工具和依赖，Go 模块代理关闭。脚本不需要 Docker、已启动的服务、`.env` 或账号凭据。它验证正式 Flutter 页面交互，无需真机。
+
+进入 Go 和 Flutter 前，启动器先向它创建的账本 Redis 写入探针键，在同一条连接发送生产账本使用的 `WAITAOF 1 0 3000`。收到一个本地 AOF 落盘回执并删除探针键后，输出 `PASS(redis.ledger-durability)`。能力不足时以退出码 `2` 和固定阶段 `redis.ledger-durability` 停止。这个前置检查独立于正式旅程原有的 18 个成功回执。
 
 | 阶段 | 通过条件 |
 | --- | --- |
@@ -43,11 +45,26 @@ flutter test --no-pub -r expanded test/contacts/repository_test.dart \
 
 `T27 growth and practice` 保留旧的成长 HTTP 旅程与 Flutter 回归，新增关系人核对入口、旅程组件辅助回归，以及独立 PG17、缓存 Redis 和 AOF Redis 上的正式历史旅程。推送、拉取请求和手动运行均可触发。运行摘要逐项给出 `PASS`、`FAIL`、`NOT RUN`、`SKIPPED` 或 `CANCELLED`。三项均须有成功回执。摘要和检查步骤只输出固定结果，原始测试日志保留在运行环境中或随临时文件清理。
 
-在仓库根目录离线复跑回执回归，无需 Flutter 或本地服务。
+Ubuntu 24.04 运行器从 Redis 官方发行源下载固定的 8.2.0 源码，使用 `redis/redis-hashes` 发布的 SHA-256 核验后编译，再检查构建产物的版本。正式历史旅程显式使用该原生二进制。若随后在 `page.contact-deleted` 失败，CI 摘要会给出固定的 HTTP 观测值。`acknowledged` 表示对目标的 DELETE 已收到 `200` 且 `ok=true`，页面成功提示与列表状态仍各有断言。`http-403`、`http-500` 和 `http-503` 表示观测到对应 HTTP 状态。其余值为 `unacknowledged`、`unobserved` 或 `multiple`。
+
+在仓库根目录离线复跑回执和 Redis 供应回归，无需 Flutter 或本地服务。
 
 ```sh
-python3 -B -m unittest discover -s app/tool/t27 -p test_ci_check.py -v
+python3 -B -m unittest discover -s app/tool/t27 -p 'test_*.py' -v
 ```
+
+在 Ubuntu 24.04 安装 `build-essential` 后，可先单独验证 Redis 供应和账本能力。账本预检仅需 Python 3、待验的 `redis-server` 和回环监听权限。
+
+```sh
+t27_redis_install=$(mktemp -d)
+bash app/tool/t27/install_redis.sh "$t27_redis_install"
+python3 -B app/tool/t27/history_journey.py --ledger-only \
+  --redis "$t27_redis_install/redis-server"
+python3 -B app/tool/t27/history_journey.py --ledger-only \
+  --redis /path/to/redis-7.0.15/redis-server
+```
+
+8.2.0 应输出 `PASS(redis.ledger-durability)` 并退出 `0`。7.0.15 应输出 `NOT RUN(redis.ledger-durability)` 并退出 `2`。随后将新二进制传给本页开头的完整旅程命令，核验 18 阶段和 `RESULT: PASS`。GitHub Actions 上还需取得客户端和旧 HTTP 检查的两个独立 `PASS`。
 
 ## 终稿宿主复验（2026-11-24）
 

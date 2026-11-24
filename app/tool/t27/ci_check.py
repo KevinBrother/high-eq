@@ -13,6 +13,13 @@ REQUIRED_FLUTTER_TEST = {
     "legacy": "real T27 app ↔ T26 HTTP: assessment, first plan, completion and reopen",
 }
 EXIT_STATUS = {"PASS": 0, "FAIL": 1, "NOT RUN": 2, "SKIPPED": 3}
+DELETE_HTTP_RECEIPTS = {
+    "OBSERVED(page.delete-ack): DELETE returned 200 with ok=true": "acknowledged",
+    "OBSERVED(page.delete-http): 403": "http-403",
+    "OBSERVED(page.delete-http): 500": "http-500",
+    "OBSERVED(page.delete-http): 503": "http-503",
+    "OBSERVED(page.delete-http): unacknowledged": "unacknowledged",
+}
 
 
 def flutter_receipt(lines, exit_code, required_test):
@@ -57,6 +64,14 @@ def history_receipt(lines, exit_code):
     return {2: "NOT RUN", 3: "SKIPPED"}.get(exit_code, "FAIL"), stage
 
 
+def delete_http_receipt(lines):
+    observations = [DELETE_HTTP_RECEIPTS[line] for raw in lines
+                    if (line := raw.rstrip("\n")) in DELETE_HTTP_RECEIPTS]
+    if len(observations) > 1:
+        return "multiple"
+    return observations[0] if observations else "unobserved"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("check", choices=("client", "legacy", "history"))
@@ -66,6 +81,7 @@ def main():
         parser.error("a check command is required")
 
     stage = None
+    delete_http = None
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as output:
         try:
             run = subprocess.run(args.command, stdout=output, stderr=subprocess.STDOUT, check=False)
@@ -77,17 +93,24 @@ def main():
             output.seek(0)
             if args.check == "history":
                 receipt, stage = history_receipt(output, run.returncode)
+                if stage == "page.contact-deleted":
+                    output.seek(0)
+                    delete_http = delete_http_receipt(output)
             else:
                 receipt = flutter_receipt(output, run.returncode, REQUIRED_FLUTTER_TEST[args.check])
 
     print(receipt)
     if stage is not None:
         print(f"Stage: {stage}")
+    if delete_http is not None:
+        print(f"Delete HTTP: {delete_http}")
     if destination := os.environ.get("GITHUB_OUTPUT"):
         with open(destination, "a", encoding="utf-8") as output:
             print(f"receipt={receipt}", file=output)
             if stage is not None:
                 print(f"stage={stage}", file=output)
+            if delete_http is not None:
+                print(f"delete_http={delete_http}", file=output)
     return EXIT_STATUS[receipt]
 
 
