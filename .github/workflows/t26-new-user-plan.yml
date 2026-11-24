@@ -1,0 +1,92 @@
+name: T26 new user plan journey
+
+on:
+  push:
+    paths:
+      - '.github/workflows/t26-new-user-plan.yml'
+      - 'docker-compose.yml'
+      - 'docs/api/app.yaml'
+      - 'server/go.mod'
+      - 'server/go.sum'
+      - 'server/content/**'
+      - 'server/migrations/**'
+      - 'server/internal/**'
+      - '!server/internal/**/*_test.go'
+      - 'server/internal/service/**'
+      - 'server/tests/t19_wire_result.py'
+      - 'server/tests/test_t19_wire_result.py'
+      - 'server/tests/testdata/t19_wire_result/**'
+      - 'app/lib/**'
+      - 'app/assets/**'
+      - 'app/pubspec.yaml'
+      - 'app/pubspec.lock'
+      - 'app/test/isolation_test.dart'
+      - 'app/test/practice/t26_viewport_test.dart'
+      - 'app/tool/t26/*.dart'
+      - 'app/tool/t26/ci*.sh'
+      - 'app/tool/t26/test_ci.py'
+  pull_request:
+    paths:
+      - '.github/workflows/t26-new-user-plan.yml'
+      - 'docker-compose.yml'
+      - 'docs/api/app.yaml'
+      - 'server/go.mod'
+      - 'server/go.sum'
+      - 'server/content/**'
+      - 'server/migrations/**'
+      - 'server/internal/**'
+      - '!server/internal/**/*_test.go'
+      - 'server/internal/service/**'
+      - 'server/tests/t19_wire_result.py'
+      - 'server/tests/test_t19_wire_result.py'
+      - 'server/tests/testdata/t19_wire_result/**'
+      - 'app/lib/**'
+      - 'app/assets/**'
+      - 'app/pubspec.yaml'
+      - 'app/pubspec.lock'
+      - 'app/test/isolation_test.dart'
+      - 'app/test/practice/t26_viewport_test.dart'
+      - 'app/tool/t26/*.dart'
+      - 'app/tool/t26/ci*.sh'
+      - 'app/tool/t26/test_ci.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: t26-new-user-plan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  new-user-plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      FLUTTER_SUPPRESS_ANALYTICS: 'true'
+      DART_SUPPRESS_ANALYTICS: 'true'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with: {persist-credentials: false}
+      - name: Check runner orchestration and result parser offline
+        run: |
+          python3 -B app/tool/t26/test_ci.py
+          python3 -B server/tests/test_t19_wire_result.py
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Check Go fixture and stage receipts offline
+        run: exec bash app/tool/t26/ci.sh --offline-receipts
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with: {flutter-version: '3.38.10', cache: true}
+      - name: Prepare locked Flutter dependencies and Linux artifacts
+        working-directory: app
+        run: |
+          flutter precache --linux
+          flutter pub get --enforce-lockfile
+      - name: Run the Go-hosted Flutter journey
+        run: exec bash app/tool/t26/ci.sh
+      - name: Verify scoring controls in a narrow viewport
+        working-directory: app
+        run: flutter test --no-pub test/practice/t26_viewport_test.dart

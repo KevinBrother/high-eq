@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -40,8 +41,11 @@ type upstreamCase struct {
 	reviewHold    <-chan struct{}
 	reviewStarted chan struct{}
 }
+type practiceWireFailureReporter func(t *testing.T, stage string, err error)
+
 type practiceWire struct {
 	t                   *testing.T
+	reportFailure       practiceWireFailureReporter
 	s                   *Runtime
 	api                 *httptest.Server
 	ctx                 context.Context
@@ -57,9 +61,18 @@ type practiceWire struct {
 
 func (h *practiceWire) must(e error) {
 	h.t.Helper()
-	if e != nil {
-		h.t.Fatal(e)
+	h.mustAt("operation", e)
+}
+func (h *practiceWire) mustAt(stage string, err error) {
+	h.t.Helper()
+	if err == nil {
+		return
 	}
+	if h.reportFailure != nil {
+		h.reportFailure(h.t, stage, err)
+		return
+	}
+	h.t.Fatal(err)
 }
 func (h *practiceWire) exec(q string, a ...any) {
 	h.t.Helper()
@@ -206,12 +219,22 @@ func newPracticeWire(t *testing.T) *practiceWire {
 
 func newPracticeWireWithContext(t *testing.T, ctx context.Context) *practiceWire {
 	t.Helper()
+	return newPracticeWireWithContextAndFailureReporter(t, ctx, nil)
+}
+
+func newPracticeWireWithFailureReporter(t *testing.T, report practiceWireFailureReporter) *practiceWire {
+	t.Helper()
+	return newPracticeWireWithContextAndFailureReporter(t, context.Background(), report)
+}
+
+func newPracticeWireWithContextAndFailureReporter(t *testing.T, ctx context.Context, report practiceWireFailureReporter) *practiceWire {
+	t.Helper()
 	if os.Getenv("T19_DISPOSABLE") != "yes" && os.Getenv("T20_DISPOSABLE") != "yes" {
 		t.Skip("run server/tests/t19-wire.sh in disposable compose project")
 	}
-	h := &practiceWire{t: t, ctx: ctx}
+	h := &practiceWire{t: t, ctx: ctx, reportFailure: report}
 	h.set("")
-	provider := httptest.NewTLSServer(http.HandlerFunc(h.vendor))
+	provider := h.startServer("listen_provider", http.HandlerFunc(h.vendor), true)
 	t.Cleanup(provider.Close)
 	old := http.DefaultTransport
 	rt := old.(*http.Transport).Clone()
@@ -221,19 +244,26 @@ func newPracticeWireWithContext(t *testing.T, ctx context.Context) *practiceWire
 	http.DefaultTransport = rt
 	t.Cleanup(func() { http.DefaultTransport = old; rt.CloseIdleConnections() })
 	cfg, e := LoadConfig()
-	h.must(e)
+	h.mustAt("load_config", e)
 	h.s, e = Start(h.ctx, cfg)
-	h.must(e)
+	h.mustAt("start_runtime", e)
 	t.Cleanup(h.s.Close)
-	if h.number(`select count(*) from model_routes`) != 0 {
+	var routes int
+	h.mustAt("check_model_routes", h.s.db.QueryRow(h.ctx, `select count(*) from model_routes`).Scan(&routes))
+	if routes != 0 {
 		t.Fatal("requires empty disposable catalog")
+	}
+	execSetup := func(stage, query string, args ...any) {
+		t.Helper()
+		_, err := h.s.db.Exec(h.ctx, query, args...)
+		h.mustAt(stage, err)
 	}
 	mk := func(kind gateway.Kind, name string) uuid.UUID {
 		id := uuid.New()
 		ref := id.String()
-		h.exec(`insert into provider_admissions(ref,provider,endpoint,model_scope,kind,purpose,sent_fields,processing_country,storage_country,cross_border,max_retention_days,deletion_method,terms_evidence) values($1,'t19',$2,'*',$3,'synthetic',ARRAY['model','messages.role','messages.content','stream','response_format.type','stream_options.include_usage'],'CN','CN',false,0,'fixture','fixture only')`, ref, provider.URL, kind)
-		h.must(h.s.catalog.Save(h.ctx, gateway.Config{ID: id, Name: name, Provider: "t19", Endpoint: provider.URL, ModelName: name, AdmissionRef: ref, Protocol: "openai_compatible", Enabled: true, Kind: kind}, []byte("synthetic")))
-		h.exec(`update model_configs set input_cny_per_million=0,output_cny_per_million=0 where id=$1`, id)
+		execSetup("seed_provider_admission", `insert into provider_admissions(ref,provider,endpoint,model_scope,kind,purpose,sent_fields,processing_country,storage_country,cross_border,max_retention_days,deletion_method,terms_evidence) values($1,'t19',$2,'*',$3,'synthetic',ARRAY['model','messages.role','messages.content','stream','response_format.type','stream_options.include_usage'],'CN','CN',false,0,'fixture','fixture only')`, ref, provider.URL, kind)
+		h.mustAt("seed_model", h.s.catalog.Save(h.ctx, gateway.Config{ID: id, Name: name, Provider: "t19", Endpoint: provider.URL, ModelName: name, AdmissionRef: ref, Protocol: "openai_compatible", Enabled: true, Kind: kind}, []byte("synthetic")))
+		execSetup("seed_model_cost", `update model_configs set input_cny_per_million=0,output_cny_per_million=0 where id=$1`, id)
 		return id
 	}
 	m, b, mod := mk(gateway.Model, "primary"), mk(gateway.Model, "fallback"), mk(gateway.Moderation, "moderator")
@@ -241,8 +271,8 @@ func newPracticeWireWithContext(t *testing.T, ctx context.Context) *practiceWire
 	h.fallbackModel = b
 	h.promptVersions = make(map[admin.Task]uuid.UUID)
 	for _, task := range []admin.Task{"role_play", "scoring"} {
-		h.exec(`insert into model_routes(task,primary_model,fallback_model,moderation_model)values($1,$2,$3,$4)`, task, m, b, mod)
-		h.must(pgx.BeginFunc(h.ctx, h.s.db, func(tx pgx.Tx) error {
+		execSetup("seed_model_route", `insert into model_routes(task,primary_model,fallback_model,moderation_model)values($1,$2,$3,$4)`, task, m, b, mod)
+		h.mustAt("seed_"+string(task)+"_prompt", pgx.BeginFunc(h.ctx, h.s.db, func(tx pgx.Tx) error {
 			var v admin.PromptVersion
 			if task == "role_play" {
 				var seed string
@@ -268,9 +298,27 @@ func newPracticeWireWithContext(t *testing.T, ctx context.Context) *practiceWire
 			return nil
 		}))
 	}
-	h.api = httptest.NewServer(h.s.Router())
+	h.api = h.startServer("listen_api", h.s.Router(), false)
 	t.Cleanup(h.api.Close)
 	return h
+}
+
+func (h *practiceWire) startServer(stage string, handler http.Handler, tls bool) *httptest.Server {
+	h.t.Helper()
+	// httptest's constructors panic with the raw bind error. Report it at the
+	// fixture boundary while keeping httptest's IPv4 and IPv6 loopback choices.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		listener, err = net.Listen("tcp6", "[::1]:0")
+	}
+	h.mustAt(stage, err)
+	server := &httptest.Server{Listener: listener, Config: &http.Server{Handler: handler}}
+	if tls {
+		server.StartTLS()
+	} else {
+		server.Start()
+	}
+	return server
 }
 func (h *practiceWire) open(tok, method, path string, in any, status int) *http.Response {
 	h.t.Helper()

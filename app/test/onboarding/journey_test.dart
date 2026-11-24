@@ -13,6 +13,8 @@ import 'package:high_eq/main.dart';
 import '../isolation_test.dart' show MemorySecret, tokens;
 
 import '../../integration_test/support/demo_login.dart';
+import '../../tool/t26/assessment_steps.dart';
+import '../../tool/t26/journey_stage.dart';
 
 // Avoid filesystem/timers under the widget test's fake clock. A separate test
 // exercises the actual encrypted continuation on a fresh Sessions instance.
@@ -62,22 +64,26 @@ class _FixtureApi extends AppApi {
   }) async => examples[op.name] as Json;
 }
 
+Future<AccountScope> _widgetScope(WidgetTester tester) async {
+  final scope = await tester.runAsync(() async {
+    final dir = await Directory.systemTemp.createTemp();
+    try {
+      return await Sessions(MemorySecret(), dir).activate(tokens('widget'));
+    } finally {
+      await dir.delete(recursive: true);
+    }
+  });
+  return scope!;
+}
+
 void main() {
   testWidgets(
     'gates, encrypted-draft UI resume, 16 items, scene shared and retest blocked',
     (t) async {
-      final scope = await t.runAsync(() async {
-        final dir = await Directory.systemTemp.createTemp();
-        try {
-          return await Sessions(MemorySecret(), dir).activate(tokens('widget'));
-        } finally {
-          await dir.delete(recursive: true);
-        }
-      });
       final api = _FixtureApi(
         Uri.https('example.invalid'),
         ExampleTransport(),
-        WidgetSessions(scope!),
+        WidgetSessions(await _widgetScope(t)),
         jsonDecode(File('assets/contract_examples.json').readAsStringSync())
             as Json,
       );
@@ -139,4 +145,39 @@ void main() {
       );
     },
   );
+
+  testWidgets('T26 assessment gestures work in a short viewport', (t) async {
+    t.view.devicePixelRatio = 1;
+    t.view.physicalSize = const Size(380, 440);
+    addTearDown(t.view.resetPhysicalSize);
+    addTearDown(t.view.resetDevicePixelRatio);
+
+    final sessions = WidgetSessions(await _widgetScope(t));
+    await sessions.activate(tokens('widget'));
+    final api = _FixtureApi(
+      Uri.https('example.invalid'),
+      ExampleTransport(),
+      sessions,
+      jsonDecode(File('assets/contract_examples.json').readAsStringSync())
+          as Json,
+    );
+    await t.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWith((_) async => api)],
+        child: const HighEqApp(),
+      ),
+    );
+    await t.pumpAndSettle();
+
+    final phases = <T26AssessmentPhase>[];
+    final enterPractice = await completeT26Assessment(t, report: phases.add);
+
+    expect(phases, T26AssessmentPhase.values);
+    expect(find.text('本次自评总分 · 67 / 100'), findsOneWidget);
+    expect(find.text('开始复测'), findsNothing);
+    expect(enterPractice, findsOneWidget);
+    await t.tap(enterPractice);
+    await t.pumpAndSettle();
+    expect(find.text('今天，练一件小事'), findsOneWidget);
+  });
 }
