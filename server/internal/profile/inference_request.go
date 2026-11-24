@@ -39,8 +39,20 @@ type inferenceRecord struct {
 }
 
 func activeConsent(ctx context.Context, tx pgx.Tx, u uuid.UUID, purpose string) (uuid.UUID, error) {
+	return consentID(ctx, tx, u, purpose, true)
+}
+
+func activeConsentRead(ctx context.Context, tx pgx.Tx, u uuid.UUID, purpose string) (uuid.UUID, error) {
+	return consentID(ctx, tx, u, purpose, false)
+}
+
+func consentID(ctx context.Context, tx pgx.Tx, u uuid.UUID, purpose string, lock bool) (uuid.UUID, error) {
 	var id uuid.UUID
-	e := tx.QueryRow(ctx, `select id from consents where user_id=$1 and purpose=$2 and withdrawn_at is null order by granted_at desc,id desc limit 1 for share`, u, purpose).Scan(&id)
+	sql := `select id from consents where user_id=$1 and purpose=$2 and withdrawn_at is null order by granted_at desc,id desc limit 1`
+	if lock {
+		sql += ` for share`
+	}
+	e := tx.QueryRow(ctx, sql, u, purpose).Scan(&id)
 	if errors.Is(e, pgx.ErrNoRows) {
 		return uuid.Nil, membership.ErrForbidden
 	}

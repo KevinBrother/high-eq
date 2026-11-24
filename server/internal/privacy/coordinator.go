@@ -38,8 +38,16 @@ func (r root) isChildOf(id uuid.UUID) bool {
 }
 
 func roots(ctx context.Context, tx pgx.Tx, user uuid.UUID) ([]root, error) {
-	var locked uuid.UUID
-	if e := tx.QueryRow(ctx, `select id from users where id=$1 for update`, user).Scan(&locked); e != nil {
+	return rootsWithLock(ctx, tx, user, true)
+}
+
+func rootsWithLock(ctx context.Context, tx pgx.Tx, user uuid.UUID, lock bool) ([]root, error) {
+	var id uuid.UUID
+	sql := `select id from users where id=$1`
+	if lock {
+		sql += ` for update`
+	}
+	if e := tx.QueryRow(ctx, sql, user).Scan(&id); e != nil {
 		return nil, e
 	}
 	rows, e := tx.Query(ctx, `select root_id,scope,parent_id,p.root_id is not null from erasure_roots left join pending_erasure p using(root_id) where user_id=$1 order by root_id`, user)
@@ -112,6 +120,17 @@ func (c *Coordinator) ReleaseProfileInference(ctx context.Context, user, contact
 // Locks remain held through its commit. Never perform business reads before this check.
 func (c *Coordinator) GuardTx(ctx context.Context, tx pgx.Tx, user uuid.UUID) error {
 	rr, e := roots(ctx, tx, user)
+	return c.guardRoots(ctx, rr, e)
+}
+
+// GuardReadTx applies the same deletion barrier without taking the account row
+// lock. It is only for transactions whose callback is known to be read-only.
+func (c *Coordinator) GuardReadTx(ctx context.Context, tx pgx.Tx, user uuid.UUID) error {
+	rr, e := rootsWithLock(ctx, tx, user, false)
+	return c.guardRoots(ctx, rr, e)
+}
+
+func (c *Coordinator) guardRoots(ctx context.Context, rr []root, e error) error {
 	if e != nil {
 		return e
 	}

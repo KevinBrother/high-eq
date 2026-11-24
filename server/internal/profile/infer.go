@@ -51,6 +51,48 @@ func (tx inferenceControlTx) QueryRow(_ context.Context, sql string, args ...any
 // contact. The owner token fences a late executor from releasing a replacement.
 type InferenceCleanup func(ctx context.Context, user, contact, request, owner uuid.UUID) error
 
+// CheckActiveInference returns ErrInferencePending only when the exact live
+// reservation is still processing under the current account, contact, material
+// and consent bindings. Nil means that the caller must use the authoritative
+// locked Infer transaction; no state is changed by this read-only check.
+func (s *Service) CheckActiveInference(ctx context.Context, session Session, u, id uuid.UUID, in app.InferProfileInput) error {
+	if !text(in.ChatText, 8000) || in.RequestId == uuid.Nil {
+		return accounts.ErrInvalid
+	}
+	digest := inputDigest(in.ChatText)
+	return session(ctx, func(tx pgx.Tx) error {
+		if e := s.write(ctx, tx, u, &id); e != nil {
+			return e
+		}
+		chatConsent, e := activeConsentRead(ctx, tx, u, "chat_import")
+		if e != nil {
+			return e
+		}
+		contactsConsent, e := activeConsentRead(ctx, tx, u, "contacts")
+		if e != nil {
+			return e
+		}
+		got, e := scanInferenceRecord(tx.QueryRow(ctx, `select contact_id,chat_consent_id,contacts_consent_id,input_digest,state,owner_id,
+ coalesce(lease_expires_at<=clock_timestamp(),true)
+ from profile_inference_requests where user_id=$1 and request_id=$2`, u, in.RequestId))
+		if errors.Is(e, pgx.ErrNoRows) {
+			return nil
+		}
+		if e != nil {
+			return e
+		}
+		rebound := got.state == "processing" && !got.expired && got.owner.Valid &&
+			(got.chatConsent != chatConsent || got.contactsConsent != contactsConsent)
+		if got.state == "invalidated" || got.state == "processing" && (got.contact != id || !bytes.Equal(got.digest, digest)) || rebound {
+			return membership.ErrConflict
+		}
+		if got.state != "processing" || got.expired || !got.owner.Valid || got.contact != id || !bytes.Equal(got.digest, digest) || got.chatConsent != chatConsent || got.contactsConsent != contactsConsent {
+			return nil
+		}
+		return ErrInferencePending
+	})
+}
+
 func (s *Service) Infer(ctx context.Context, session Session, cleanup InferenceCleanup, u, id uuid.UUID, in app.InferProfileInput) (any, error) {
 	if !text(in.ChatText, 8000) || in.RequestId == uuid.Nil {
 		return nil, accounts.ErrInvalid

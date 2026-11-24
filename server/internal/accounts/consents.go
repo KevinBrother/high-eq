@@ -87,7 +87,7 @@ func (s *Service) ListConsents(ctx context.Context, p Principal, params app.List
 			return out, ErrInvalid
 		}
 	}
-	e := s.WithSession(ctx, p, false, func(tx pgx.Tx) error {
+	e := s.WithReadSession(ctx, p, false, func(tx pgx.Tx) error {
 		rows, e := tx.Query(ctx, `with current as (select distinct on (purpose) purpose,version,withdrawn_at is null as granted,coalesce(withdrawn_at,granted_at) as at,id from consents where user_id=$1 order by purpose,granted_at desc,id desc) select purpose,version,granted,at,id from current where $2 or (at,id)<($3,$4) order by at desc,id desc limit $5`, p.User, params.Cursor == nil, after.At, after.ID, limit+1)
 		if e != nil {
 			return e

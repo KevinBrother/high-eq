@@ -81,6 +81,18 @@ func (a appAPI) InferProfile(c *gin.Context, id uuid.UUID) {
 		return
 	}
 	p := principal(c)
+	readSession := func(ctx context.Context, fn func(pgx.Tx) error) error {
+		return a.accounts.WithReadSession(ctx, p, false, fn)
+	}
+	e := a.profiles.CheckActiveInference(c.Request.Context(), readSession, p.User, id, in)
+	if errors.Is(e, profile.ErrInferencePending) {
+		c.JSON(202, gin.H{"request_id": in.RequestId, "status": "in_progress"})
+		return
+	}
+	if e != nil {
+		profileReply(c, nil, e)
+		return
+	}
 	session := func(ctx context.Context, fn func(pgx.Tx) error) error {
 		return a.accounts.WithSession(ctx, p, false, fn)
 	}

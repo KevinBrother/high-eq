@@ -87,6 +87,31 @@ func (s *Service) WithSession(ctx context.Context, p Principal, allowFrozen bool
 	})
 }
 
+// WithReadSession performs the same revocation, freeze and privacy checks in a
+// repeatable-read, read-only transaction. It must never execute business writes.
+func (s *Service) WithReadSession(ctx context.Context, p Principal, allowFrozen bool, fn func(pgx.Tx) error) error {
+	tx, e := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback(ctx)
+	if e = s.guard.GuardReadTx(ctx, tx, p.User); e != nil {
+		if errors.Is(e, pgx.ErrNoRows) {
+			return ErrAuth
+		}
+		return e
+	}
+	if e = s.ValidateSessionTx(ctx, tx, p, allowFrozen); e != nil {
+		return e
+	}
+	if fn != nil {
+		if e = fn(tx); e != nil {
+			return e
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 // ValidateSessionTx rechecks the presented session inside a caller-owned
 // account-locked transaction. Callers must not perform business writes first.
 func (s *Service) ValidateSessionTx(ctx context.Context, tx pgx.Tx, p Principal, allowFrozen bool) error {

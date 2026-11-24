@@ -92,7 +92,12 @@ var accountRoutes = map[string]bool{
 // Session-bound deletes perform their own validation after taking the account
 // lock. The generic preflight must not hide an exact pending deletion from its
 // retry transaction.
-var deferredSessionRoutes = map[string]bool{"DELETE /v1/marks/:id": true, "DELETE /v1/contacts/:id": true}
+var deferredSessionRoutes = map[string]bool{
+	"GET /v1/me/consents":         true,
+	"DELETE /v1/marks/:id":        true,
+	"DELETE /v1/contacts/:id":     true,
+	"POST /v1/contacts/:id/infer": true,
+}
 
 func gate(auth *accounts.Service) func(*gin.Context) {
 	return func(c *gin.Context) {
