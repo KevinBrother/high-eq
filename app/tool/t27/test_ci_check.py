@@ -4,10 +4,13 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 import history_journey
 
@@ -38,18 +41,22 @@ def flutter_test(name, *, skipped=False, result="success", hidden=False):
 
 
 class CiReceiptTests(unittest.TestCase):
-    def check_cli(self, mode, output, child_exit, status, exit_code):
+    def check_cli(self, mode, output, child_exit, status, exit_code, stage=None):
         with tempfile.TemporaryDirectory() as directory:
             github_output = Path(directory) / "github-output"
             result = subprocess.run(
-                [sys.executable, str(CI), mode, sys.executable, "-c",
+                [sys.executable, "-B", str(CI), mode, sys.executable, "-c",
                  f"print({output!r}); raise SystemExit({child_exit})"],
                 env={**os.environ, "GITHUB_OUTPUT": str(github_output)},
                 capture_output=True, text=True, check=False,
             )
             self.assertEqual(result.returncode, exit_code, result.stderr)
             self.assertTrue(github_output.exists(), result.stderr)
-            self.assertEqual(github_output.read_text(), f"receipt={status}\n")
+            expected = f"receipt={status}\n"
+            if stage is not None:
+                expected += f"stage={stage}\n"
+                self.assertEqual(result.stdout, f"{status}\nStage: {stage}\n")
+            self.assertEqual(github_output.read_text(), expected)
             self.assertNotIn(PRIVATE, result.stdout + result.stderr)
 
     def check_flutter(self, events, child_exit, status, exit_code, mode="client"):
@@ -79,10 +86,142 @@ class CiReceiptTests(unittest.TestCase):
 
     def test_history_cli_requires_success_receipt_and_preserves_exit_categories(self):
         self.check_cli("history", f"{PRIVATE}\nRESULT: PASS", 0, "PASS", 0)
-        self.check_cli("history", PRIVATE, 0, "FAIL", 1)
-        self.check_cli("history", PRIVATE, 1, "FAIL", 1)
-        self.check_cli("history", PRIVATE, 2, "NOT RUN", 2)
-        self.check_cli("history", PRIVATE, 3, "SKIPPED", 3)
+        self.check_cli("history", PRIVATE, 0, "FAIL", 1, "unknown")
+        self.check_cli("history", PRIVATE, 1, "FAIL", 1, "unknown")
+        self.check_cli("history", PRIVATE, 2, "NOT RUN", 2, "unknown")
+        self.check_cli("history", PRIVATE, 3, "SKIPPED", 3, "unknown")
+
+    def test_history_cli_exports_a_fixed_stage_and_omits_child_diagnostics(self):
+        self.check_cli("history", f"NOT RUN(prerequisite): {PRIVATE}\n"
+                       "T27_HISTORY_STAGE=redis.cache-startup", 2, "NOT RUN", 2,
+                       "redis.cache-startup")
+        self.check_cli("history", f"FAIL(page.growth-history): {PRIVATE}\n"
+                       "T27_HISTORY_STAGE=page.growth-history", 1, "FAIL", 1,
+                       "page.growth-history")
+        self.check_cli("history", "T27_HISTORY_STAGE=postgres.initdb\nRESULT: PASS",
+                       0, "PASS", 0)
+        self.check_cli("history", "T27_HISTORY_STAGE=go.startup\nRESULT: PASS",
+                       2, "NOT RUN", 2, "go.startup")
+
+    def test_history_cli_rejects_unknown_decorated_and_multiple_stage_receipts(self):
+        for output in (f"T27_HISTORY_STAGE={PRIVATE}",
+                       f"T27_HISTORY_STAGE=postgres.initdb {PRIVATE}",
+                       "prefix T27_HISTORY_STAGE=postgres.initdb",
+                       "T27_HISTORY_STAGE=postgres.initdb\nT27_HISTORY_STAGE=redis.cache-startup"):
+            with self.subTest(output=output):
+                self.check_cli("history", output, 2, "NOT RUN", 2, "unknown")
+
+
+class HistoryPrerequisiteTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        (self.root / "server").mkdir()
+        patcher = patch.object(history_journey, "ROOT", self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def tool(self, name, command):
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"#!/bin/sh\n{command}\n")
+        path.chmod(0o700)
+        return path
+
+    def setup_tools(self):
+        postgres = self.tool("pg17/postgres", "echo 'postgres (PostgreSQL) 17.9'")
+        self.tool("pg17/initdb", "exit 0")
+        go = self.tool("go", "echo 'go version go1.26.0 linux/amd64'")
+        redis = self.tool("redis-server", "exit 0")
+        sdk_flutter = self.tool("sdk/bin/flutter", "exit 0")
+        flutter = self.root / "flutter"
+        flutter.symlink_to(sdk_flutter)
+        self.tool("sdk/bin/cache/dart-sdk/bin/dart", "exit 0")
+        (self.root / "sdk/bin/cache/flutter_tools.snapshot").touch()
+        packages = self.root / "app/.dart_tool"
+        packages.mkdir(parents=True)
+        for name in ("package_config.json", "package_graph.json"):
+            (packages / name).touch()
+        return SimpleNamespace(pg_bin=postgres.parent, redis=redis, go=go, flutter=flutter)
+
+    def test_redis_multicall_executable_keeps_its_invocation_name(self):
+        binary = self.tool("redis-check-rdb", '[ "${0##*/}" = redis-server ] || exit 2')
+        redis = binary.with_name("redis-server")
+        redis.symlink_to(binary.name)
+
+        invocation = history_journey.executable(redis, "redis-server")
+        result = subprocess.run([invocation, "-"], check=False)
+        self.assertEqual(result.returncode, 0, invocation)
+
+    def test_flutter_link_locates_sdk_cache_and_reports_missing_snapshot(self):
+        args = self.setup_tools()
+        directory_alias = self.root / "tmp-alias"
+        directory_alias.symlink_to(".", target_is_directory=True)
+        args.flutter = directory_alias / "flutter"
+        sdk_root = (directory_alias / "sdk").resolve(strict=True)
+        env = {}
+        *_, dart, snapshot = history_journey.setup(args, env)
+        self.assertEqual(env["FLUTTER_ROOT"], str(sdk_root))
+        self.assertEqual(dart, sdk_root / "bin/cache/dart-sdk/bin/dart")
+        self.assertEqual(snapshot, sdk_root / "bin/cache/flutter_tools.snapshot")
+        snapshot.unlink()
+        with self.assertRaises(history_journey.NotRun) as failure:
+            history_journey.setup(args, {})
+        self.assertEqual(failure.exception.stage, "flutter.sdk-cache")
+
+    def test_postgres_version_rejects_a_non_17_binary(self):
+        args = self.setup_tools()
+        self.tool("pg17/postgres", "echo 'postgres (PostgreSQL) 16.9'")
+        with self.assertRaises(history_journey.NotRun) as failure:
+            history_journey.setup(args, {})
+        self.assertEqual(failure.exception.stage, "postgres.version")
+
+    def test_owned_startup_failures_identify_initdb_postgres_and_each_redis(self):
+        args = self.setup_tools()
+        pg_version = 'if [ "$1" = --version ]; then echo "postgres (PostgreSQL) 17.9"; exit; fi\n'
+        ready_pg = pg_version + 'echo "database system is ready to accept connections"\nexec sleep 30'
+        ready_cache_only = ('while IFS= read -r line; do\n'
+                            '  case "$line" in "appendonly yes") exit 2;; esac\n'
+                            'done\necho "Ready to accept connections"\nexec sleep 30')
+        cases = (
+            ("postgres.initdb", "exit 2", ready_pg, "exit 2"),
+            ("postgres.startup", "exit 0", pg_version + "exit 2", "exit 2"),
+            ("redis.cache-startup", "exit 0", ready_pg, "exit 2"),
+            ("redis.ledger-startup", "exit 0", ready_pg, ready_cache_only),
+        )
+        for stage, initdb, postgres, redis in cases:
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory(dir=self.root) as directory:
+                self.tool("pg17/initdb", initdb)
+                self.tool("pg17/postgres", postgres)
+                self.tool("redis-server", redis)
+                listeners = [SimpleNamespace(getsockname=lambda port=port: ("127.0.0.1", port),
+                                             close=lambda: None) for port in (10001, 10002, 10003)]
+                state = Path(directory)
+                with (
+                    patch.object(history_journey, "reserve", side_effect=listeners),
+                    redirect_stdout(io.StringIO()),
+                    self.assertRaises(history_journey.NotRun) as failure,
+                ):
+                    history_journey.run_services(args, state, state, {"PATH": os.defpath})
+                self.assertEqual(failure.exception.stage, stage)
+                self.assertFalse((state / "initdb-password").exists())
+
+    def test_launcher_reports_missing_postgres_stage_through_ci(self):
+        launcher = self.root / "app/tool/t27/history_journey.py"
+        launcher.parent.mkdir(parents=True)
+        shutil.copyfile(history_journey.__file__, launcher)
+        github_output = self.root / "github-output"
+        result = subprocess.run(
+            [sys.executable, "-B", str(CI), "history", sys.executable, str(launcher),
+             "--pg-bin", str(self.root / PRIVATE), "--redis", str(self.root / "redis-server")],
+            env={**os.environ, "GITHUB_OUTPUT": str(github_output)},
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "NOT RUN\nStage: postgres.binary\n")
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(github_output.read_text(), "receipt=NOT RUN\nstage=postgres.binary\n")
 
 
 class HistoryReceiptTests(unittest.TestCase):
@@ -121,10 +260,22 @@ class HistoryReceiptTests(unittest.TestCase):
             self.run_go_transcript(output)
 
     def test_unentered_journey_and_failing_journey_exit_differ(self):
-        with self.assertRaises(history_journey.NotRun):
+        with self.assertRaises(history_journey.NotRun) as failure:
             self.run_go_transcript("testing: warning: no tests to run")
+        self.assertEqual(failure.exception.stage, "go.startup")
         with self.assertRaises(history_journey.Failed):
             self.run_go_transcript(self.transcript(), status=1)
+
+    def test_entered_journey_reports_widget_startup_or_the_first_failed_phase(self):
+        entered = "    growth_history_journey_integration_test.go:44: BEGIN(service.runtime)\n"
+        with self.assertRaises(history_journey.NotRun) as failure:
+            self.run_go_transcript(entered + "    journey.go:305: NOT RUN(page.startup): missing widget", status=1)
+        self.assertEqual(failure.exception.stage, "page.startup")
+
+        with self.assertRaises(history_journey.Failed) as failure:
+            self.run_go_transcript(entered + f"FAIL(page.growth-history) after 3ms: {PRIVATE}\n"
+                                   "    journey.go:101: FAIL(page.runner): exit status 1", status=1)
+        self.assertEqual(failure.exception.stage, "page.growth-history")
 
     def test_go_skip_is_distinct_from_an_unentered_journey(self):
         with self.assertRaises(history_journey.Skipped):

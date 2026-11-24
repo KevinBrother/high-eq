@@ -5,6 +5,8 @@ import os
 import subprocess
 import tempfile
 
+from history_journey import REPORTABLE_STAGES, STAGE_PREFIX
+
 
 REQUIRED_FLUTTER_TEST = {
     "client": "提交后丢回执，列表即使已空仍可只读核对并重建离线成长",
@@ -47,9 +49,12 @@ def flutter_receipt(lines, exit_code, required_test):
 
 def history_receipt(lines, exit_code):
     # The launcher only emits this exact line after validating the Go and UI phases.
-    if exit_code == 0:
-        return "PASS" if any(line.rstrip("\n") == "RESULT: PASS" for line in lines) else "FAIL"
-    return {2: "NOT RUN", 3: "SKIPPED"}.get(exit_code, "FAIL")
+    lines = [line.rstrip("\n") for line in lines]
+    if exit_code == 0 and "RESULT: PASS" in lines:
+        return "PASS", None
+    candidates = [line[len(STAGE_PREFIX):] for line in lines if line.startswith(STAGE_PREFIX)]
+    stage = candidates[0] if len(candidates) == 1 and candidates[0] in REPORTABLE_STAGES else "unknown"
+    return {2: "NOT RUN", 3: "SKIPPED"}.get(exit_code, "FAIL"), stage
 
 
 def main():
@@ -60,22 +65,29 @@ def main():
     if not args.command:
         parser.error("a check command is required")
 
+    stage = None
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as output:
         try:
             run = subprocess.run(args.command, stdout=output, stderr=subprocess.STDOUT, check=False)
         except OSError:
             receipt = "NOT RUN"
+            if args.check == "history":
+                stage = "unknown"
         else:
             output.seek(0)
             if args.check == "history":
-                receipt = history_receipt(output, run.returncode)
+                receipt, stage = history_receipt(output, run.returncode)
             else:
                 receipt = flutter_receipt(output, run.returncode, REQUIRED_FLUTTER_TEST[args.check])
 
     print(receipt)
+    if stage is not None:
+        print(f"Stage: {stage}")
     if destination := os.environ.get("GITHUB_OUTPUT"):
         with open(destination, "a", encoding="utf-8") as output:
             print(f"receipt={receipt}", file=output)
+            if stage is not None:
+                print(f"stage={stage}", file=output)
     return EXIT_STATUS[receipt]
 
 

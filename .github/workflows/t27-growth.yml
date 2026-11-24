@@ -114,7 +114,7 @@ jobs:
         if: ${{ !cancelled() && steps.flutter_deps.outcome == 'success' }}
         working-directory: app
         run: |
-          python3 tool/t27/ci_check.py client flutter test --no-pub --reporter json \
+          python3 -B tool/t27/ci_check.py client flutter test --no-pub --reporter json \
             test/client_test.dart test/growth test/practice test/marks/book_test.dart \
             test/contacts/flows_test.dart test/contacts/repository_test.dart \
             tool/t27/history_journey_support_test.dart
@@ -123,12 +123,12 @@ jobs:
         if: ${{ !cancelled() && steps.flutter_deps.outcome == 'success' }}
         env:
           T27_LIVE_REPORTER: json
-        run: python3 app/tool/t27/ci_check.py legacy app/tool/t27/live.sh
+        run: python3 -B app/tool/t27/ci_check.py legacy app/tool/t27/live.sh
       - name: Real history recovery and contact summary journey
         id: history
         if: ${{ !cancelled() && steps.flutter_deps.outcome == 'success' && steps.go_modules.outcome == 'success' && steps.native_stack.outcome == 'success' }}
         run: |
-          python3 app/tool/t27/ci_check.py history python3 app/tool/t27/history_journey.py \
+          python3 -B app/tool/t27/ci_check.py history python3 app/tool/t27/history_journey.py \
             --pg-bin /usr/lib/postgresql/17/bin --redis /usr/bin/redis-server
       - name: T27 verification summary
         if: ${{ always() }}
@@ -139,10 +139,11 @@ jobs:
           LEGACY_RECEIPT: ${{ steps.legacy.outputs.receipt }}
           HISTORY_OUTCOME: ${{ steps.history.outcome }}
           HISTORY_RECEIPT: ${{ steps.history.outputs.receipt }}
+          HISTORY_STAGE: ${{ steps.history.outputs.stage }}
         run: |
           all_passed=true
           record() {
-            local label="$1" outcome="$2" receipt="$3" status
+            local label="$1" outcome="$2" receipt="$3" stage="${4:--}" status
             case "$outcome/$receipt" in
               success/PASS) status=PASS ;;
               failure/"NOT RUN") status='NOT RUN' ;;
@@ -151,16 +152,16 @@ jobs:
               skipped/*|/) status='NOT RUN' ;;
               *) status=FAIL ;;
             esac
-            printf '| %s | %s |\n' "$label" "$status"
+            printf '| %s | %s | %s |\n' "$label" "$status" "$stage"
             if [[ "$status" != PASS ]]; then all_passed=false; fi
           }
           {
             echo '## T27 verification'
             echo
-            echo '| Check | Status |'
-            echo '| --- | --- |'
+            echo '| Check | Status | Failure stage |'
+            echo '| --- | --- | --- |'
             record 'Flutter regressions and manual deletion check' "$CLIENT_OUTCOME" "$CLIENT_RECEIPT"
             record 'Original growth HTTP journey' "$LEGACY_OUTCOME" "$LEGACY_RECEIPT"
-            record 'Formal 100+1 history, cache recovery, deletion cascade and contact summary' "$HISTORY_OUTCOME" "$HISTORY_RECEIPT"
+            record 'Formal 100+1 history, cache recovery, deletion cascade and contact summary' "$HISTORY_OUTCOME" "$HISTORY_RECEIPT" "$HISTORY_STAGE"
           } >> "$GITHUB_STEP_SUMMARY"
           [[ "$all_passed" == true ]]

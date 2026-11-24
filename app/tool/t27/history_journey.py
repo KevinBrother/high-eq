@@ -1,7 +1,8 @@
 """Run T27's formal Flutter growth journey against disposable native services."""
 import argparse
 import base64
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
+from enum import Enum
 import os
 from pathlib import Path
 import re
@@ -24,65 +25,114 @@ REQUIRED_PHASES = (
     "service.delete-cascade", "service.contact-summary-after", "journey",
 )
 PHASE_PASS = re.compile(r"(?:\S+\.go:\d+:\s+)?PASS\(([a-z.-]+)\)")
+PHASE_BEGIN = re.compile(r"(?:\S+\.go:\d+:\s+)?BEGIN\(([a-z.-]+)\)")
+PHASE_FAILURE = re.compile(r"(?:\S+\.go:\d+:\s+)?FAIL\(([a-z.-]+)\)(?:$|: | after )")
+STAGE_PREFIX = "T27_HISTORY_STAGE="
 
 
-class NotRun(RuntimeError):
+class Stage(str, Enum):
+    WORKSPACE = "workspace"
+    POSTGRES_BINARY = "postgres.binary"
+    INITDB_BINARY = "postgres.initdb-binary"
+    REDIS_BINARY = "redis.binary"
+    GO_BINARY = "go.binary"
+    FLUTTER_BINARY = "flutter.binary"
+    FLUTTER_CACHE = "flutter.sdk-cache"
+    POSTGRES_VERSION = "postgres.version"
+    GO_VERSION = "go.version"
+    FLUTTER_DEPENDENCIES = "flutter.dependencies"
+    LOOPBACK = "loopback.reserve"
+    INITDB = "postgres.initdb"
+    POSTGRES_STARTUP = "postgres.startup"
+    REDIS_CACHE_STARTUP = "redis.cache-startup"
+    REDIS_LEDGER_STARTUP = "redis.ledger-startup"
+    SERVICE_CLEANUP = "services.cleanup"
+    GO_STARTUP = "go.startup"
+    PAGE_STARTUP = "page.startup"
+
+
+REPORTABLE_STAGES = frozenset(stage.value for stage in Stage).union(REQUIRED_PHASES)
+
+
+class JourneyError(RuntimeError):
+    def __init__(self, message, *, stage=None):
+        super().__init__(message)
+        self.stage = stage
+
+
+class NotRun(JourneyError):
     """A local prerequisite prevented the journey from running."""
 
 
-class Failed(RuntimeError):
+class Failed(JourneyError):
     """An assertion or a bounded phase failed."""
 
 
-class Skipped(RuntimeError):
+class Skipped(JourneyError):
     """Go reported that the journey test was skipped."""
 
 
+@contextmanager
+def prerequisite(stage):
+    try:
+        yield
+    except NotRun as error:
+        if error.stage is None:
+            error.stage = stage.value
+        raise
+    except (OSError, subprocess.SubprocessError) as error:
+        raise NotRun(str(error), stage=stage.value) from error
+
+
 def executable(value, label):
-    path = Path(value).resolve() if value else None
+    # Redis multicall binaries select their mode from the invocation name.
+    path = Path(value).absolute() if value else None
     if not path or not path.is_file() or not os.access(path, os.X_OK):
         raise NotRun(f"{label}: executable unavailable ({value})")
     return path
 
 
 def setup(args, env):
-    pg = executable(args.pg_bin / "postgres", "postgres")
-    initdb = executable(args.pg_bin / "initdb", "initdb")
-    redis = executable(args.redis, "redis-server")
-    go = executable(args.go, "go")
-    flutter = executable(args.flutter, "flutter")
-    flutter_root = flutter.parents[1]
-    cache = flutter_root / "bin/cache"
-    dart = executable(cache / "dart-sdk/bin/dart", "Flutter cached Dart")
-    snapshot = cache / "flutter_tools.snapshot"
-    if not snapshot.is_file():
-        raise NotRun("Flutter tools snapshot unavailable, prepare the installed SDK first")
+    with prerequisite(Stage.POSTGRES_BINARY):
+        pg = executable(args.pg_bin / "postgres", "postgres")
+    with prerequisite(Stage.INITDB_BINARY):
+        initdb = executable(args.pg_bin / "initdb", "initdb")
+    with prerequisite(Stage.REDIS_BINARY):
+        redis = executable(args.redis, "redis-server")
+    with prerequisite(Stage.GO_BINARY):
+        go = executable(args.go, "go")
+    with prerequisite(Stage.FLUTTER_BINARY):
+        flutter = executable(args.flutter, "flutter")
+    with prerequisite(Stage.FLUTTER_CACHE):
+        flutter_root = flutter.resolve().parents[1]
+        cache = flutter_root / "bin/cache"
+        dart = executable(cache / "dart-sdk/bin/dart", "Flutter cached Dart")
+        snapshot = cache / "flutter_tools.snapshot"
+        if not snapshot.is_file():
+            raise NotRun("Flutter tools snapshot unavailable, prepare the installed SDK first")
     env.update(
         FLUTTER_ROOT=str(flutter_root),
         FLUTTER_STORAGE_BASE_URL="http://127.0.0.1:0",
         PUB_HOSTED_URL="http://127.0.0.1:0",
     )
-    try:
+    with prerequisite(Stage.POSTGRES_VERSION):
         version = subprocess.check_output(
             [pg, "--version"], env=env, text=True, timeout=5,
             stderr=subprocess.STDOUT,
         )
-    except (OSError, subprocess.SubprocessError) as error:
-        raise NotRun(f"postgres --version: {error}") from error
-    if not re.search(r"\b17\.", version):
-        raise NotRun(f"expected PostgreSQL 17, got {version.strip()}")
-    try:
+        if not re.search(r"\b17\.", version):
+            raise NotRun(f"expected PostgreSQL 17, got {version.strip()}")
+    with prerequisite(Stage.GO_VERSION):
         go_version = subprocess.check_output(
             [go, "version"], env=env, text=True, timeout=5, stderr=subprocess.STDOUT,
         )
-    except (OSError, subprocess.SubprocessError) as error:
-        raise NotRun(f"go version: {error}") from error
-    match = re.search(r"\bgo(\d+)\.(\d+)", go_version)
-    if not match or tuple(map(int, match.groups())) < (1, 26):
-        raise NotRun(f"expected Go 1.26 or newer, got {go_version.strip()}")
-    for name in ("package_config.json", "package_graph.json"):
-        if not (ROOT / "app/.dart_tool" / name).is_file():
-            raise NotRun("prepare locked Flutter dependencies in app/ first")
+        match = re.search(r"\bgo(\d+)\.(\d+)", go_version)
+        if not match or tuple(map(int, match.groups())) < (1, 26):
+            raise NotRun(f"expected Go 1.26 or newer, got {go_version.strip()}")
+    with prerequisite(Stage.FLUTTER_DEPENDENCIES):
+        for name in ("package_config.json", "package_graph.json"):
+            if not (ROOT / "app/.dart_tool" / name).is_file():
+                raise NotRun("prepare locked Flutter dependencies in app/ first")
     return pg, initdb, redis, go, dart, snapshot
 
 
@@ -136,66 +186,70 @@ def await_ready(process, path, marker):
 
 def run_services(args, state, logs, env):
     pg, initdb, redis, go, dart, snapshot = setup(args, env)
-    with ExitStack() as owned:
-        db_listener, cache_listener, ledger_listener = (reserve(owned) for _ in range(3))
-        db_port, cache_port, ledger_port = (
-            listener.getsockname()[1]
-            for listener in (db_listener, cache_listener, ledger_listener)
-        )
+    with prerequisite(Stage.SERVICE_CLEANUP), ExitStack() as owned:
+        with prerequisite(Stage.LOOPBACK):
+            db_listener, cache_listener, ledger_listener = (reserve(owned) for _ in range(3))
+            db_port, cache_port, ledger_port = (
+                listener.getsockname()[1]
+                for listener in (db_listener, cache_listener, ledger_listener)
+            )
         print("PASS(prerequisite)", flush=True)
         db = state / "pg"
         password = secrets.token_hex(24)
         password_file = state / "initdb-password"
-        password_file.write_text(password + "\n")
         init_log = logs / "initdb.log"
-        try:
-            with ExitStack() as startup:
-                proc = spawn(startup, [
-                    initdb, "-D", db, "-U", "postgres", "--no-locale",
-                    "-E", "UTF8", "-A", "scram-sha-256", "--pwfile", password_file,
-                ], env, init_log)
-                if proc.wait(timeout=60) != 0:
-                    raise NotRun(f"initdb exited {proc.returncode}, see {init_log}")
-        except subprocess.TimeoutExpired as error:
-            raise NotRun(f"initdb exceeded its 60s deadline, see {init_log}") from error
-        finally:
-            password_file.unlink()
+        with prerequisite(Stage.INITDB):
+            password_file.write_text(password + "\n")
+            try:
+                with ExitStack() as startup:
+                    proc = spawn(startup, [
+                        initdb, "-D", db, "-U", "postgres", "--no-locale",
+                        "-E", "UTF8", "-A", "scram-sha-256", "--pwfile", password_file,
+                    ], env, init_log)
+                    if proc.wait(timeout=60) != 0:
+                        raise NotRun(f"initdb exited {proc.returncode}, see {init_log}")
+            except subprocess.TimeoutExpired as error:
+                raise NotRun(f"initdb exceeded its 60s deadline, see {init_log}") from error
+            finally:
+                password_file.unlink()
 
-        db_listener.close()
-        pg_log = logs / "postgres.log"
-        proc = spawn(owned, [
-            pg, "-D", db, "-h", "127.0.0.1", "-p", str(db_port),
-            "-c", "unix_socket_directories=", "-c", "statement_timeout=10000",
-            "-c", "lock_timeout=5000",
-        ], env, pg_log)
-        await_ready(proc, pg_log, b"database system is ready to accept connections")
+        with prerequisite(Stage.POSTGRES_STARTUP):
+            db_listener.close()
+            pg_log = logs / "postgres.log"
+            proc = spawn(owned, [
+                pg, "-D", db, "-h", "127.0.0.1", "-p", str(db_port),
+                "-c", "unix_socket_directories=", "-c", "statement_timeout=10000",
+                "-c", "lock_timeout=5000",
+            ], env, pg_log)
+            await_ready(proc, pg_log, b"database system is ready to accept connections")
 
         redis_password = secrets.token_hex(24)
-        for name, listener, port in (
-            ("cache", cache_listener, cache_port),
-            ("ledger", ledger_listener, ledger_port),
+        for name, listener, port, stage in (
+            ("cache", cache_listener, cache_port, Stage.REDIS_CACHE_STARTUP),
+            ("ledger", ledger_listener, ledger_port, Stage.REDIS_LEDGER_STARTUP),
         ):
-            directory = state / name
-            directory.mkdir()
-            config = directory / "redis.conf"
-            text = (
-                f"bind 127.0.0.1\nport {port}\nrequirepass {redis_password}\n"
-                f'dir "{directory}"\nsave ""\n'
-            )
-            if name == "ledger":
-                text += (
-                    "appendonly yes\nappendfsync always\n"
-                    "maxmemory-policy noeviction\naof-load-truncated no\n"
+            with prerequisite(stage):
+                directory = state / name
+                directory.mkdir()
+                config = directory / "redis.conf"
+                text = (
+                    f"bind 127.0.0.1\nport {port}\nrequirepass {redis_password}\n"
+                    f'dir "{directory}"\nsave ""\n'
                 )
-            else:
-                text += "appendonly no\n"
-            config.write_text(text)
-            with config.open("rb") as settings:
-                listener.close()
-                path = logs / f"{name}.log"
-                proc = spawn(owned, [redis, "-"], env, path, stdin=settings)
-                await_ready(proc, path, b"Ready to accept connections")
-            config.unlink()
+                if name == "ledger":
+                    text += (
+                        "appendonly yes\nappendfsync always\n"
+                        "maxmemory-policy noeviction\naof-load-truncated no\n"
+                    )
+                else:
+                    text += "appendonly no\n"
+                config.write_text(text)
+                with config.open("rb") as settings:
+                    listener.close()
+                    path = logs / f"{name}.log"
+                    proc = spawn(owned, [redis, "-"], env, path, stdin=settings)
+                    await_ready(proc, path, b"Ready to accept connections")
+                config.unlink()
         print("PASS(services.disposable)", flush=True)
 
         env.update(
@@ -211,7 +265,8 @@ def run_services(args, state, logs, env):
             T27_HISTORY_DART=str(dart),
             T27_HISTORY_FLUTTER_SNAPSHOT=str(snapshot),
         )
-        run_test(go, env, logs / "journey.log")
+        with prerequisite(Stage.GO_STARTUP):
+            run_test(go, env, logs / "journey.log")
 
 
 def run_test(go, env, log):
@@ -230,22 +285,29 @@ def run_test(go, env, log):
         if re.search(r"\b(?:BEGIN|PASS|FAIL|OBSERVED|NOT RUN)\(", line):
             print(line.strip(), flush=True)
     if status is None:
-        stages = [m.group(1) for line in lines if (m := re.search(r"BEGIN\(([^)]+)\)", line))]
-        raise Failed(f"{stages[-1] if stages else 'go.startup'} exceeded the runner deadline, see {log}")
+        stage = next((match[1] for line in reversed(lines)
+                      if (match := PHASE_BEGIN.fullmatch(line.strip()))
+                      and match[1] in REQUIRED_PHASES), Stage.GO_STARTUP.value)
+        raise Failed(f"{stage} exceeded the runner deadline, see {log}", stage=stage)
     if status == 0 and any(line.startswith("--- SKIP: TestT27HistoryJourney (") for line in lines):
-        raise Skipped(f"Go skipped TestT27HistoryJourney, see {log}")
+        raise Skipped(f"Go skipped TestT27HistoryJourney, see {log}", stage=Stage.GO_STARTUP.value)
     if any("NOT RUN(page.startup)" in line for line in lines):
-        raise NotRun(f"page.startup did not reach the widget test, see {log}")
+        raise NotRun(f"page.startup did not reach the widget test, see {log}",
+                     stage=Stage.PAGE_STARTUP.value)
     if not any("BEGIN(service.runtime)" in line for line in lines):
-        raise NotRun(f"Go did not enter the integration test (exit {status}), see {log}")
+        raise NotRun(f"Go did not enter the integration test (exit {status}), see {log}",
+                     stage=Stage.GO_STARTUP.value)
     if status != 0:
-        raise Failed(f"journey exited {status}, see {log}")
+        stage = next((match[1] for line in lines if (match := PHASE_FAILURE.match(line.strip()))
+                      and match[1] in REQUIRED_PHASES), "journey")
+        raise Failed(f"journey exited {status}, see {log}", stage=stage)
     passed = {match[1] for line in lines if (match := PHASE_PASS.fullmatch(line.strip()))}
-    missing = [f"PASS({phase})" for phase in REQUIRED_PHASES if phase not in passed]
+    missing = [phase for phase in REQUIRED_PHASES if phase not in passed]
     if missing:
-        raise Failed(f"missing {', '.join(missing)}, see {log}")
+        receipts = ", ".join(f"PASS({phase})" for phase in missing)
+        raise Failed(f"missing {receipts}, see {log}", stage=missing[0])
     if not any(line.startswith("--- PASS: TestT27HistoryJourney (") for line in lines):
-        raise Failed(f"Go omitted the TestT27HistoryJourney pass, see {log}")
+        raise Failed(f"Go omitted the TestT27HistoryJourney pass, see {log}", stage="journey")
     print("RESULT: PASS", flush=True)
 
 
@@ -259,10 +321,11 @@ def main():
 
     os.umask(0o077)
     logs_dir = ROOT / "build/t27-history"
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    logs = Path(tempfile.mkdtemp(prefix="run-", dir=logs_dir))
-    print(f"T27 logs: {logs}", flush=True)
-    with tempfile.TemporaryDirectory(prefix="t27-state-", dir=logs) as directory:
+    with prerequisite(Stage.WORKSPACE), ExitStack() as workspace:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        logs = Path(tempfile.mkdtemp(prefix="run-", dir=logs_dir))
+        directory = workspace.enter_context(tempfile.TemporaryDirectory(prefix="t27-state-", dir=logs))
+        print(f"T27 logs: {logs}", flush=True)
         state = Path(directory)
         allowed = {"PATH", "HOME", "PUB_CACHE", "GOMODCACHE", "GOPATH"}
         env = {key: os.environ[key] for key in allowed if key in os.environ}
@@ -281,12 +344,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (NotRun, OSError) as error:
-        print(f"NOT RUN(prerequisite): {error}", file=sys.stderr)
-        sys.exit(2)
-    except Failed as error:
-        print(f"FAIL(journey): {error}", file=sys.stderr)
-        sys.exit(1)
-    except Skipped as error:
-        print(f"SKIPPED(journey): {error}", file=sys.stderr)
-        sys.exit(3)
+    except JourneyError as error:
+        status, exit_code = {Failed: ("FAIL", 1), NotRun: ("NOT RUN", 2),
+                             Skipped: ("SKIPPED", 3)}[type(error)]
+        print(f"{status}({error.stage}): {error}", file=sys.stderr)
+        print(f"{STAGE_PREFIX}{error.stage}", file=sys.stderr)
+        sys.exit(exit_code)
