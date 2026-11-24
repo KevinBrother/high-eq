@@ -15,3 +15,7 @@
 ## 独立的新会话应该让 gpt-6.2-sol（high）和 deepseek-v4.1-flash（high） 干
 
 ### 且绝大部分应该是 deepseek-v4.1-flash（high） 干，然后 gpt-6.2-sol（high） 检查它的结果
+
+## 功能
+
+### 暂时先不用管安卓端
