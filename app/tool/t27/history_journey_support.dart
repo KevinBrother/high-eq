@@ -290,20 +290,23 @@ class JourneyStorage {
 class _RealHttpOverrides extends HttpOverrides {}
 
 class JourneyWire implements Transport {
-  JourneyWire(this.origin, {required String contactId})
-    : _deletePath = '/v1/contacts/$contactId',
+  JourneyWire(this.origin, {required String contactId, http.Client? client})
+    : _deleteTrace = HistoryDeleteTrace(
+        '/v1/contacts/$contactId',
+        debugPrintSynchronously,
+      ),
       _http = HttpTransport(
-        HttpOverrides.runWithHttpOverrides(
-          () => IOClient(HttpClient()..findProxy = (_) => 'DIRECT'),
-          _RealHttpOverrides(),
-        ),
+        client ??
+            HttpOverrides.runWithHttpOverrides(
+              () => IOClient(HttpClient()..findProxy = (_) => 'DIRECT'),
+              _RealHttpOverrides(),
+            ),
       );
 
   final Uri origin;
-  final String _deletePath;
   final HttpTransport _http;
+  final HistoryDeleteTrace _deleteTrace;
   final _reads = <HistoryRead>[];
-  final _deletions = <({String path, int status, bool ok})>[];
   int _event = 0;
   bool historyUnavailable = false;
 
@@ -313,7 +316,7 @@ class JourneyWire implements Transport {
       _reads.where((read) => read.requestOrder > mark).toList();
 
   List<({String path, int status, bool ok})> get deletions =>
-      List.unmodifiable(_deletions);
+      _deleteTrace.deletions;
 
   String historyReceipt(int mark) {
     final counts = <String, int>{};
@@ -363,10 +366,10 @@ class JourneyWire implements Transport {
     final response = result.response!;
     final body = result.body!;
     final status = response.statusCode;
-    final json = status == 200 && (history || op == AppOp.deleteContact)
-        ? jsonDecode(utf8.decode(body)) as Map<String, dynamic>
-        : const <String, dynamic>{};
     if (history) {
+      final json = status == 200
+          ? jsonDecode(utf8.decode(body)) as Map<String, dynamic>
+          : const <String, dynamic>{};
       final items = json['items'] as List? ?? const [];
       _reads.add(
         HistoryRead(
@@ -380,19 +383,12 @@ class JourneyWire implements Transport {
         ),
       );
     } else if (op == AppOp.deleteContact) {
-      final ok = json['ok'] == true;
-      _deletions.add((path: request.url.path, status: status, ok: ok));
-      if (request.method == 'DELETE' && request.url.path == _deletePath) {
-        // Record the real HTTP response before the widget handles it.
-        debugPrintSynchronously(switch (status) {
-          200 when ok =>
-            'OBSERVED(page.delete-ack): DELETE returned 200 with ok=true',
-          403 => 'OBSERVED(page.delete-http): 403',
-          500 => 'OBSERVED(page.delete-http): 500',
-          503 => 'OBSERVED(page.delete-http): 503',
-          _ => 'OBSERVED(page.delete-http): unacknowledged',
-        });
-      }
+      _deleteTrace.record(
+        method: request.method,
+        path: request.url.path,
+        status: status,
+        body: body,
+      );
     }
     return http.StreamedResponse(
       Stream.value(body),

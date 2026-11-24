@@ -1,12 +1,113 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:high_eq/core/app_op.g.dart';
 import 'package:high_eq/core/session.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import 'history_journey_support.dart';
 
 void main() {
+  const contactId = 'synthetic-contact';
+  final origin = Uri.parse('http://synthetic-origin.invalid');
+  final path = '/v1/contacts/$contactId';
+
+  for (final (description, body) in [
+    ('invalid JSON', utf8.encode('synthetic-private-body')),
+    ('non-object JSON', utf8.encode('["synthetic-private-body"]')),
+    ('invalid UTF-8', [0xff, ...utf8.encode('synthetic-private-body')]),
+  ]) {
+    test(
+      'target DELETE records 200 with $description and still fails',
+      () async {
+        final wire = JourneyWire(
+          origin,
+          contactId: contactId,
+          client: MockClient.streaming(
+            (_, _) async => http.StreamedResponse(Stream.value(body), 200),
+          ),
+        );
+        addTearDown(wire.close);
+
+        Object? failure;
+        final lines = await _captureOutput(() async {
+          try {
+            await wire.send(
+              AppOp.deleteContact,
+              http.Request('DELETE', origin.resolve(path)),
+            );
+          } catch (error) {
+            failure = error;
+          }
+        });
+
+        expect(lines, ['OBSERVED(page.delete-http): unacknowledged']);
+        expect(wire.deletions, [(path: path, status: 200, ok: false)]);
+        expect(failure, isA<FormatException>());
+        expect(failure.toString(), isNot(contains('synthetic-private-body')));
+        expect(failure.toString(), isNot(contains(origin.toString())));
+        expect(failure.toString(), isNot(contains(path)));
+      },
+    );
+  }
+
+  test(
+    'target DELETE leaves no observation when no response arrives',
+    () async {
+      final failure = StateError('synthetic transport failure');
+      final wire = JourneyWire(
+        origin,
+        contactId: contactId,
+        client: MockClient.streaming((_, _) async => throw failure),
+      );
+      addTearDown(wire.close);
+
+      final lines = await _captureOutput(() async {
+        await expectLater(
+          wire.send(
+            AppOp.deleteContact,
+            http.Request('DELETE', origin.resolve(path)),
+          ),
+          throwsA(same(failure)),
+        );
+      });
+
+      expect(lines, isEmpty);
+      expect(wire.deletions, isEmpty);
+    },
+  );
+
+  test('target DELETE reports and forwards a valid acknowledgement', () async {
+    const body = '{"ok":true}';
+    final wire = JourneyWire(
+      origin,
+      contactId: contactId,
+      client: MockClient.streaming(
+        (_, _) async =>
+            http.StreamedResponse(Stream.value(utf8.encode(body)), 200),
+      ),
+    );
+    addTearDown(wire.close);
+
+    final lines = await _captureOutput(() async {
+      final response = await wire.send(
+        AppOp.deleteContact,
+        http.Request('DELETE', origin.resolve(path)),
+      );
+      expect(response.statusCode, 200);
+      expect(await response.stream.bytesToString(), body);
+    });
+
+    expect(lines, [
+      'OBSERVED(page.delete-ack): DELETE returned 200 with ok=true',
+    ]);
+    expect(wire.deletions, [(path: path, status: 200, ok: true)]);
+  });
+
   test(
     'journey storage keeps account deletion ownership across Sessions',
     () async {
@@ -169,6 +270,17 @@ void main() {
       ),
     );
   });
+}
+
+Future<List<String>> _captureOutput(Future<void> Function() action) async {
+  final lines = <String>[];
+  await runZoned(
+    action,
+    zoneSpecification: ZoneSpecification(
+      print: (_, _, _, line) => lines.add(line),
+    ),
+  );
+  return lines;
 }
 
 Tokens _tokens(String account) => Tokens(

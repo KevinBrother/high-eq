@@ -45,12 +45,13 @@ flutter test --no-pub -r expanded test/contacts/repository_test.dart \
 
 `T27 growth and practice` 保留旧的成长 HTTP 旅程与 Flutter 回归，新增关系人核对入口、旅程组件辅助回归，以及独立 PG17、缓存 Redis 和 AOF Redis 上的正式历史旅程。推送、拉取请求和手动运行均可触发。运行摘要逐项给出 `PASS`、`FAIL`、`NOT RUN`、`SKIPPED` 或 `CANCELLED`。三项均须有成功回执。摘要和检查步骤只输出固定结果，原始测试日志保留在运行环境中或随临时文件清理。
 
-Ubuntu 24.04 运行器从 Redis 官方发行源下载固定的 8.2.0 源码，使用 `redis/redis-hashes` 发布的 SHA-256 核验后编译，再检查构建产物的版本。正式历史旅程显式使用该原生二进制。若随后在 `page.contact-deleted` 失败，CI 摘要会给出固定的 HTTP 观测值。`acknowledged` 表示对目标的 DELETE 已收到 `200` 且 `ok=true`，页面成功提示与列表状态仍各有断言。`http-403`、`http-500` 和 `http-503` 表示观测到对应 HTTP 状态。其余值为 `unacknowledged`、`unobserved` 或 `multiple`。
+Ubuntu 24.04 运行器从 Redis 官方发行源下载固定的 8.2.0 源码，使用 `redis/redis-hashes` 发布的 SHA-256 核验后编译，再检查构建产物的版本。正式历史旅程显式使用该原生二进制。若随后在 `page.contact-deleted` 失败，CI 摘要会给出固定的 HTTP 观测值。`acknowledged` 表示对目标的 DELETE 已收到 `200` 且 `ok=true`，页面成功提示与列表状态仍各有断言。`http-403`、`http-500` 和 `http-503` 表示观测到对应 HTTP 状态。`unacknowledged` 包含已收到 `200` 但正文无法解码为 JSON 对象的情况，解析错误仍会使旅程失败。`unobserved` 表示没有目标 DELETE 回执，`multiple` 表示观测到多条回执。
 
 在仓库根目录离线复跑回执和 Redis 供应回归，无需 Flutter 或本地服务。
 
 ```sh
 python3 -B -m unittest discover -s app/tool/t27 -p 'test_*.py' -v
+dart app/tool/t27/history_delete_smoke.dart
 ```
 
 在 Ubuntu 24.04 安装 `build-essential` 后，可先单独验证 Redis 供应和账本能力。账本预检仅需 Python 3、待验的 `redis-server` 和回环监听权限。
