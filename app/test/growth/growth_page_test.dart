@@ -83,6 +83,27 @@ void main() {
     expect(find.text('只记录这一项目标的过关进度，不计入训练参考分。'), findsOneWidget);
   });
 
+  testWidgets('缺少完成时间的历史得分不冒充最近一次', (tester) async {
+    final repository = FakeGrowthRepository(
+      snapshot: sampleSnapshot(
+        sessions: const [
+          PracticeScoreData(
+            sessionId: 'legacy',
+            mode: 'full_session',
+            targetItem: null,
+            total: 70,
+            maximum: 100,
+          ),
+        ],
+      ),
+    );
+    await _pumpGrowth(tester, repository);
+
+    await _scrollTo(tester, find.text('完成时间未记录 · 整场对练'));
+    expect(find.text('完成时间未记录 · 整场对练'), findsOneWidget);
+    expect(find.text('最近一次 · 整场对练'), findsNothing);
+  });
+
   testWidgets('无测评和无得分时展示可执行空状态', (tester) async {
     final repository = FakeGrowthRepository(
       snapshot: sampleSnapshot(

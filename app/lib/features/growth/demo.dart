@@ -60,13 +60,14 @@ class DemoGrowthRepository implements GrowthRepository {
         totalPercent: 59,
       ),
     ];
-    _sessions = const [
+    _sessions = [
       PracticeScoreData(
         sessionId: '85b72033-9f07-4bbc-8567-fc31f26508d1',
         mode: 'full_session',
         targetItem: null,
         total: 74,
         maximum: 100,
+        completedAt: now.subtract(const Duration(days: 2)),
       ),
       PracticeScoreData(
         sessionId: '85b72033-9f07-4bbc-8567-fc31f26508d2',
@@ -74,6 +75,7 @@ class DemoGrowthRepository implements GrowthRepository {
         targetItem: 'feeling',
         total: 20,
         maximum: 25,
+        completedAt: now.subtract(const Duration(days: 9)),
       ),
       PracticeScoreData(
         sessionId: '85b72033-9f07-4bbc-8567-fc31f26508d3',
@@ -81,6 +83,7 @@ class DemoGrowthRepository implements GrowthRepository {
         targetItem: null,
         total: 66,
         maximum: 100,
+        completedAt: now.subtract(const Duration(days: 18)),
       ),
     ];
     _cards = const [

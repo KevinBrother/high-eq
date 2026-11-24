@@ -82,6 +82,123 @@ void main() {
     expect(snapshot.scoredSessions.single.total, 82);
   });
 
+  test('跨页历史按完成时间在列表与缓存中保持一致', () async {
+    final fixtures =
+        jsonDecode(await File('assets/contract_examples.json').readAsString())
+            as Map<String, dynamic>;
+
+    Map<String, dynamic> scored(String id, String completedAt, int total) => {
+      'session_id': id,
+      'status': 'complete',
+      'mode': 'full_session',
+      'target_item': null,
+      'messages': <Object>[],
+      'completed_at': completedAt,
+      'settlement': {
+        'status': 'charged',
+        'net_charge': 1,
+        'charged_day': '2026-11-22',
+      },
+      'result': {
+        'mode': 'full_session',
+        'score': {
+          'nvc': {'total': total},
+        },
+        'settlement': {
+          'status': 'charged',
+          'net_charge': 1,
+          'charged_day': '2026-11-22',
+        },
+      },
+    };
+
+    wire.handle = (op, request) async {
+      if (op != AppOp.listSessions) return response(fixtures[op.name] as Map);
+      final cursor = request.url.queryParameters['cursor'];
+      if (cursor == null) {
+        return response({
+          'items': [scored('created-second', '2026-11-10T09:00:00Z', 61)],
+          'next_cursor': 'page-2',
+        });
+      }
+      expect(cursor, 'page-2');
+      return response({
+        'items': [scored('created-first', '2026-11-20T09:00:00Z', 84)],
+        'next_cursor': null,
+      });
+    };
+
+    final repository = ApiGrowthRepository(api, scope);
+    final snapshot = await repository.load();
+    final cached = await repository.cached();
+
+    expect(snapshot.scoredSessions.map((score) => score.sessionId), [
+      'created-first',
+      'created-second',
+    ]);
+    expect(cached?.scoredSessions.map((score) => score.sessionId), [
+      'created-first',
+      'created-second',
+    ]);
+  });
+
+  test('删除得分后重新加载会同步移除列表与缓存中的旧记录', () async {
+    final fixtures =
+        jsonDecode(await File('assets/contract_examples.json').readAsString())
+            as Map<String, dynamic>;
+    var deleted = false;
+
+    Map<String, dynamic> scored(String id, String completedAt, int total) => {
+      'session_id': id,
+      'status': 'complete',
+      'mode': 'full_session',
+      'target_item': null,
+      'messages': <Object>[],
+      'completed_at': completedAt,
+      'settlement': {
+        'status': 'charged',
+        'net_charge': 1,
+        'charged_day': '2026-11-22',
+      },
+      'result': {
+        'mode': 'full_session',
+        'score': {
+          'nvc': {'total': total},
+        },
+        'settlement': {
+          'status': 'charged',
+          'net_charge': 1,
+          'charged_day': '2026-11-22',
+        },
+      },
+    };
+
+    wire.handle = (op, request) async {
+      if (op != AppOp.listSessions) return response(fixtures[op.name] as Map);
+      return response({
+        'items': [
+          scored('kept', '2026-11-10T09:00:00Z', 61),
+          if (!deleted) scored('deleted', '2026-11-20T09:00:00Z', 84),
+        ],
+        'next_cursor': null,
+      });
+    };
+
+    final repository = ApiGrowthRepository(api, scope);
+    final before = await repository.load();
+    expect(before.scoredSessions.map((score) => score.sessionId), [
+      'deleted',
+      'kept',
+    ]);
+
+    deleted = true;
+    final after = await repository.load();
+    final cached = await repository.cached();
+
+    expect(after.scoredSessions.map((score) => score.sessionId), ['kept']);
+    expect(cached?.scoredSessions.map((score) => score.sessionId), ['kept']);
+  });
+
   for (final authStatus in [401, 403]) {
     test('并行读取优先保留 $authStatus 授权拒绝而不是普通失败', () async {
       final fixtures =

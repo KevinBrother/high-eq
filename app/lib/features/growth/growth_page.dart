@@ -159,6 +159,7 @@ class _GrowthPageState extends State<GrowthPage> {
         onRetry: () => _load(),
       );
     }
+    final scores = snapshot.scoredSessions;
     return ReminderBoundary(
       deadline: snapshot.latestAssessment?.nextEligibleAt,
       now: widget.now,
@@ -195,26 +196,14 @@ class _GrowthPageState extends State<GrowthPage> {
               subtitle: '整场对练与单项练习分开记录；这里没有推算的日期。',
             ),
             const SizedBox(height: 12),
-            if (snapshot.scoredSessions.isEmpty)
+            if (scores.isEmpty)
               const EmptyState(
                 icon: Icons.forum_outlined,
                 title: '还没有可展示的得分',
                 message: '完成一次整场对练或单项练习后，分数会按最近一次到更早一次排列。',
               )
             else
-              GrowthSurface(
-                padding: EdgeInsets.zero,
-                child: Column(
-                  children: [
-                    for (final (index, score)
-                        in snapshot.scoredSessions.indexed) ...[
-                      _ScoreTile(index: index, score: score),
-                      if (index != snapshot.scoredSessions.length - 1)
-                        const Divider(height: 1),
-                    ],
-                  ],
-                ),
-              ),
+              _ScoreHistory(scores: scores),
             const SizedBox(height: 26),
             const SectionHeading(
               '阶段成就',
@@ -548,11 +537,13 @@ class _ScoreTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final order = switch (index) {
-      0 => '最近一次',
-      1 => '更早一次',
-      _ => '第 ${index + 1} 次记录',
-    };
+    final order = score.completedAt == null
+        ? '完成时间未记录'
+        : switch (index) {
+            0 => '最近一次',
+            1 => '更早一次',
+            _ => '第 ${index + 1} 次记录',
+          };
     final single = score.mode == 'single_skill';
     final title = single
         ? '$order · 单项练习${score.targetItem == null ? '' : ' · ${_skillLabel(score.targetItem!)}'}'
@@ -621,6 +612,27 @@ class _ScoreTile extends StatelessWidget {
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ScoreHistory extends StatelessWidget {
+  const _ScoreHistory({required this.scores});
+
+  final List<PracticeScoreData> scores;
+
+  @override
+  Widget build(BuildContext context) {
+    return GrowthSurface(
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: [
+          for (final (index, score) in scores.indexed) ...[
+            _ScoreTile(index: index, score: score),
+            if (index != scores.length - 1) const Divider(height: 1),
+          ],
         ],
       ),
     );

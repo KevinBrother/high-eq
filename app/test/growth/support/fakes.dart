@@ -98,13 +98,14 @@ GrowthSnapshot sampleSnapshot({
     assessments: resolvedAssessments,
     sessions:
         sessions ??
-        const [
+        [
           PracticeScoreData(
             sessionId: 'session-latest',
             mode: 'full_session',
             targetItem: null,
             total: 74,
             maximum: 100,
+            completedAt: DateTime.utc(2026, 11, 20),
           ),
           PracticeScoreData(
             sessionId: 'session-older',
@@ -112,6 +113,7 @@ GrowthSnapshot sampleSnapshot({
             targetItem: 'feeling',
             total: 20,
             maximum: 25,
+            completedAt: DateTime.utc(2026, 11, 10),
           ),
         ],
     cards: includeCards ? resolvedCards : const [],

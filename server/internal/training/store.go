@@ -98,14 +98,15 @@ type Result struct {
 // SessionSummary is the only shape exposed by history lists. Keeping it
 // separate from Session makes a setup/contact projection leak a compile error.
 type SessionSummary struct {
-	ID         uuid.UUID     `json:"session_id"`
-	Status     string        `json:"status"`
-	Mode       string        `json:"mode"`
-	Target     *string       `json:"target_item"`
-	Level      *uuid.UUID    `json:"level_id,omitempty"`
-	Messages   []app.Message `json:"messages"`
-	Settlement Settlement    `json:"settlement"`
-	Result     *Result       `json:"result,omitempty"`
+	ID          uuid.UUID     `json:"session_id"`
+	Status      string        `json:"status"`
+	Mode        string        `json:"mode"`
+	Target      *string       `json:"target_item"`
+	Level       *uuid.UUID    `json:"level_id,omitempty"`
+	Messages    []app.Message `json:"messages"`
+	Settlement  Settlement    `json:"settlement"`
+	CompletedAt *time.Time    `json:"completed_at"`
+	Result      *Result       `json:"result,omitempty"`
 }
 
 type Session struct {
@@ -170,13 +171,13 @@ func (s *Service) load(ctx context.Context, tx pgx.Tx, u, id uuid.UUID) (r recor
 	e = tx.QueryRow(ctx, `select a.state,a.source_id,a.content_enc,w.used_tokens,w.worker,w.client_id,
        coalesce(w.action,''),coalesce(w.valid_until>clock_timestamp(),false),q.token,
        l.charged_day::text,l.refunded_at is not null,s.detail_enc,d.progress_enc,
-       w.settlement_pending,coalesce(w.settlement_outcome,'')
+       w.settlement_pending,coalesce(w.settlement_outcome,''),w.completed_at
  from activities a join practice_work w on w.activity_id=a.id
  left join quota_attempts q on q.activity_id=a.id
  left join quota_ledger l on l.activity_id=a.id
  left join scores s on s.activity_id=a.id
  left join drill_progress d on d.activity_id=a.id
- where a.user_id=$1 and a.id=$2`, u, id).Scan(&r.Status, &r.source, &setup, &r.tokens, &r.worker, &r.client, &r.action, &r.live, &r.quota, &r.Settlement.Day, &refunded, &detail, &progress, &r.settlementPending, &r.settlementOutcome)
+ where a.user_id=$1 and a.id=$2`, u, id).Scan(&r.Status, &r.source, &setup, &r.tokens, &r.worker, &r.client, &r.action, &r.live, &r.quota, &r.Settlement.Day, &refunded, &detail, &progress, &r.settlementPending, &r.settlementOutcome, &r.CompletedAt)
 	if errors.Is(e, pgx.ErrNoRows) {
 		e = ErrMissing
 	}

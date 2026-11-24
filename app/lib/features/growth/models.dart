@@ -1,4 +1,4 @@
-import '../../core/transport.dart';
+import '../../core/json.dart';
 
 const wleisAxisLabels = {
   'SEA': '自我觉察',
@@ -271,6 +271,7 @@ class PracticeScoreData {
     required this.targetItem,
     required this.total,
     required this.maximum,
+    this.completedAt,
   });
 
   final String sessionId;
@@ -278,6 +279,7 @@ class PracticeScoreData {
   final String? targetItem;
   final int total;
   final int maximum;
+  final DateTime? completedAt;
 
   factory PracticeScoreData.fromJson(Json json) {
     final resultValue = json['result'];
@@ -291,6 +293,9 @@ class PracticeScoreData {
         targetItem: _string(progress['target_item'], '目标项'),
         total: _int(progress['score'], '单项得分', max: 25),
         maximum: 25,
+        completedAt: json['completed_at'] == null
+            ? null
+            : _time(json['completed_at'], '对练完成时间'),
       );
     }
     if (result['mode'] != 'full_session') {
@@ -304,6 +309,9 @@ class PracticeScoreData {
       targetItem: null,
       total: _int(nvc['total'], 'NVC 总分', max: 100),
       maximum: 100,
+      completedAt: json['completed_at'] == null
+          ? null
+          : _time(json['completed_at'], '对练完成时间'),
     );
   }
 
@@ -331,6 +339,11 @@ class PracticeScoreData {
       targetItem: targetItem,
       total: total,
       maximum: maximum,
+      // Old encrypted caches predate the field and represent an unknown time,
+      // not a fabricated creation or completion timestamp.
+      completedAt: json['completed_at'] == null
+          ? null
+          : _time(json['completed_at'], '对练完成时间'),
     );
   }
 
@@ -340,6 +353,7 @@ class PracticeScoreData {
     'target_item': targetItem,
     'total': total,
     'maximum': maximum,
+    'completed_at': completedAt?.toIso8601String(),
   };
 }
 
@@ -367,14 +381,18 @@ class KnowledgeCardData {
 }
 
 class GrowthSnapshot {
-  const GrowthSnapshot({
+  GrowthSnapshot({
     required this.plan,
     required this.growth,
-    required this.assessments,
-    required this.sessions,
-    required this.cards,
+    required List<AssessmentData> assessments,
+    required List<PracticeScoreData> sessions,
+    required List<KnowledgeCardData> cards,
     this.cachedAt,
-  });
+  }) : assessments = List.unmodifiable(assessments),
+       sessions = List.unmodifiable(sessions),
+       cards = List.unmodifiable(cards),
+       orderedAssessments = List.unmodifiable(_sortAssessments(assessments)),
+       scoredSessions = List.unmodifiable(_sortSessions(sessions));
 
   final PlanData plan;
   final GrowthData growth;
@@ -386,7 +404,11 @@ class GrowthSnapshot {
   /// Contract lists are not a time-order guarantee. Growth comparisons must
   /// use the completion time so a retried or merged response cannot make an
   /// older self-report appear as the latest one.
-  List<AssessmentData> get orderedAssessments {
+  final List<AssessmentData> orderedAssessments;
+
+  static List<AssessmentData> _sortAssessments(
+    Iterable<AssessmentData> assessments,
+  ) {
     final ordered = [...assessments];
     ordered.sort((a, b) {
       final byTime = b.completedAt.compareTo(a.completedAt);
@@ -398,7 +420,25 @@ class GrowthSnapshot {
   AssessmentData? get latestAssessment => orderedAssessments.firstOrNull;
   AssessmentData? get previousAssessment =>
       orderedAssessments.length < 2 ? null : orderedAssessments[1];
-  List<PracticeScoreData> get scoredSessions => sessions;
+  final List<PracticeScoreData> scoredSessions;
+
+  static List<PracticeScoreData> _sortSessions(
+    Iterable<PracticeScoreData> sessions,
+  ) {
+    final ordered = [...sessions];
+    ordered.sort((a, b) {
+      final left = a.completedAt;
+      final right = b.completedAt;
+      if (left == null && right != null) return 1;
+      if (left != null && right == null) return -1;
+      if (left != null && right != null) {
+        final byTime = right.compareTo(left);
+        if (byTime != 0) return byTime;
+      }
+      return b.sessionId.compareTo(a.sessionId);
+    });
+    return ordered;
+  }
 
   factory GrowthSnapshot.fromApi({
     required Json plan,

@@ -90,6 +90,54 @@ func TestPracticeWire(t *testing.T) {
 		h.json(u.AccessToken, "PUT", "me/consents/practice", map[string]any{"version": "v1", "granted": false}, 200, nil)
 		h.json(u.AccessToken, "POST", path+"/messages", body(uuid.NewString()), 403, nil)
 	})
+	t.Run("completion_time_keeps_creation_history_order", func(t *testing.T) {
+		u := h.user()
+		createdFirst := h.create(u, 1)
+		createdSecond := h.create(u, 5)
+		firstID := uuid.MustParse(strings.TrimPrefix(createdFirst, "sessions/"))
+		secondID := uuid.MustParse(strings.TrimPrefix(createdSecond, "sessions/"))
+
+		// Finish in the reverse of creation order. The lobby's cursor remains on
+		// created_at, while growth history needs the actual completion time.
+		h.send(u, createdSecond)
+		var secondResult training.Result
+		h.json(u.AccessToken, "POST", createdSecond+"/finish", nil, 200, &secondResult)
+		time.Sleep(5 * time.Millisecond)
+		h.send(u, createdFirst)
+		var firstResult training.Result
+		h.json(u.AccessToken, "POST", createdFirst+"/finish", nil, 200, &firstResult)
+		if secondResult.Score == nil || secondResult.Progress != nil || firstResult.Progress == nil || firstResult.Score != nil {
+			t.Fatal("single and full-session results were mixed")
+		}
+
+		var firstPage, secondPage training.Page
+		h.json(u.AccessToken, "GET", "sessions?limit=1", nil, 200, &firstPage)
+		if firstPage.Next == nil || len(firstPage.Items) != 1 || firstPage.Items[0].ID != secondID {
+			t.Fatal("lobby creation order or cursor changed")
+		}
+		h.json(u.AccessToken, "GET", "sessions?limit=1&cursor="+*firstPage.Next, nil, 200, &secondPage)
+		if secondPage.Next != nil || len(secondPage.Items) != 1 || secondPage.Items[0].ID != firstID {
+			t.Fatal("second lobby page does not preserve creation order")
+		}
+		createdSecondItem, createdFirstItem := firstPage.Items[0], secondPage.Items[0]
+		if createdSecondItem.CompletedAt == nil || createdFirstItem.CompletedAt == nil {
+			t.Fatal("completed history did not expose its completion time")
+		}
+		if !createdFirstItem.CompletedAt.After(*createdSecondItem.CompletedAt) {
+			t.Fatalf("completion order=%s/%s want first-created to finish later", createdFirstItem.CompletedAt, createdSecondItem.CompletedAt)
+		}
+		if createdSecondItem.Result == nil || createdSecondItem.Result.Progress != nil || createdSecondItem.Result.Score == nil ||
+			createdFirstItem.Result == nil || createdFirstItem.Result.Score != nil || createdFirstItem.Result.Progress == nil {
+			t.Fatal("history results mixed single and full-session scores")
+		}
+
+		original := *createdFirstItem.CompletedAt
+		h.json(u.AccessToken, "POST", createdFirst+"/finish", nil, 200, &firstResult)
+		replayed := h.history(u, createdFirst)
+		if replayed.CompletedAt == nil || !replayed.CompletedAt.Equal(original) {
+			t.Fatalf("finish retry changed completion time: %v -> %v", original, replayed.CompletedAt)
+		}
+	})
 	t.Run("authorization_is_rechecked_during_a_turn", func(t *testing.T) {
 		t.Run("revocation during input review", func(t *testing.T) {
 			u, p := h.user(), ""

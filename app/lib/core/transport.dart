@@ -2,8 +2,9 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'app_op.g.dart';
+import 'json.dart';
 
-typedef Json = Map<String, dynamic>;
+export 'json.dart';
 
 abstract interface class Transport {
   Future<http.StreamedResponse> send(AppOp op, http.Request request);

@@ -67,8 +67,10 @@ void main() {
 
       expect(single.maximum, 25);
       expect(single.targetItem, 'feeling');
+      expect(single.completedAt, isNull);
       expect(full.maximum, 100);
       expect(full.targetItem, isNull);
+      expect(full.completedAt, isNull);
     });
 
     for (final invalid in <Map<String, dynamic>>[
@@ -113,6 +115,14 @@ void main() {
         'target_item': null,
         'total': 70,
         'maximum': 100,
+      },
+      {
+        'session_id': 'invalid-completed-at',
+        'mode': 'full_session',
+        'target_item': null,
+        'total': 70,
+        'maximum': 100,
+        'completed_at': 'not-a-date',
       },
     ]) {
       test('拒绝无效缓存 ${invalid['session_id']}', () {
@@ -188,6 +198,93 @@ void main() {
     expect(snapshot.scoredSessions.map((score) => score.sessionId), ['scored']);
   });
 
+  test('历次得分按实际完成时间排序，未知时间排最后且并列稳定', () {
+    final snapshot = GrowthSnapshot.fromApi(
+      plan: {'day': '2026-11-22', 'personalized': false, 'items': []},
+      growth: {
+        'latest_assessment': null,
+        'wleis_percent': null,
+        'training_reference': null,
+        'valid_behavior_count': 0,
+        'streak': 0,
+        'achievements': [],
+      },
+      assessments: {'items': []},
+      sessions: {
+        'items': [
+          _scoredSession(
+            'created-second',
+            completedAt: DateTime.utc(2026, 11, 10),
+            total: 61,
+          ),
+          _scoredSession(
+            'tie-a',
+            completedAt: DateTime.utc(2026, 11, 15),
+            total: 72,
+          ),
+          _scoredSession(
+            'created-first',
+            completedAt: DateTime.utc(2026, 11, 20),
+            total: 84,
+          ),
+          _scoredSession('unknown-a', total: 55),
+          _scoredSession('unknown-b', total: 58),
+          _scoredSession(
+            'tie-b',
+            completedAt: DateTime.utc(2026, 11, 15),
+            total: 66,
+          ),
+        ],
+      },
+      cards: {'items': []},
+    );
+
+    expect(snapshot.scoredSessions.map((score) => score.sessionId), [
+      'created-first',
+      'tie-b',
+      'tie-a',
+      'created-second',
+      'unknown-b',
+      'unknown-a',
+    ]);
+  });
+
+  test('同一快照的1000条得分复用排序结果且不修改原集合', () {
+    final source = List<PracticeScoreData>.generate(1000, (index) {
+      return PracticeScoreData(
+        sessionId: 'session-$index',
+        mode: 'full_session',
+        targetItem: null,
+        total: index % 101,
+        maximum: 100,
+        completedAt: index.isEven
+            ? null
+            : DateTime.utc(2026, 11, 1).add(Duration(minutes: index)),
+      );
+    });
+    final originalIds = [for (final score in source) score.sessionId];
+    final snapshot = GrowthSnapshot(
+      plan: const PlanData(day: '2026-11-22', personalized: false, items: []),
+      growth: const GrowthData(
+        latestAssessment: null,
+        wleisPercent: null,
+        trainingReference: null,
+        validBehaviorCount: 0,
+        streak: 0,
+        achievements: [],
+      ),
+      assessments: const [],
+      sessions: source,
+      cards: const [],
+    );
+
+    final ordered = snapshot.scoredSessions;
+
+    expect(ordered, hasLength(1000));
+    expect(identical(ordered, snapshot.scoredSessions), isTrue);
+    expect([for (final score in source) score.sessionId], originalIds);
+  });
+
   test('成长快照缓存往返保留四维与得分边界', () {
     final snapshot = GrowthSnapshot(
       plan: const PlanData(
@@ -214,13 +311,14 @@ void main() {
       assessments: [
         AssessmentData.fromJson(_assessment('latest', DateTime.utc(2026, 11))),
       ],
-      sessions: const [
+      sessions: [
         PracticeScoreData(
           sessionId: 'single',
           mode: 'single_skill',
           targetItem: 'feeling',
           total: 20,
           maximum: 25,
+          completedAt: DateTime.utc(2026, 11, 20),
         ),
       ],
       cards: const [],
@@ -238,6 +336,7 @@ void main() {
     });
     expect(cached.sessions.single.total, 20);
     expect(cached.sessions.single.maximum, 25);
+    expect(cached.sessions.single.completedAt, DateTime.utc(2026, 11, 20));
     expect(cached.cachedAt, DateTime.utc(2026, 11, 22));
   });
 }
@@ -252,4 +351,33 @@ Map<String, dynamic> _assessment(String id, DateTime completedAt) => {
     for (final axis in wleisAxisLabels.keys) axis: {'percent': 68},
   },
   'total': {'percent': 68},
+};
+
+Map<String, dynamic> _scoredSession(
+  String id, {
+  DateTime? completedAt,
+  int total = 70,
+}) => {
+  'session_id': id,
+  'status': 'complete',
+  'mode': 'full_session',
+  'target_item': null,
+  'messages': <Object>[],
+  'settlement': {
+    'status': 'charged',
+    'net_charge': 1,
+    'charged_day': '2026-11-22',
+  },
+  'completed_at': completedAt?.toIso8601String(),
+  'result': {
+    'mode': 'full_session',
+    'score': {
+      'nvc': {'total': total},
+    },
+    'settlement': {
+      'status': 'charged',
+      'net_charge': 1,
+      'charged_day': '2026-11-22',
+    },
+  },
 };

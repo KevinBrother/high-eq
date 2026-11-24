@@ -466,6 +466,7 @@
     "status": "pending",
     "mode": "single_skill",
     "target_item": "observation",
+    "completed_at": null,
     "messages": [],
     "settlement": {
       "status": "uncharged",
@@ -480,6 +481,7 @@
         "status": "pending",
         "mode": "single_skill",
         "target_item": "observation",
+        "completed_at": null,
         "messages": [
           {
             "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",
@@ -503,6 +505,7 @@
     "status": "active",
     "mode": "single_skill",
     "target_item": "observation",
+    "completed_at": null,
     "messages": [
       {
         "id": "85b72033-9f07-4bbc-8567-fc31f26508ab",

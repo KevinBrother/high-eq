@@ -1136,13 +1136,15 @@ type SendProfileFeedbackInput struct {
 // SendProfileFeedbackInputSubject defines model for SendProfileFeedbackInput.Subject.
 type SendProfileFeedbackInputSubject string
 
-// Session capped 表示预算耗尽但已有完整历史，仍可 finish 评分；已完成会话带 result，供重连或重练对比分数；仅关卡会话带 level_id。messages 只含已保存记录。setup 仅用于本人授权成功的详情 GET，列表不返回自定义场景或关系人标识。
+// Session capped 表示预算耗尽但已有完整历史，仍可 finish 评分；已完成会话带 result，供重连或重练对比分数；仅关卡会话带 level_id。messages 只含已保存记录。setup 仅用于本人授权成功的详情 GET，列表不返回自定义场景或关系人标识。completed_at 不替代训练大厅的创建顺序。
 type Session struct {
-	LevelId   *openapi_types.UUID  `json:"level_id,omitempty"`
-	Messages  []Message            `json:"messages"`
-	Mode      SessionMode          `json:"mode"`
-	Result    *FinishSessionResult `json:"result,omitempty"`
-	SessionId openapi_types.UUID   `json:"session_id"`
+	// CompletedAt 首次成功评分完成的时刻；未完成、非评分终态或历史缺失时为 null。重复 finish 不改变该值。
+	CompletedAt *time.Time           `json:"completed_at"`
+	LevelId     *openapi_types.UUID  `json:"level_id,omitempty"`
+	Messages    []Message            `json:"messages"`
+	Mode        SessionMode          `json:"mode"`
+	Result      *FinishSessionResult `json:"result,omitempty"`
+	SessionId   openapi_types.UUID   `json:"session_id"`
 
 	// Settlement charged 的净扣为 1；refunded 为 0 并保留原扣次日；uncharged 为 0 且无扣次日。
 	Settlement Settlement `json:"settlement"`
@@ -1159,13 +1161,15 @@ type SessionMode string
 // SessionStatus defines model for Session.Status.
 type SessionStatus string
 
-// SessionSummary 历史列表项；与 Session 的稳定字段一致，但永不携带 setup、自定义场景或关系人标识。
+// SessionSummary 历史列表项；与 Session 的稳定字段一致，但永不携带 setup、自定义场景或关系人标识。列表按创建时间分页；成长页按 completed_at 另行排序。
 type SessionSummary struct {
-	LevelId   *openapi_types.UUID  `json:"level_id,omitempty"`
-	Messages  []Message            `json:"messages"`
-	Mode      SessionSummaryMode   `json:"mode"`
-	Result    *FinishSessionResult `json:"result,omitempty"`
-	SessionId openapi_types.UUID   `json:"session_id"`
+	// CompletedAt 首次成功评分完成的时刻；未完成、非评分终态或历史缺失时为 null。重复 finish 不改变该值。
+	CompletedAt *time.Time           `json:"completed_at"`
+	LevelId     *openapi_types.UUID  `json:"level_id,omitempty"`
+	Messages    []Message            `json:"messages"`
+	Mode        SessionSummaryMode   `json:"mode"`
+	Result      *FinishSessionResult `json:"result,omitempty"`
+	SessionId   openapi_types.UUID   `json:"session_id"`
 
 	// Settlement charged 的净扣为 1；refunded 为 0 并保留原扣次日；uncharged 为 0 且无扣次日。
 	Settlement Settlement           `json:"settlement"`
@@ -2184,10 +2188,10 @@ type ServerInterface interface {
 	// 读取复盘和带引用的评分
 	// (GET /v1/reviews/{id})
 	GetReview(c *gin.Context, id openapi_types.UUID)
-	// 对练历史和重练记录
+	// 训练大厅历史按创建时间分页，完成记录另带实际完成时间
 	// (GET /v1/sessions)
 	ListSessions(c *gin.Context, params ListSessionsParams)
-	// 使用预设关卡或自定义场景；重练另建 ID
+	// 使用预设关卡或自定义场景；重练另建 ID；新会话完成时间为 null
 	// (POST /v1/sessions)
 	CreateSession(c *gin.Context)
 	// 重连取历史、已保存回复与结算；断线不是主动退出

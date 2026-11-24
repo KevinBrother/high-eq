@@ -1413,7 +1413,7 @@ paths:
       operationId: createSession
       tags:
       - sessions
-      summary: 使用预设关卡或自定义场景；重练另建 ID
+      summary: 使用预设关卡或自定义场景；重练另建 ID；新会话完成时间为 null
       requestBody:
         required: true
         content:
@@ -1434,6 +1434,7 @@ paths:
                 status: pending
                 mode: single_skill
                 target_item: observation
+                completed_at: null
                 messages: []
                 settlement:
                   status: uncharged
@@ -1451,7 +1452,7 @@ paths:
       operationId: listSessions
       tags:
       - sessions
-      summary: 对练历史和重练记录
+      summary: 训练大厅历史按创建时间分页，完成记录另带实际完成时间
       parameters:
       - in: query
         name: cursor
@@ -1473,6 +1474,7 @@ paths:
                   status: pending
                   mode: single_skill
                   target_item: observation
+                  completed_at: null
                   messages:
                   - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
                     client_message_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
@@ -1487,6 +1489,7 @@ paths:
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
+      description: 列表固定按 activities.created_at 降序、同时间按 session_id 降序分页，cursor 语义不因完成顺序改变。completed_at 是首次成功评分完成的时刻；未完成或历史缺失时为 null。成长页需要“最近完成”排序时，应遍历全部游标后按 completed_at 降序排列，空值排最后，同时间按 session_id 降序。
       x-example-request: GET /v1/sessions?cursor=after-example&limit=20
   /v1/sessions/{session_id}:
     get:
@@ -1513,6 +1516,7 @@ paths:
                     status: active
                     mode: single_skill
                     target_item: observation
+                    completed_at: null
                     messages:
                     - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
                       client_message_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
@@ -1529,6 +1533,7 @@ paths:
                     status: complete
                     mode: full_session
                     target_item: null
+                    completed_at: '2026-11-21T09:00:00+08:00'
                     messages:
                     - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
                       client_message_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
@@ -1586,6 +1591,7 @@ paths:
                     status: failed
                     mode: full_session
                     target_item: null
+                    completed_at: null
                     messages:
                     - id: 85b72033-9f07-4bbc-8567-fc31f26508ab
                       client_message_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
@@ -1605,7 +1611,7 @@ paths:
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
         '404': {$ref: '#/components/responses/E404'}
-      description: messages 按 seq 升序，仅包含已保存发言；断线用原会话恢复，重发沿用原 client_message_id。completed 时 result 原样返回，绝不重新评分。
+      description: messages 按 seq 升序，仅包含已保存发言；断线用原会话恢复，重发沿用原 client_message_id。completed 时 result 原样返回，绝不重新评分；completed_at 为首次成功评分完成时间，未完成或历史缺失时为 null。
       x-example-request: GET /v1/sessions/85b72033-9f07-4bbc-8567-fc31f26508ab
   /v1/sessions/{session_id}/exit:
     post:
@@ -1824,7 +1830,7 @@ paths:
         '404': {$ref: '#/components/responses/E404'}
         '409': {$ref: '#/components/responses/E409'}
         '503': {$ref: '#/components/responses/E503'}
-      description: 同一会话重复结束返回已有结果。评分最终失败净扣零；GET 会话查看 refunded 及原扣次日。危机返回固定求助对象，审核故障为可重试 503。
+      description: 同一会话重复结束返回已有结果，且不改变首次成功评分写入的 completed_at。评分最终失败净扣零；GET 会话查看 refunded 及原扣次日。危机返回固定求助对象，审核故障为可重试 503。
       x-example-request: POST /v1/sessions/85b72033-9f07-4bbc-8567-fc31f26508ab/finish
   /v1/replies:
     post:
@@ -3403,11 +3409,17 @@ components:
       - target_item
       - messages
       - settlement
+      - completed_at
       properties:
         session_id: {type: string, format: uuid}
         status: {type: string, enum: [pending, active, capped, complete, exited, safety, moderation_unavailable, failed]}
         mode: {type: string, enum: [single_skill, full_session]}
         target_item: {type: string, nullable: true, pattern: ^(observation|feeling|need|request)$}
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 首次成功评分完成的时刻；未完成、非评分终态或历史缺失时为 null。重复 finish 不改变该值。
         messages:
           type: array
           items: {$ref: '#/components/schemas/Message'}
@@ -3419,7 +3431,7 @@ components:
           allOf:
           - {$ref: '#/components/schemas/CreateSessionInput'}
           description: 仅本人授权成功的会话详情 GET 按需返回原始创建参数；历史列表不返回 setup。
-      description: capped 表示预算耗尽但已有完整历史，仍可 finish 评分；已完成会话带 result，供重连或重练对比分数；仅关卡会话带 level_id。messages 只含已保存记录。setup 仅用于本人授权成功的详情 GET，列表不返回自定义场景或关系人标识。
+      description: capped 表示预算耗尽但已有完整历史，仍可 finish 评分；已完成会话带 result，供重连或重练对比分数；仅关卡会话带 level_id。messages 只含已保存记录。setup 仅用于本人授权成功的详情 GET，列表不返回自定义场景或关系人标识。completed_at 不替代训练大厅的创建顺序。
     SessionSummary:
       type: object
       additionalProperties: false
@@ -3430,11 +3442,17 @@ components:
       - target_item
       - messages
       - settlement
+      - completed_at
       properties:
         session_id: {type: string, format: uuid}
         status: {type: string, enum: [pending, active, capped, complete, exited, safety, moderation_unavailable, failed]}
         mode: {type: string, enum: [single_skill, full_session]}
         target_item: {type: string, nullable: true, pattern: ^(observation|feeling|need|request)$}
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 首次成功评分完成的时刻；未完成、非评分终态或历史缺失时为 null。重复 finish 不改变该值。
         messages:
           type: array
           items: {$ref: '#/components/schemas/Message'}
@@ -3442,7 +3460,7 @@ components:
         settlement: {$ref: '#/components/schemas/Settlement'}
         level_id: {type: string, format: uuid}
         result: {$ref: '#/components/schemas/FinishSessionResult'}
-      description: 历史列表项；与 Session 的稳定字段一致，但永不携带 setup、自定义场景或关系人标识。
+      description: 历史列表项；与 Session 的稳定字段一致，但永不携带 setup、自定义场景或关系人标识。列表按创建时间分页；成长页按 completed_at 另行排序。
     Level:
       type: object
       additionalProperties: false
