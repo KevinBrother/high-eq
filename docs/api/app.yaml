@@ -153,12 +153,15 @@ paths:
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
+      description: 冷静期内，重新登录取得的令牌可以读取 frozen_until。
       x-example-request: GET /v1/me
     patch:
       operationId: updateMe
       tags:
       - me
       summary: 更正时区
+      description: 仅当前未冻结账号可更正其自己的时区。
       requestBody:
         required: true
         content:
@@ -181,6 +184,7 @@ paths:
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       x-example-request: PATCH /v1/me
   /v1/me/bindings:
     post:
@@ -273,6 +277,8 @@ paths:
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
+      description: 本人须提交当前已绑定身份的新鲜凭证。成功后立即撤销该账号的全部旧会话，冻结 360 小时。苹果订阅由用户在苹果设置中取消。
       x-example-request: POST /v1/me/closure
     delete:
       operationId: cancelClosure
@@ -290,6 +296,8 @@ paths:
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
+      description: 冻结后先重新登录，再凭新令牌在 frozen_until 之前撤销。到达冻结期限后返回 401。
       x-example-request: DELETE /v1/me/closure
   /v1/me/consents:
     get:

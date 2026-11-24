@@ -42,6 +42,12 @@ class _RouteApi extends AppApi {
     Json? body,
     Future<void> Function()? beforeSend,
   }) async => switch (op) {
+    AppOp.getMe => {
+      'user_id': scope!.account,
+      'timezone': 'UTC',
+      'bindings': ['phone'],
+      'frozen_until': null,
+    },
     AppOp.listConsents => {'items': <Json>[], 'next_cursor': null},
     AppOp.getEntitlements => {
       'tier': 'member',

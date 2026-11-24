@@ -2,11 +2,13 @@ package accounts
 
 import (
 	"context"
+	"errors"
 	"time"
 	_ "time/tzdata" // scratch image has no zoneinfo files
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/privacy"
@@ -93,26 +95,53 @@ func (s *Service) PurgeDue(ctx context.Context) error {
 	if _, e := s.db.Exec(ctx, `delete from auth_sessions where expires_at<=clock_timestamp()`); e != nil {
 		return e
 	}
+	// Take one database-clock cutoff so accounts that become due during the
+	// scan are left for the next pass.
+	var cutoff time.Time
+	if e := s.db.QueryRow(ctx, `select clock_timestamp()-interval '360 hours'`).Scan(&cutoff); e != nil {
+		return e
+	}
+
+	const batchSize = 100
+	type candidate struct {
+		requestedAt pgtype.Timestamptz
+		id          uuid.UUID
+	}
+	var after candidate
+	var firstDeleteErr error
 	for {
-		rows, e := s.db.Query(ctx, `select id from users where closure_requested_at<=clock_timestamp()-interval '360 hours' order by closure_requested_at limit 100`)
+		rows, e := s.db.Query(ctx, `
+			select closure_requested_at,id from users
+			where closure_requested_at<=$1
+				and ($2::timestamptz is null or (closure_requested_at,id)>($2,$3::uuid))
+			order by closure_requested_at,id limit $4`, cutoff, after.requestedAt, after.id, batchSize)
 		if e != nil {
-			return e
+			return errors.Join(firstDeleteErr, e)
 		}
-		ids, e := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		page, e := pgx.CollectRows(rows, func(row pgx.CollectableRow) (candidate, error) {
+			var item candidate
+			err := row.Scan(&item.requestedAt, &item.id)
+			return item, err
+		})
 		if e != nil {
-			return e
+			return errors.Join(firstDeleteErr, e)
 		}
-		for _, id := range ids {
-			if e = s.guard.DeleteIf(ctx, privacy.Deletion{Scope: "account", UserID: id, OperationID: uuid.New()}, func(tx pgx.Tx) (uuid.UUID, bool, error) {
+		for _, item := range page {
+			if e := ctx.Err(); e != nil {
+				return errors.Join(firstDeleteErr, e)
+			}
+			if e := s.guard.DeleteIf(ctx, privacy.Deletion{Scope: "account", UserID: item.id, OperationID: uuid.New()}, func(tx pgx.Tx) (uuid.UUID, bool, error) {
 				var due bool
-				e := tx.QueryRow(ctx, `select coalesce(closure_requested_at<=clock_timestamp()-interval '360 hours',false) from users where id=$1`, id).Scan(&due)
+				e := tx.QueryRow(ctx, `select coalesce(closure_requested_at<=clock_timestamp()-interval '360 hours',false) from users where id=$1`, item.id).Scan(&due)
 				return uuid.Nil, due, e
-			}); e != nil {
-				return e
+			}); e != nil && firstDeleteErr == nil {
+				firstDeleteErr = e
 			}
 		}
-		if len(ids) < 100 {
-			return nil
+		if len(page) < batchSize {
+			return errors.Join(firstDeleteErr, ctx.Err())
 		}
+		// Advance even if a candidate is still present after an unsuccessful deletion.
+		after = page[len(page)-1]
 	}
 }

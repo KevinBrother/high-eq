@@ -115,12 +115,16 @@ class ShareLoginNotice extends StatelessWidget {
     required this.discard,
     this.result,
     this.dismissResult,
+    this.closureNotice,
+    this.dismissClosureNotice,
     required this.child,
   });
   final bool pending;
   final VoidCallback? discard;
   final LogoutResult? result;
   final VoidCallback? dismissResult;
+  final String? closureNotice;
+  final VoidCallback? dismissClosureNotice;
   final Widget child;
   @override
   Widget build(BuildContext context) {
@@ -140,7 +144,7 @@ class ShareLoginNotice extends StatelessWidget {
           verticalDirection: VerticalDirection.up,
           children: [
             Expanded(key: const ValueKey('account-flow'), child: child),
-            if (result != null || pending)
+            if (result != null || pending || closureNotice != null)
               ConstrainedBox(
                 constraints: BoxConstraints(maxHeight: feedbackLimit),
                 child: SingleChildScrollView(
@@ -149,6 +153,23 @@ class ShareLoginNotice extends StatelessWidget {
                     children: [
                       if (result != null)
                         _LogoutFeedback(result!, dismiss: dismissResult),
+                      if (closureNotice case final notice?)
+                        Material(
+                          color: colors.secondaryContainer,
+                          child: SafeArea(
+                            bottom: false,
+                            child: ListTile(
+                              title: Semantics(
+                                liveRegion: true,
+                                child: Text(notice),
+                              ),
+                              trailing: _NoticeDismissButton(
+                                label: '关闭注销提示',
+                                onPressed: dismissClosureNotice,
+                              ),
+                            ),
+                          ),
+                        ),
                       if (pending)
                         Material(
                           color: colors.secondaryContainer,
@@ -172,6 +193,34 @@ class ShareLoginNotice extends StatelessWidget {
       },
     );
   }
+}
+
+// Login notices sit beside the Navigator, so their actions must work without
+// a Navigator overlay.
+class _NoticeDismissButton extends StatelessWidget {
+  const _NoticeDismissButton({required this.label, required this.onPressed});
+
+  final String label;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    button: true,
+    enabled: onPressed != null,
+    focusable: onPressed != null,
+    label: label,
+    onTap: onPressed,
+    excludeSemantics: true,
+    child: TextButton(
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        minimumSize: const Size(48, 48),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+      ),
+      child: const Text('关闭'),
+    ),
+  );
 }
 
 class _LogoutFeedback extends StatelessWidget {
@@ -229,23 +278,7 @@ class _LogoutFeedback extends StatelessWidget {
                       ),
                     ),
                   ),
-                  Semantics(
-                    container: true,
-                    button: true,
-                    enabled: dismiss != null,
-                    focusable: dismiss != null,
-                    label: '关闭退出结果',
-                    onTap: dismiss,
-                    excludeSemantics: true,
-                    child: TextButton(
-                      onPressed: dismiss,
-                      style: TextButton.styleFrom(
-                        minimumSize: const Size(48, 48),
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                      ),
-                      child: const Text('关闭'),
-                    ),
-                  ),
+                  _NoticeDismissButton(label: '关闭退出结果', onPressed: dismiss),
                 ],
               ),
               const SizedBox(height: 2),

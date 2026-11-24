@@ -94,6 +94,8 @@ class _RouteApi extends AppApi {
   }) async {
     ops.add(op);
     switch (op) {
+      case AppOp.getMe:
+        return {...samples[op.name] as Json, 'user_id': scope!.account};
       case AppOp.listConsents:
         return {
           'items': chatImportGranted ? [_consent()] : <Json>[],

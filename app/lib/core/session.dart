@@ -106,6 +106,7 @@ class Sessions {
   final _unknownWithdrawals = <String>{};
   final _persistedUnknownWithdrawals = <String>{};
   int _generation = 0;
+  AccountScope? _unauthorizedScope;
   bool _retirementPending = false;
   String? _growthInvalidatedAccount;
   int _growthRevision = 0;
@@ -141,6 +142,12 @@ class Sessions {
   }
 
   AccountScope? get active => _active;
+
+  /// Whether the current signed-out state came from rejection of this lease.
+  /// Any later transition, including the start of a new login, clears it.
+  bool isCurrentUnauthorizedRetirement(AccountScope scope) =>
+      identical(_unauthorizedScope, scope);
+
   Tokens require(AccountScope scope) {
     if (!identical(scope, _active)) throw SessionChanged();
     return _tokens!;
@@ -187,8 +194,12 @@ class Sessions {
     if (_generation != generation) throw SessionChanged();
   }
 
-  Future<T> _transition<T>(Future<T> Function(int generation) action) {
+  Future<T> _transition<T>(
+    Future<T> Function(int generation) action, {
+    AccountScope? unauthorizedScope,
+  }) {
     final generation = ++_generation;
+    _unauthorizedScope = unauthorizedScope;
     _tokens = null;
     _key = null;
     _growthInvalidatedAccount = null;
@@ -772,9 +783,19 @@ class Sessions {
     require(scope);
     _tokens = tokens;
   });
-  Future<void> clear() {
+  Future<void> clear() => _clear();
+
+  Future<void> clearAfterUnauthorized(AccountScope scope) {
+    require(scope);
+    return _clear(unauthorizedScope: scope);
+  }
+
+  Future<void> _clear({AccountScope? unauthorizedScope}) {
     final previous = _liveCache;
-    return _transition((_) => _retireCurrentOrStored(previous));
+    return _transition(
+      (_) => _retireCurrentOrStored(previous),
+      unauthorizedScope: unauthorizedScope,
+    );
   }
 
   /// Starts the same retirement transaction as an auth rejection. Snapshot

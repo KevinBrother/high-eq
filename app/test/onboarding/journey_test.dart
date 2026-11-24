@@ -61,7 +61,10 @@ class _FixtureApi extends AppApi {
     Map<String, String> query = const {},
     Json? body,
     Future<void> Function()? beforeSend,
-  }) async => examples[op.name] as Json;
+  }) async => {
+    ...examples[op.name] as Json,
+    if (op == AppOp.getMe) 'user_id': scope!.account,
+  };
 }
 
 Future<AccountScope> _widgetScope(WidgetTester tester) async {

@@ -341,6 +341,8 @@ class _PlanFixture {
       ..handle = (op, request) async {
         final sample = _examples[op.name] as Json;
         switch (op) {
+          case AppOp.getMe:
+            return response({...sample, 'user_id': cache.active!.account});
           case AppOp.getTodayPlan:
             return response({
               ...sample,

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../privacy/entry_tile.dart';
+
 enum Section {
   practice(
     '/practice',
@@ -203,6 +205,7 @@ class HomeShell extends StatelessWidget {
                         onTap: () => Navigator.pushNamed(context, '/training'),
                       ),
                     if (section == Section.me) ...[
+                      const PrivacyEntryTile(),
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: const Icon(Icons.monitor_heart_outlined),

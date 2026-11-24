@@ -1,0 +1,72 @@
+name: T35 privacy and account closure
+
+on:
+  push:
+    paths:
+      - '.github/workflows/t35-privacy.yml'
+      - 'app/assets/**'
+      - 'app/lib/**'
+      - 'app/pubspec.yaml'
+      - 'app/pubspec.lock'
+      - 'app/test/**'
+      - 'app/tool/t35-privacy/**'
+      - 'app/tool/t27/ci_check.py'
+      - 'app/tool/t27/history_journey.py'
+      - 'docker-compose.yml'
+      - 'docs/api/app.yaml'
+      - 'server/**'
+  pull_request:
+    paths:
+      - '.github/workflows/t35-privacy.yml'
+      - 'app/assets/**'
+      - 'app/lib/**'
+      - 'app/pubspec.yaml'
+      - 'app/pubspec.lock'
+      - 'app/test/**'
+      - 'app/tool/t35-privacy/**'
+      - 'app/tool/t27/ci_check.py'
+      - 'app/tool/t27/history_journey.py'
+      - 'docker-compose.yml'
+      - 'docs/api/app.yaml'
+      - 'server/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  client:
+    name: Formal privacy client
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      FLUTTER_SUPPRESS_ANALYTICS: 'true'
+      DART_SUPPRESS_ANALYTICS: 'true'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with: {persist-credentials: false}
+      - name: Check receipts and service orchestration offline
+        run: python3 -B app/tool/t35-privacy/test_gate.py
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with: {flutter-version: '3.38.10', cache: true}
+      - name: Prepare locked Flutter dependencies and Linux artifacts
+        working-directory: app
+        run: |
+          flutter precache --linux
+          flutter pub get --enforce-lockfile
+      - name: Require six privacy journey receipts and client regressions
+        run: bash app/tool/t35-privacy/gate.sh client
+
+  service:
+    name: Privacy service and account lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with: {persist-credentials: false}
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Require contracts and real storage lifecycle receipts
+        run: bash app/tool/t35-privacy/ci-service.sh

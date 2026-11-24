@@ -217,7 +217,7 @@ class AppApi {
           await sessions.rotate(scope, tokens);
         } on ApiFailure catch (e) {
           if (e.status == 401 && identical(sessions.active, scope)) {
-            await sessions.clear();
+            await sessions.clearAfterUnauthorized(scope);
           }
           rethrow;
         } finally {
@@ -228,7 +228,9 @@ class AppApi {
   Future<Never> _rejectUnauthorized(AccountScope scope) async {
     final active = sessions.active;
     if (active != null && !identical(active, scope)) throw SessionChanged();
-    if (identical(active, scope)) await sessions.clear();
+    if (identical(active, scope)) {
+      await sessions.clearAfterUnauthorized(scope);
+    }
     throw const ApiFailure(401, 'unauthenticated', '请重新登录', false);
   }
 
@@ -308,7 +310,9 @@ class AppApi {
     }
     checkBeforeSend?.call();
     var response = await _send(op, path, query, body, access);
-    if (op.secured && response.statusCode == 401) {
+    // Freeze reauthentication uses a one-time proof. A rejection belongs to
+    // that proof and must never replay it or end an otherwise valid lease.
+    if (op.secured && op != AppOp.freezeAccount && response.statusCode == 401) {
       await response.stream.listen(null).cancel();
       try {
         if (sessions.require(scope!).access == access) await _refresh(scope);
@@ -375,6 +379,7 @@ class AppApi {
   Future<Json> jsonGuarded(
     AppOp op, {
     required Future<void> Function() beforeSend,
+    void Function()? checkBeforeSend,
     AccountScope? scope,
     Map<String, String> path = const {},
     Map<String, String> query = const {},
@@ -386,6 +391,7 @@ class AppApi {
     query: query,
     body: body,
     beforeSend: beforeSend,
+    checkBeforeSend: checkBeforeSend,
   );
 
   Future<Json> _json(
@@ -395,6 +401,7 @@ class AppApi {
     Map<String, String> query = const {},
     Json? body,
     Future<void> Function()? beforeSend,
+    void Function()? checkBeforeSend,
     _UnauthorizedPolicy unauthorizedPolicy = _UnauthorizedPolicy.standard,
   }) async {
     if (op.accept != 'application/json') throw ArgumentError('请使用流式接口');
@@ -407,6 +414,7 @@ class AppApi {
                 query: query,
                 body: body,
                 beforeSend: beforeSend,
+                checkBeforeSend: checkBeforeSend,
                 unauthorizedPolicy: unauthorizedPolicy,
               ).transform(utf8.decoder).join(),
             )
@@ -435,8 +443,13 @@ class AppApi {
 
   /// The captured tokens are used only for this foreground attempt. Durable
   /// retries carry the account-bound intent, never these credentials.
-  Future<LogoutResult> logoutWithResult(AccountScope scope) async =>
-      (await _logout(scope)).result;
+  Future<LogoutResult> logoutWithResult(
+    AccountScope scope, {
+    bool allowHealthWithdrawal = true,
+  }) async => (await _logout(
+    scope,
+    allowHealthWithdrawal: allowHealthWithdrawal,
+  )).result;
 
   /// Adapter for the existing UI until it consumes [logoutWithResult]. Do not
   /// publish a legacy notice from an exit that has since been superseded.
@@ -456,7 +469,7 @@ class AppApi {
       Object? serverError,
     })
   >
-  _logout(AccountScope scope) async {
+  _logout(AccountScope scope, {bool allowHealthWithdrawal = true}) async {
     final tokens = sessions.require(scope);
     final (:round, :cleanup) = sessions.beginLogout(scope);
     final local = await cleanup;
@@ -466,7 +479,8 @@ class AppApi {
       _ => LogoutHealthStatus.unconfirmed,
     };
     Object? withdrawalError;
-    if (local.withdrawal == LogoutWithdrawalEvidence.explicit) {
+    if (allowHealthWithdrawal &&
+        local.withdrawal == LogoutWithdrawalEvidence.explicit) {
       try {
         await _withdrawHealth(tokens, round);
         health = LogoutHealthStatus.confirmed;

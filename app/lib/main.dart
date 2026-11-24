@@ -17,6 +17,10 @@ import 'features/health/page.dart';
 import 'features/practice/lobby.dart';
 import 'features/contacts/routes.dart';
 import 'features/onboarding/login.dart';
+import 'features/onboarding/account_entry.dart';
+import 'features/privacy/account_access.dart';
+import 'features/privacy/page.dart';
+import 'features/privacy/store.dart';
 import 'features/onboarding/assessment.dart';
 import 'features/onboarding/repository.dart';
 import 'features/membership/page.dart';
@@ -37,11 +41,17 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
   Type? _navigatorStatus;
   GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   LogoutResult? _logoutResult;
+  ClosureSubmission? _closureSubmission;
+  AccountScope? _unconfirmedClosureScope;
 
   void _selectNavigator(AccountScope? scope, Widget? status) {
     final statusType = status?.runtimeType;
     if (!identical(scope, _navigatorScope) || statusType != _navigatorStatus) {
-      if (scope != null) _logoutResult = null;
+      if (scope != null) {
+        _logoutResult = null;
+        _closureSubmission = null;
+        _unconfirmedClosureScope = null;
+      }
       _navigatorScope = scope;
       _navigatorStatus = statusType;
       _navigatorKey = GlobalKey<NavigatorState>();
@@ -50,7 +60,10 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
 
   Future<void> _logout(AppApi api, AccountScope scope) async {
     try {
-      final result = await api.logoutWithResult(scope);
+      final result = await api.logoutWithResult(
+        scope,
+        allowHealthWithdrawal: AccountAccess.of(api, scope).isOrdinary,
+      );
       if (!mounted || !api.sessions.isCurrentLogout(result.round)) return;
       setState(() => _logoutResult = result);
     } on Object {
@@ -96,20 +109,84 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
   ) {
     final navigator = _navigatorKey.currentState;
     if (navigator == null) return false;
+    final store = PrivacyStore(api, scope);
     navigator.push(
       MaterialPageRoute<void>(
-        builder: (_) => ReplyRoute(
-          api,
-          scope,
-          draft: draft,
-          close: () {
-            if (navigator.canPop()) navigator.pop();
+        builder: (_) => _accountEntry(
+          store,
+          onActive: (_) => ReplyRoute(
+            api,
+            scope,
+            draft: draft,
+            close: () {
+              if (navigator.canPop()) navigator.pop();
+              discard();
+            },
+          ),
+          onRecovered: () {
             discard();
+            navigator.pushNamedAndRemoveUntil('/assessment', (_) => false);
           },
         ),
       ),
     );
     return true;
+  }
+
+  void _closureSubmitted(PrivacyStore store, ClosureSubmission submission) {
+    if (!mounted || !store.api.sessions.isCurrentLogout(submission.round)) {
+      return;
+    }
+    setState(() => _closureSubmission = submission);
+  }
+
+  void _setClosureUnconfirmed(PrivacyStore store, bool unconfirmed) {
+    if (!mounted) return;
+    final scope = store.scope;
+    final sessions = store.api.sessions;
+    if (unconfirmed) {
+      if (!identical(sessions.active, scope) &&
+          !sessions.isCurrentUnauthorizedRetirement(scope)) {
+        return;
+      }
+    } else if (!identical(_unconfirmedClosureScope, scope)) {
+      return;
+    }
+    setState(() => _unconfirmedClosureScope = unconfirmed ? scope : null);
+  }
+
+  AccountEntryPage _accountEntry(
+    PrivacyStore store, {
+    required WidgetBuilder onActive,
+    required VoidCallback onRecovered,
+  }) => AccountEntryPage(
+    store,
+    onActive: onActive,
+    onClosureSubmitted: (submission) => _closureSubmitted(store, submission),
+    onClosureUnconfirmed: (value) => _setClosureUnconfirmed(store, value),
+    onClosureCancelled: onRecovered,
+    onExit: () => _logout(store.api, store.scope),
+  );
+
+  String? _closureNotice(BuildContext context, Sessions? sessions) {
+    if (sessions == null) return null;
+    final unconfirmed = _unconfirmedClosureScope;
+    if (unconfirmed != null &&
+        sessions.isCurrentUnauthorizedRetirement(unconfirmed)) {
+      return '未收到注销确认。请重新登录核对账号状态。';
+    }
+    final submission = _closureSubmission;
+    if (submission == null || !sessions.isCurrentLogout(submission.round)) {
+      return null;
+    }
+    final local = submission.deadline.toLocal();
+    final locale = MaterialLocalizations.of(context);
+    final date = locale.formatMediumDate(local);
+    final time = locale.formatTimeOfDay(TimeOfDay.fromDateTime(local));
+    final cleanup = submission.localCleanupConfirmed
+        ? ''
+        : ' 本机清理待确认，下次登录前会重试。';
+    return '注销申请已提交。请在 $date $time 前重新登录并主动撤销，以恢复账号。$cleanup';
   }
 
   MaterialApp _app({
@@ -132,28 +209,45 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
       supportedLocales: const [Locale('zh', 'CN')],
       initialRoute: '/',
-      builder: (_, child) => scope == null
+      builder: (context, child) => scope == null
           ? ShareLoginNotice(
               pending: draft != null,
               discard: close,
               result: _logoutResult,
               dismissResult: () => setState(() => _logoutResult = null),
+              closureNotice: _closureNotice(context, api?.sessions),
+              dismissClosureNotice: () => setState(() {
+                _closureSubmission = null;
+                _unconfirmedClosureScope = null;
+              }),
               child: child!,
             )
-          : HealthForeground(scope, child!),
+          : HealthForeground(
+              scope,
+              child!,
+              admission: AccountAccess.of(api!, scope),
+            ),
       onGenerateRoute: (settings) {
-        Widget screen(BuildContext context) {
-          if (status != null) return Scaffold(body: status);
-          if (scope == null) return LoginPage(api!);
+        final privacy = scope == null ? null : PrivacyStore(api!, scope);
+
+        void recover(BuildContext context) {
+          if (draft != null) close?.call();
+          Navigator.of(
+            context,
+          ).pushNamedAndRemoveUntil('/assessment', (_) => false);
+        }
+
+        Widget ordinaryScreen(BuildContext context) {
+          final admitted = scope!;
           switch (settings.name) {
             case '/replies':
-              return ReplyRoute(api!, scope);
+              return ReplyRoute(api!, admitted);
             case '/':
             case '/assessment':
               if (settings.name == '/' && draft != null) {
                 return ReplyRoute(
                   api!,
-                  scope,
+                  admitted,
                   draft: draft,
                   close: () {
                     close?.call();
@@ -162,7 +256,7 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
                 );
               }
               return AssessmentPage(
-                AssessmentBook(api!, scope),
+                AssessmentBook(api!, admitted),
                 startup: settings.name == '/',
               );
             case '/practice':
@@ -173,18 +267,18 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
               return const PracticeRoute();
             case '/marks':
               return MarksPage(
-                MarkBook(api!, scope),
+                MarkBook(api!, admitted),
                 quick: settings.arguments == true,
               );
             case '/reviews':
-              return ReviewPage(ApiReviews(api!, scope));
+              return ReviewPage(ApiReviews(api!, admitted));
             case '/marks/review':
               return ReviewPage(
-                ApiReviews(api!, scope),
+                ApiReviews(api!, admitted),
                 prefill: ReviewPrefill.tryFromRoute(settings.arguments),
               );
             case '/membership':
-              return MemberPage(MemberStore(api!, scope));
+              return MemberPage(MemberStore(api!, admitted));
             case '/voice':
               return Consumer(
                 builder: (context, ref, _) => ref
@@ -192,7 +286,7 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
                     .when(
                       data: (gate) => VoicePage.forAccount(
                         api: api!,
-                        scope: scope,
+                        scope: admitted,
                         gate: gate,
                       ),
                       loading: () => const Scaffold(
@@ -207,7 +301,7 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
                     ),
               );
             case '/health':
-              return HealthPage(scope);
+              return HealthPage(admitted);
             case '/logout':
               return Scaffold(
                 body: Center(
@@ -225,7 +319,7 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
                       FilledButton(
                         onPressed: () async {
                           Navigator.pop(context);
-                          await _logout(api!, scope);
+                          await _logout(api!, admitted);
                         },
                         child: const Text('确认退出'),
                       ),
@@ -244,6 +338,28 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
                     Section.practice,
               );
           }
+        }
+
+        Widget screen(BuildContext context) {
+          if (status != null) return Scaffold(body: status);
+          if (privacy == null) {
+            return LoginPage(api!);
+          }
+          if (settings.name == '/privacy') {
+            return PrivacyPage(
+              privacy,
+              onClosureSubmitted: (value) => _closureSubmitted(privacy, value),
+              onClosureUnconfirmed: (value) =>
+                  _setClosureUnconfirmed(privacy, value),
+              onClosureCancelled: () => recover(context),
+              onExit: () => _logout(privacy.api, privacy.scope),
+            );
+          }
+          return _accountEntry(
+            privacy,
+            onActive: ordinaryScreen,
+            onRecovered: () => recover(context),
+          );
         }
 
         return MaterialPageRoute<void>(settings: settings, builder: screen);

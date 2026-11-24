@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/providers.dart';
 import '../../core/session.dart';
 import '../../core/transport.dart';
+import '../privacy/account_access.dart';
 import 'huawei.dart';
 import 'platform.dart';
 import 'sync.dart';
@@ -81,7 +82,8 @@ final healthProvider = FutureProvider.autoDispose
 class HealthForeground extends ConsumerStatefulWidget {
   final AccountScope scope;
   final Widget child;
-  const HealthForeground(this.scope, this.child, {super.key});
+  final AccountAccess? admission;
+  const HealthForeground(this.scope, this.child, {super.key, this.admission});
   @override
   ConsumerState<HealthForeground> createState() => _Foreground();
 }
@@ -96,11 +98,12 @@ class _Foreground extends ConsumerState<HealthForeground>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.admission?.addListener(_admissionChanged);
     timer = Timer.periodic(const Duration(seconds: 30), (_) => run());
   }
 
   void run() {
-    if (active) {
+    if (active && widget.admission?.isOrdinary != false) {
       unawaited(
         current?.tick().catchError((_) {
           /* retry only through the full gate */
@@ -122,15 +125,36 @@ class _Foreground extends ConsumerState<HealthForeground>
     }
   }
 
+  void _admissionChanged() {
+    if (widget.admission?.isOrdinary == false) {
+      current?.suspend();
+      current = null;
+    }
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didUpdateWidget(covariant HealthForeground oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.admission == widget.admission) return;
+    oldWidget.admission?.removeListener(_admissionChanged);
+    widget.admission?.addListener(_admissionChanged);
+  }
+
   @override
   Widget build(BuildContext context) {
-    current = ref.watch(healthProvider(widget.scope)).value;
+    if (widget.admission?.isOrdinary != false) {
+      final next = ref.watch(healthProvider(widget.scope)).value;
+      if (active && !identical(current, next)) next?.resume();
+      current = next;
+    }
     return widget.child;
   }
 
   @override
   void dispose() {
     timer?.cancel();
+    widget.admission?.removeListener(_admissionChanged);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }

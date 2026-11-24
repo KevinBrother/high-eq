@@ -15,6 +15,7 @@ import 'package:high_eq/features/health/page.dart';
 import 'package:high_eq/features/health/platform.dart';
 import 'package:high_eq/features/health/sync.dart';
 import 'package:high_eq/main.dart';
+import 'package:http/http.dart' as http;
 import '../client_test.dart' show Handler, response;
 import '../isolation_test.dart' show MemorySecret, tokens;
 import 'sync_test.dart' show Synthetic;
@@ -66,6 +67,25 @@ Future<void> _pumpUntilTrue(
   expect(predicate(), isTrue);
 }
 
+class _LogoutTransport extends Handler {
+  _LogoutTransport(this.sessions);
+
+  final Sessions sessions;
+
+  @override
+  Future<http.StreamedResponse> send(AppOp op, http.Request request) async {
+    if (op == AppOp.getMe) {
+      return response({
+        'user_id': sessions.active!.account,
+        'timezone': 'UTC',
+        'bindings': ['phone'],
+        'frozen_until': null,
+      });
+    }
+    return super.send(op, request);
+  }
+}
+
 Future<(Sessions, AccountScope, Handler)> _logoutFixture(
   WidgetTester tester, {
   SecretStore? secret,
@@ -89,7 +109,7 @@ Future<(Sessions, AccountScope, Handler)> _logoutFixture(
       ),
     );
   }
-  final handler = Handler()
+  final handler = _LogoutTransport(sessions)
     ..handle = (op, _) async =>
         response({'items': <Json>[], 'next_cursor': null});
   return (sessions, scope, handler);
