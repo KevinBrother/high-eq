@@ -15,7 +15,7 @@ import (
 )
 
 func profileReply(c *gin.Context, v any, e error) {
-	if errors.Is(e, pgx.ErrNoRows) {
+	if errors.Is(e, pgx.ErrNoRows) || errors.Is(e, profile.ErrContactNotFound) {
 		problem(c, 404, "not_found", "未找到这条记录", false)
 		return
 	}
@@ -62,10 +62,17 @@ func (a appAPI) ChooseContact(c *gin.Context, id uuid.UUID) {
 	})
 }
 func (a appAPI) GetContactSummary(c *gin.Context, id uuid.UUID) {
-	a.profileTx(c, func(ctx context.Context, tx pgx.Tx, u uuid.UUID) (any, error) {
-		v, e := a.profiles.Contact(ctx, tx, u, id)
-		return v.Profile, e
+	var contact app.Contact
+	err := a.withRights(c, "", func(tx pgx.Tx) error {
+		var err error
+		contact, err = a.profiles.Contact(c.Request.Context(), tx, principal(c).User, id)
+		return err
 	})
+	if errors.Is(err, profile.ErrContactNotFound) {
+		problem(c, 404, "contact_not_found", "未找到这条记录", false)
+		return
+	}
+	profileReply(c, contact.Profile, err)
 }
 func (a appAPI) InferProfile(c *gin.Context, id uuid.UUID) {
 	var in app.InferProfileInput

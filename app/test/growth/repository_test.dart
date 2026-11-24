@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -197,6 +198,50 @@ void main() {
 
     expect(after.scoredSessions.map((score) => score.sessionId), ['kept']);
     expect(cached?.scoredSessions.map((score) => score.sessionId), ['kept']);
+  });
+
+  test('清理缓存后，在途旧读取不能重新写回成长快照', () async {
+    final fixtures =
+        jsonDecode(await File('assets/contract_examples.json').readAsString())
+            as Map<String, dynamic>;
+    final growthStarted = Completer<void>();
+    final releaseGrowth = Completer<void>();
+
+    wire.handle = (op, request) async {
+      if (op == AppOp.getGrowth) {
+        if (!growthStarted.isCompleted) growthStarted.complete();
+        await releaseGrowth.future;
+      }
+      return response(fixtures[op.name] as Map);
+    };
+
+    final repository = ApiGrowthRepository(api, scope);
+    final loading = repository.load();
+    await growthStarted.future;
+    await repository.clearCache();
+    releaseGrowth.complete();
+    await loading;
+
+    expect(await repository.cached(), isNull);
+  });
+
+  test('旧账号清理成长缓存不会移除新账号的快照', () async {
+    final fixtures =
+        jsonDecode(await File('assets/contract_examples.json').readAsString())
+            as Map<String, dynamic>;
+    wire.handle = (op, request) async => response(fixtures[op.name] as Map);
+
+    final oldRepository = ApiGrowthRepository(api, scope);
+    final nextScope = await sessions.activate(tokens('B', 'access-b'));
+    final nextRepository = ApiGrowthRepository(api, nextScope);
+    await nextRepository.load();
+
+    await expectLater(
+      oldRepository.clearCache(),
+      throwsA(isA<SessionChanged>()),
+    );
+
+    expect(await nextRepository.cached(), isNotNull);
   });
 
   for (final authStatus in [401, 403]) {

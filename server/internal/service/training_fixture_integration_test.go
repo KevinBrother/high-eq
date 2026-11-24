@@ -201,10 +201,15 @@ func (h *practiceWire) vendor(w http.ResponseWriter, r *http.Request) {
 }
 func newPracticeWire(t *testing.T) *practiceWire {
 	t.Helper()
+	return newPracticeWireWithContext(t, context.Background())
+}
+
+func newPracticeWireWithContext(t *testing.T, ctx context.Context) *practiceWire {
+	t.Helper()
 	if os.Getenv("T19_DISPOSABLE") != "yes" && os.Getenv("T20_DISPOSABLE") != "yes" {
 		t.Skip("run server/tests/t19-wire.sh in disposable compose project")
 	}
-	h := &practiceWire{t: t, ctx: context.Background()}
+	h := &practiceWire{t: t, ctx: ctx}
 	h.set("")
 	provider := httptest.NewTLSServer(http.HandlerFunc(h.vendor))
 	t.Cleanup(provider.Close)
@@ -279,7 +284,7 @@ func (h *practiceWire) open(tok, method, path string, in any, status int) *http.
 }
 func (h *practiceWire) request(tok, method, path string, in any) (*http.Response, error) {
 	b, _ := json.Marshal(in)
-	req, e := http.NewRequest(method, h.api.URL+"/v1/"+path, bytes.NewReader(b))
+	req, e := http.NewRequestWithContext(h.ctx, method, h.api.URL+"/v1/"+path, bytes.NewReader(b))
 	if e != nil {
 		return nil, e
 	}
@@ -396,8 +401,16 @@ func (h *practiceWire) stream(u app.Tokens, path, k string) *http.Response {
 }
 func (h *practiceWire) frames(u app.Tokens, path, k string, names ...string) {
 	h.t.Helper()
-	r := h.stream(u, path, k)
+	h.framesWithMessage(u, path, body(k), names...)
+}
+
+func (h *practiceWire) framesWithMessage(u app.Tokens, path string, message map[string]string, names ...string) {
+	h.t.Helper()
+	r := h.open(u.AccessToken, "POST", path+"/messages", message, 200)
 	defer r.Body.Close()
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "text/event-stream") {
+		h.t.Fatal("not SSE")
+	}
 	sc := bufio.NewScanner(r.Body)
 	i := 0
 	for sc.Scan() {
@@ -422,7 +435,7 @@ func (h *practiceWire) frames(u app.Tokens, path, k string, names ...string) {
 				h.t.Fatal("wrong outage frame")
 			}
 		default:
-			if v["client_message_id"] != k {
+			if v["client_message_id"] != message["client_message_id"] {
 				h.t.Fatal("wrong client id")
 			}
 		}

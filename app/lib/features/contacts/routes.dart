@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/endpoints.g.dart';
 import '../../core/providers.dart';
 import '../../core/transport.dart';
+import '../growth/cache.dart';
+import 'deletion.dart';
 import 'demo.dart';
 import 'repository.dart';
 import 'scene.dart';
@@ -28,6 +30,7 @@ class ContactRoute extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final space = ref.watch(contactSpaceProvider);
+    final growthCache = ref.watch(growthCacheProvider);
     final repo = space.repo;
     if (sceneOnly) {
       return Scaffold(
@@ -49,7 +52,8 @@ class ContactRoute extends ConsumerWidget {
         ),
       );
     }
-    if (repo == null) {
+    if (repo == null ||
+        (repo is ApiContacts && !identical(repo.scope, growthCache?.scope))) {
       return Scaffold(
         appBar: AppBar(title: const Text('关系人')),
         body: const Center(child: Text('请先登录，再打开自己的关系手记。')),
@@ -60,6 +64,9 @@ class ContactRoute extends ConsumerWidget {
       repo: repo,
       selection: space.scene,
       demo: space.demo,
+      deletion: repo is ApiContacts && growthCache != null
+          ? ApiContactDeletion(repo, growthCache)
+          : null,
     );
   }
 }

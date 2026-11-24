@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../core/api.dart';
+import '../../core/session.dart';
 import '../../core/theme.dart';
+import 'deletion.dart';
 import 'forms.dart';
 import 'models.dart';
 import 'profile.dart';
@@ -11,16 +13,20 @@ import 'scene.dart';
 
 enum _View { list, detail, add, edit, chat, remove, choose }
 
+const _growthRecovery = '联网打开成长档案，刷新后可恢复离线记录。';
+
 class ContactsWorkspace extends StatefulWidget {
   const ContactsWorkspace({
     required this.repo,
     required this.selection,
     this.demo = false,
+    this.deletion,
     super.key,
   });
   final ContactsRepository repo;
   final SceneMemory selection;
   final bool demo;
+  final ContactDeletion? deletion;
   @override
   State<ContactsWorkspace> createState() => _WorkspaceState();
 }
@@ -35,7 +41,16 @@ class _WorkspaceState extends State<ContactsWorkspace>
   List<Question> questions = [];
   Timer? expiry;
   bool needsRefresh = false;
+  List<GrowthDeletion> _pendingDeletions = [];
+  final _verifiedPresent = <String, GrowthDeletion>{};
+  bool _deletionRecordUnavailable = false;
   Contact? get current => book?.people.where((p) => p.id == id).firstOrNull;
+  bool get _canCheckDeletion =>
+      _pendingDeletions.isNotEmpty || _deletionRecordUnavailable;
+
+  bool _needsDeletionCheck(String contactId) =>
+      !_verifiedPresent.containsKey(contactId) &&
+      _pendingDeletions.any((op) => op.contactId == contactId);
   @override
   void initState() {
     super.initState();
@@ -66,6 +81,8 @@ class _WorkspaceState extends State<ContactsWorkspace>
 
   Future<void> _load() async {
     book = null;
+    await _syncDeletionRecords();
+    if (!mounted) return;
     final next = await widget.repo.load();
     if (!mounted) return;
     book = next;
@@ -118,7 +135,10 @@ class _WorkspaceState extends State<ContactsWorkspace>
     } catch (e) {
       if (!mounted) return;
       pending = null;
-      if (e is ConsentUnconfirmed) {
+      if (e is DeletionNotSent) {
+        view = _View.remove;
+        message = '删除未发送。请检查本机存储，或返回列表核对上次的删除结果。';
+      } else if (e is ConsentUnconfirmed) {
         view = id == null ? _View.list : _View.detail;
         message = '授权未能确认，请重新打开后再试。';
       } else if (e is ApiFailure && (e.status == 403 || e.status == 404)) {
@@ -157,6 +177,133 @@ class _WorkspaceState extends State<ContactsWorkspace>
         }
       }
     }
+  }
+
+  Future<void> _remove(Contact contact) async {
+    String feedback;
+    var cacheError = false;
+    try {
+      final deletion = widget.deletion;
+      if (deletion == null) {
+        await widget.repo.remove(contact.id);
+      } else {
+        await deletion.remove(contact.id, retry: _verifiedPresent[contact.id]);
+      }
+      feedback = '关系人已删除。';
+    } on SessionChanged {
+      return;
+    } on DeletionNotSent {
+      rethrow;
+    } on DeletionCacheUnconfirmed {
+      cacheError = true;
+      feedback = '关系人已删除，但本机成长缓存暂未清理。';
+    } on Object catch (error) {
+      if (widget.deletion == null) rethrow;
+      feedback =
+          error is ApiFailure && (error.status == 403 || error.status == 404)
+          ? '权限或关系人已变更，删除结果尚未确认。'
+          : '暂时无法确认删除结果。';
+    }
+    await _reloadAfterDeletion();
+    if (!mounted) return;
+    message = [
+      feedback,
+      if (_canCheckDeletion) '请点「核对删除结果」。' else if (cacheError) _growthRecovery,
+    ].join();
+  }
+
+  Future<void> _syncDeletionRecords() async {
+    final deletion = widget.deletion;
+    if (deletion == null) return;
+    try {
+      final operations = await deletion.pending();
+      if (!mounted) return;
+      _pendingDeletions = operations;
+      _verifiedPresent.removeWhere((_, op) => !operations.contains(op));
+      _deletionRecordUnavailable = false;
+    } on Object {
+      if (!mounted) return;
+      _verifiedPresent.clear();
+      _deletionRecordUnavailable = true;
+    }
+  }
+
+  Future<void> _reloadAfterDeletion() async {
+    if (!mounted) return;
+    id = null;
+    view = _View.list;
+    try {
+      await _load();
+    } catch (_) {
+      book = null;
+    }
+  }
+
+  Future<void> _checkDeletions() async {
+    final deletion = widget.deletion!;
+    await _syncDeletionRecords();
+    if (!mounted) return;
+    var removed = 0;
+    var cacheError = false;
+    var failed = _deletionRecordUnavailable;
+    _verifiedPresent.clear();
+    for (final operation in _pendingDeletions) {
+      try {
+        final result = await deletion.check(operation);
+        if (!mounted) return;
+        if (result == DeletionCheck.present) {
+          _verifiedPresent[operation.contactId] = operation;
+        }
+        if (result == DeletionCheck.absent) removed++;
+      } on DeletionCacheUnconfirmed {
+        removed++;
+        cacheError = true;
+      } on SessionChanged {
+        return;
+      } on Object {
+        failed = true;
+      }
+      if (!mounted) return;
+    }
+    await _reloadAfterDeletion();
+    if (!mounted) return;
+    final canHandlePresent =
+        book?.people.any(
+          (contact) => _verifiedPresent.containsKey(contact.id),
+        ) ??
+        false;
+    message = [
+      if (removed > 0) '已核实 $removed 笔删除。',
+      if (canHandlePresent)
+        '核对时仍在的关系人可重新删除，也可放弃重试。'
+      else if (_verifiedPresent.isNotEmpty)
+        '核对时关系人仍在，请刷新列表后处理。',
+      if (cacheError && _canCheckDeletion) '本机成长缓存暂未清理，请检查存储后重试。',
+      if (failed) '部分记录暂未核对完成，请联网重试。',
+      if (!_canCheckDeletion) _growthRecovery,
+    ].join();
+  }
+
+  Future<void> _abandonDeletion(GrowthDeletion operation) async {
+    _verifiedPresent.remove(operation.contactId);
+    String feedback;
+    try {
+      final result = await widget.deletion!.check(operation, abandon: true);
+      feedback = switch (result) {
+        DeletionCheck.abandoned => '已放弃重试。核对时关系人仍在。',
+        DeletionCheck.absent => '已核实关系人已删除。',
+        _ => '删除记录已更新。',
+      };
+    } on DeletionCacheUnconfirmed {
+      feedback = '已核实关系人已删除，但本机成长缓存暂未清理。';
+    } on SessionChanged {
+      return;
+    } on Object {
+      feedback = '暂时无法完成处理，请稍后重试。';
+    }
+    await _reloadAfterDeletion();
+    if (!mounted) return;
+    message = _canCheckDeletion ? feedback : '$feedback$_growthRecovery';
   }
 
   void _show(_View v) {
@@ -212,9 +359,20 @@ class _WorkspaceState extends State<ContactsWorkspace>
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 580),
               child: b == null
-                  ? StatusPanel(
-                      busy ? '正在翻开关系手记…' : message ?? '无法读取关系人',
-                      retry: busy ? null : _refresh,
+                  ? Column(
+                      children: [
+                        Expanded(
+                          child: StatusPanel(
+                            busy ? '正在翻开关系手记…' : message ?? '无法读取关系人',
+                            retry: busy ? null : _refresh,
+                          ),
+                        ),
+                        if (_canCheckDeletion)
+                          Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: _checkDeletionButton(),
+                          ),
+                      ],
                     )
                   : ListView(
                       key: PageStorageKey(view),
@@ -250,6 +408,11 @@ class _WorkspaceState extends State<ContactsWorkspace>
     );
   }
 
+  Widget _checkDeletionButton() => OutlinedButton(
+    onPressed: busy ? null : () => _run(_checkDeletions),
+    child: const Text('核对删除结果'),
+  );
+
   List<Widget> _content(BuildContext context, Book b, Contact? c) => [
     if (pending case final purpose?) ...[
       Text(
@@ -274,6 +437,11 @@ class _WorkspaceState extends State<ContactsWorkspace>
     ] else if (view == _View.list) ...[
       Text('常联系的人', style: Theme.of(context).textTheme.headlineMedium),
       const SizedBox(height: 8),
+      if (_canCheckDeletion) ...[
+        const Text('还有删除结果待处理。成长档案暂时无法使用离线记录。'),
+        _checkDeletionButton(),
+        const SizedBox(height: 12),
+      ],
       Text(
         !b.consistent
             ? '可用名额尚未确认。请刷新后再操作。'
@@ -292,7 +460,7 @@ class _WorkspaceState extends State<ContactsWorkspace>
           padding: EdgeInsets.symmetric(vertical: 24),
           child: Text('还没有关系人。从一个常交流的人开始吧。'),
         ),
-      for (final p in b.people)
+      for (final p in b.people) ...[
         ListTile(
           contentPadding: EdgeInsets.zero,
           title: Text(p.name),
@@ -303,6 +471,24 @@ class _WorkspaceState extends State<ContactsWorkspace>
             _show(_View.detail);
           },
         ),
+        if (_verifiedPresent[p.id] case final operation?)
+          Wrap(
+            spacing: 8,
+            children: [
+              OutlinedButton(
+                onPressed: () {
+                  id = p.id;
+                  _show(_View.remove);
+                },
+                child: const Text('重新删除'),
+              ),
+              TextButton(
+                onPressed: () => _run(() => _abandonDeletion(operation)),
+                child: const Text('放弃重试'),
+              ),
+            ],
+          ),
+      ],
     ] else if (view == _View.add || view == _View.edit)
       ContactForm(
         initialScene: widget.selection.value,
@@ -344,9 +530,12 @@ class _WorkspaceState extends State<ContactsWorkspace>
             ),
         ],
         TextButton(
-          onPressed: () => _show(_View.remove),
+          onPressed: _needsDeletionCheck(c.id)
+              ? null
+              : () => _show(_View.remove),
           child: const Text('删除关系人'),
         ),
+        if (_needsDeletionCheck(c.id)) const Text('请返回关系人列表核对上次的删除结果。'),
       ],
       if (view == _View.choose) ...[
         Text('把唯一的可用名额改给「${c.name}」？原可用关系人会变为只读，已有记录不会删除。'),
@@ -367,14 +556,7 @@ class _WorkspaceState extends State<ContactsWorkspace>
       if (view == _View.remove) ...[
         Text('删除「${c.name}」及其画像、关联互动记录和评分副本？此操作不可撤销。'),
         FilledButton(
-          onPressed: () => _run(() async {
-            await widget.repo.remove(c.id);
-            if (!mounted) return;
-            id = null;
-            view = _View.list;
-            await _load();
-            message = '关系人已删除。';
-          }),
+          onPressed: () => _run(() => _remove(c)),
           child: const Text('确认删除'),
         ),
         TextButton(onPressed: _back, child: const Text('取消')),

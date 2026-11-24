@@ -11,6 +11,7 @@ abstract interface class SecretStore {
 
 typedef DirectoryWipe = Future<void> Function(Directory directory);
 typedef CacheRead = Future<List<int>> Function(File file);
+typedef CacheDelete = Future<void> Function(File file);
 
 class Tokens {
   final String account, access, refresh;
@@ -37,6 +38,8 @@ class Tokens {
 enum CacheKind { continuation, draft, recording, queue }
 
 enum _CleanupIntent { pending, absent, setup, explicit, unknown }
+
+typedef GrowthDeletion = ({String contactId, String operationId});
 
 class _CleanupMarker {
   const _CleanupMarker(this.accountTag, this.intent);
@@ -84,8 +87,10 @@ class Sessions {
   final Directory
   _directory; // Dedicated to this backend; never a shared directory.
   final File? _retirementBarrier;
+  final Directory? _growthDeletionDirectory;
   final DirectoryWipe _wipe;
   final CacheRead _readCache;
+  final CacheDelete _deleteCache;
   final _cipher = AesGcm.with256bits();
   Future<void> _tail = Future.value();
   final Map<AccountScope, Map<String, Future<void>>> _exclusiveTails = {};
@@ -102,6 +107,8 @@ class Sessions {
   final _persistedUnknownWithdrawals = <String>{};
   int _generation = 0;
   bool _retirementPending = false;
+  String? _growthInvalidatedAccount;
+  int _growthRevision = 0;
   final _roundOwner = Object();
   static const _cacheReadAttempts = 3;
   static const _cleanupWriteAttempts = 3;
@@ -115,12 +122,18 @@ class Sessions {
     this._directory, {
     DirectoryWipe? wipeDirectory,
     CacheRead? readCache,
+    CacheDelete? deleteCache,
     File? retirementBarrier,
+    Directory? growthDeletionDirectory,
   }) : _retirementBarrier = retirementBarrier,
+       _growthDeletionDirectory = growthDeletionDirectory,
        _wipe = wipeDirectory ?? _defaultWipeDirectory,
-       _readCache = readCache ?? _defaultReadCache;
+       _readCache = readCache ?? _defaultReadCache,
+       _deleteCache = deleteCache ?? _defaultDeleteCache;
 
   static Future<List<int>> _defaultReadCache(File file) => file.readAsBytes();
+
+  static Future<void> _defaultDeleteCache(File file) => file.delete();
 
   static Future<void> _defaultWipeDirectory(Directory directory) async {
     if (await directory.exists()) await directory.delete(recursive: true);
@@ -178,6 +191,8 @@ class Sessions {
     final generation = ++_generation;
     _tokens = null;
     _key = null;
+    _growthInvalidatedAccount = null;
+    _growthRevision = 0;
     // Enqueue before notifying listeners, which may synchronously start the
     // next transition. No later transition can overtake this cleanup.
     final result = _serial(() => action(generation));
@@ -242,6 +257,68 @@ class Sessions {
     await temp.rename(target.path);
   }
 
+  Future<File> _growthDeletionFile(String account) async {
+    final directory = _growthDeletionDirectory;
+    if (directory == null) {
+      throw StateError('成长删除围栏尚未配置');
+    }
+    return File('${directory.path}/${await _accountTag(account)}.v1');
+  }
+
+  /// An empty journal still fences the old snapshot until a fresh read has
+  /// replaced it. Each entry holds only the contact and operation identifiers.
+  Future<Map<String, String>?> _readGrowthDeletionFence(String account) async {
+    if (_growthDeletionDirectory == null) return null;
+    final file = await _growthDeletionFile(account);
+    final String raw;
+    try {
+      raw = await file.readAsString();
+    } on PathNotFoundException {
+      return null;
+    }
+    if (raw.trim() == 'confirmed') return {};
+    final value = jsonDecode(raw);
+    if (value is! Map<String, dynamic> ||
+        value.entries.any(
+          (e) => e.key.isEmpty || e.value is! String || e.value == '',
+        )) {
+      throw const FormatException('无效的成长删除记录');
+    }
+    return Map<String, String>.from(value);
+  }
+
+  Future<void> _writeGrowthDeletionFence(
+    String account,
+    Map<String, String> pending,
+  ) async {
+    final directory = _growthDeletionDirectory;
+    if (directory == null) {
+      throw StateError('成长删除围栏尚未配置');
+    }
+    await directory.create(recursive: true);
+    final target = await _growthDeletionFile(account);
+    final temp = File('${target.path}.tmp');
+    await temp.writeAsString(jsonEncode(pending), flush: true);
+    await temp.rename(target.path);
+  }
+
+  Future<void> _clearGrowthDeletionFence(String account) async {
+    if (_growthDeletionDirectory == null) return;
+    final target = await _growthDeletionFile(account);
+    await _deleteVerified(target, (file) => file.delete());
+    await _deleteVerified(File('${target.path}.tmp'), (file) => file.delete());
+  }
+
+  Future<bool> _hasGrowthDeletionFence(String account) async {
+    try {
+      return await _readGrowthDeletionFence(account) != null;
+    } on Object {
+      // An unreadable journal, including legacy pending records without a
+      // contact ID, must continue to fence the old snapshot.
+      return true;
+    }
+  }
+
   Future<_CleanupMarker?> _readCleanupMarker() async {
     final file = _cleanupMarkerFile;
     if (!await file.exists()) return null;
@@ -287,6 +364,7 @@ class Sessions {
   }
 
   Future<_StoredCache?> _readStoredCache() async {
+    _growthInvalidatedAccount = null;
     final raw = await _secret.read();
     if (raw == null) {
       _persistedWithdrawals.clear();
@@ -298,11 +376,18 @@ class Sessions {
       throw const FormatException('无效的登录信息');
     }
     await _loadWithdrawals(data);
+    final growthInvalidated = data['growth_invalidated'];
+    if (growthInvalidated != null && growthInvalidated is! bool) {
+      throw const FormatException('无效的成长缓存状态');
+    }
     final tokenData = data['tokens'];
     final keyData = data['key'];
     final deferred = data['cleanup_queue'];
     if (deferred != null) {
-      if (tokenData != null || keyData != null || deferred is! Map) {
+      if (tokenData != null ||
+          keyData != null ||
+          growthInvalidated != null ||
+          deferred is! Map) {
         throw const FormatException('无效的清理队列');
       }
       final account = deferred['account'];
@@ -320,6 +405,9 @@ class Sessions {
       throw const FormatException('无效的登录信息');
     }
     final tokens = Tokens.fromJson(tokenData.cast<String, dynamic>());
+    _growthInvalidatedAccount = growthInvalidated == true
+        ? tokens.account
+        : null;
     return (
       tokens: tokens,
       cache: (account: tokens.account, key: SecretKey(base64Decode(keyData))),
@@ -580,6 +668,9 @@ class Sessions {
     } else if (tokens != null && key != null) {
       data['tokens'] = tokens.toJson();
       data['key'] = base64Encode(await key.extractBytes());
+      if (_growthInvalidatedAccount == tokens.account) {
+        data['growth_invalidated'] = true;
+      }
     }
     SecretKey? nextWithdrawalsKey;
     if (_withdrawals.isNotEmpty) {
@@ -629,6 +720,7 @@ class Sessions {
             marker.accountTag == await _accountTag(tokens.account)) ||
         await _retirementNeedsRecovery()) {
       await _retireStored(stored, marker);
+      _growthInvalidatedAccount = null;
       return;
     }
     if (marker != null) {
@@ -645,9 +737,13 @@ class Sessions {
         await entry.delete();
       }
     }
+    final hasFence = await _hasGrowthDeletionFence(tokens.account);
     _check(generation);
     _key = stored.cache.key;
     _tokens = tokens;
+    if (hasFence) {
+      _growthInvalidatedAccount = tokens.account;
+    }
     _identity.value = AccountScope._(tokens.account);
   });
 
@@ -658,7 +754,9 @@ class Sessions {
       // still be present. Retries first converge to a logged-out snapshot.
       await _retireCurrentOrStored(previous);
       final key = await _cipher.newSecretKey();
+      final hasFence = await _hasGrowthDeletionFence(tokens.account);
       _check(generation);
+      _growthInvalidatedAccount = hasFence ? tokens.account : null;
       await _persistRaw(tokens, key);
       _check(generation);
       _tokens = tokens;
@@ -861,13 +959,213 @@ class Sessions {
     return File('${_directory.path}/${base64UrlEncode(name.bytes)}$suffix');
   }
 
-  Future<void> put(
+  /// The account journal and login envelope fence an invalidated snapshot
+  /// across restarts, even if the ciphertext could not be removed.
+  bool growthCacheInvalidated(AccountScope scope) {
+    require(scope);
+    return _growthInvalidatedAccount == scope.account;
+  }
+
+  int growthCacheRevision(AccountScope scope) {
+    require(scope);
+    return _growthRevision;
+  }
+
+  Future<List<int>?> getGrowthCache(AccountScope scope, String id) =>
+      _serial(() async {
+        require(scope);
+        if (_growthInvalidatedAccount == scope.account) return null;
+        return _readEncryptedCache(scope, CacheKind.continuation, id);
+      });
+
+  Future<bool> putGrowthCache(
+    AccountScope scope,
+    String id,
+    List<int> bytes, {
+    required int revision,
+    required bool recoverInvalidated,
+  }) => _serial(() async {
+    require(scope);
+    if (revision != _growthRevision) return false;
+    final invalidated = _growthInvalidatedAccount == scope.account;
+    if (invalidated && !recoverInvalidated) return false;
+    final pendingDeletions = invalidated
+        ? await _readGrowthDeletionFence(scope.account)
+        : null;
+    if (pendingDeletions?.isNotEmpty == true) return false;
+    await _writeCache(scope, CacheKind.continuation, id, bytes);
+    if (recoverInvalidated && invalidated) {
+      // The cache must already contain the authoritative snapshot before the
+      // durable marker is lifted. A failed write leaves the marker in place.
+      require(scope);
+      if (revision != _growthRevision) return false;
+      if (pendingDeletions != null) {
+        await _clearGrowthDeletionFence(scope.account);
+      }
+      _growthInvalidatedAccount = null;
+      try {
+        await _persistCurrent();
+      } on Object {
+        _growthInvalidatedAccount = scope.account;
+        rethrow;
+      }
+    }
+    return true;
+  });
+
+  void _invalidateGrowth(AccountScope scope, void Function()? onInvalidated) {
+    _growthRevision++;
+    _growthInvalidatedAccount = scope.account;
+    onInvalidated?.call();
+  }
+
+  /// Persists an account-scoped pending deletion before the caller may send a
+  /// remote DELETE. Unlike the login envelope and encrypted cache, this fence
+  /// lives in a separate support directory and survives both storage failures.
+  Future<GrowthDeletion> prepareGrowthDeletion(
+    AccountScope scope, {
+    required String contactId,
+    GrowthDeletion? retry,
+    void Function()? onInvalidated,
+  }) {
+    require(scope);
+    return _serial(() async {
+      require(scope);
+      final pending = await _readGrowthDeletionFence(scope.account) ?? {};
+      if (contactId.isEmpty ||
+          (retry != null && retry.contactId != contactId) ||
+          pending[contactId] != retry?.operationId) {
+        throw StateError('请先核对该关系人的删除结果');
+      }
+      final operationId = base64UrlEncode(_cipher.newNonce());
+      pending[contactId] = operationId;
+      require(scope);
+      await _writeGrowthDeletionFence(scope.account, pending);
+      require(scope);
+      _invalidateGrowth(scope, onInvalidated);
+      return (contactId: contactId, operationId: operationId);
+    });
+  }
+
+  Future<List<GrowthDeletion>> pendingGrowthDeletions(AccountScope scope) =>
+      _serial(() async {
+        require(scope);
+        final pending = await _readGrowthDeletionFence(scope.account);
+        require(scope);
+        return [
+          if (pending != null)
+            for (final entry in pending.entries)
+              (contactId: entry.key, operationId: entry.value),
+        ];
+      });
+
+  /// Resolve only the operation for which the caller has deletion evidence or
+  /// an explicit decision to abandon after verifying the contact still exists.
+  Future<bool> resolveGrowthDeletion(
+    AccountScope scope,
+    String id, {
+    required GrowthDeletion operation,
+    void Function()? onInvalidated,
+  }) => _serial(() async {
+    require(scope);
+    final Map<String, String>? pending;
+    try {
+      pending = await _readGrowthDeletionFence(scope.account);
+    } on Object {
+      require(scope);
+      _invalidateGrowth(scope, onInvalidated);
+      rethrow;
+    }
+    require(scope);
+    if (pending == null ||
+        pending[operation.contactId] != operation.operationId) {
+      return false;
+    }
+    _invalidateGrowth(scope, onInvalidated);
+    pending.remove(operation.contactId);
+    await _writeGrowthDeletionFence(scope.account, pending);
+    require(scope);
+    await _clearGrowthCacheLocked(scope, id);
+    return true;
+  });
+
+  /// Marks the revision and tombstone synchronously, then removes the exact
+  /// cache file without trusting [File.exists]. The callback runs after the
+  /// in-memory fence is installed so a reload triggered by it can publish a
+  /// fresh authoritative snapshot and recover the tombstone. Persistence and
+  /// deletion errors are still reported, even though the in-memory fence stays.
+  Future<void> clearGrowthCache(
+    AccountScope scope,
+    String id, {
+    void Function()? onInvalidated,
+  }) {
+    require(scope);
+    _invalidateGrowth(scope, onInvalidated);
+    return _serial(() async {
+      require(scope);
+      await _clearGrowthCacheLocked(scope, id);
+    });
+  }
+
+  Future<void> _clearGrowthCacheLocked(AccountScope scope, String id) async {
+    Object? persistenceError;
+    StackTrace? persistenceStack;
+    try {
+      await _persistCurrent();
+    } on Object catch (error, stackTrace) {
+      persistenceError = error;
+      persistenceStack = stackTrace;
+    }
+
+    Object? deletionError;
+    StackTrace? deletionStack;
+    try {
+      await _removeCacheFile(CacheKind.continuation, id);
+    } on Object catch (error, stackTrace) {
+      deletionError = error;
+      deletionStack = stackTrace;
+    }
+
+    if (persistenceError != null) {
+      Error.throwWithStackTrace(persistenceError, persistenceStack!);
+    }
+    if (deletionError != null) {
+      Error.throwWithStackTrace(deletionError, deletionStack!);
+    }
+  }
+
+  Future<List<int>?> _readEncryptedCache(
+    AccountScope scope,
+    CacheKind kind,
+    String id,
+  ) async {
+    final file = await _file(kind, id);
+    if (!await file.exists()) return null;
+    if (kind == CacheKind.recording && await _expired(file)) {
+      await _deleteFile(file);
+      return null;
+    }
+    final box = SecretBox.fromConcatenation(
+      await file.readAsBytes(),
+      nonceLength: _cipher.nonceLength,
+      macLength: _cipher.macAlgorithm.macLength,
+    );
+    require(scope);
+    final bytes = await _cipher.decrypt(
+      box,
+      secretKey: _key!,
+      aad: utf8.encode('${scope.account}:${kind.name}:$id'),
+    );
+    require(scope);
+    return bytes;
+  }
+
+  Future<void> _writeCache(
     AccountScope scope,
     CacheKind kind,
     String id,
     List<int> bytes,
-  ) => _serial(() async {
-    require(scope);
+  ) async {
     final file = await _file(kind, id);
     require(scope);
     final box = await _cipher.encrypt(
@@ -879,34 +1177,52 @@ class Sessions {
     await tmp.writeAsBytes(box.concatenation(), flush: true);
     require(scope);
     await tmp.rename(file.path);
+  }
+
+  Future<void> _deleteVerified(File file, CacheDelete delete) async {
+    try {
+      await delete(file);
+    } on PathNotFoundException catch (error, stackTrace) {
+      try {
+        await _readCache(file);
+      } on PathNotFoundException {
+        // A real missing path is idempotent.
+        return;
+      } on Object {
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+      // The delete callback claimed absence, but the ciphertext was readable.
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  Future<void> _deleteFile(File file) => _deleteVerified(file, _deleteCache);
+
+  Future<void> _removeCacheFile(CacheKind kind, String id) async {
+    final file = await _file(kind, id);
+    // Remove a partially written sibling too. Never guard with exists(): an
+    // inaccessible file may falsely report absence.
+    await _deleteFile(file);
+    await _deleteFile(File('${file.path}.new'));
+  }
+
+  Future<void> put(
+    AccountScope scope,
+    CacheKind kind,
+    String id,
+    List<int> bytes,
+  ) => _serial(() async {
+    require(scope);
+    await _writeCache(scope, kind, id, bytes);
   });
   Future<List<int>?> get(AccountScope scope, CacheKind kind, String id) =>
       _serial(() async {
         require(scope);
-        final file = await _file(kind, id);
-        if (!await file.exists()) return null;
-        if (kind == CacheKind.recording && await _expired(file)) {
-          await file.delete();
-          return null;
-        }
-        final box = SecretBox.fromConcatenation(
-          await file.readAsBytes(),
-          nonceLength: _cipher.nonceLength,
-          macLength: _cipher.macAlgorithm.macLength,
-        );
-        require(scope);
-        final bytes = await _cipher.decrypt(
-          box,
-          secretKey: _key!,
-          aad: utf8.encode('${scope.account}:${kind.name}:$id'),
-        );
-        require(scope);
-        return bytes;
+        return _readEncryptedCache(scope, kind, id);
       });
   Future<void> remove(AccountScope scope, CacheKind kind, String id) =>
       _serial(() async {
         require(scope);
-        final file = await _file(kind, id);
-        if (await file.exists()) await file.delete();
+        await _removeCacheFile(kind, id);
       });
 }

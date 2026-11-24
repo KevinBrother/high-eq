@@ -1,3 +1,5 @@
+import '../../core/api.dart';
+import '../../core/app_op.g.dart';
 import '../../core/endpoints.g.dart';
 import '../../core/session.dart';
 import '../../core/transport.dart';
@@ -60,6 +62,29 @@ class ApiContacts implements ContactsRepository {
   Future<void> remove(String id) async {
     if ((await api.deleteContact(scope: scope, id: id))['ok'] != true) {
       throw const FormatException('未确认删除');
+    }
+  }
+
+  /// The account-scoped summary endpoint checks the exact contact and the
+  /// server's erasure barrier. An unavailable or unauthorized read is unknown.
+  Future<bool> contactExists(String id) async {
+    try {
+      final summary = await api.getContactSummary(scope: scope, id: id);
+      if (summary['summary'] is! String ||
+          summary['big_five'] is! List ||
+          summary['conflict_style'] is! Map ||
+          !summary.containsKey('attachment')) {
+        throw const FormatException('关系人核对响应无效');
+      }
+      return true;
+    } on ApiFailure catch (error) {
+      if (error.operation == AppOp.getContactSummary &&
+          error.status == 404 &&
+          error.code == 'contact_not_found') {
+        api.api.sessions.require(scope);
+        return false;
+      }
+      rethrow;
     }
   }
 

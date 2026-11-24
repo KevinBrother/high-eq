@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -44,10 +47,13 @@ class _GrowthPageState extends State<GrowthPage> {
   bool _loading = true;
   bool _offline = false;
   int _generation = 0;
+  ValueListenable<int>? _invalidations;
+  bool _suppressInvalidationReload = false;
 
   @override
   void initState() {
     super.initState();
+    _listenForInvalidation();
     _load();
   }
 
@@ -55,12 +61,47 @@ class _GrowthPageState extends State<GrowthPage> {
   void didUpdateWidget(covariant GrowthPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (identical(oldWidget.repository, widget.repository)) return;
+    _stopListeningForInvalidation();
     _generation++;
     _snapshot = null;
     _error = null;
     _loading = true;
     _offline = false;
+    _listenForInvalidation();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _stopListeningForInvalidation();
+    super.dispose();
+  }
+
+  void _listenForInvalidation() {
+    final repository = widget.repository;
+    if (repository is! GrowthInvalidationSource) return;
+    _invalidations = (repository as GrowthInvalidationSource).invalidations;
+    _invalidations!.addListener(_onInvalidated);
+  }
+
+  void _stopListeningForInvalidation() {
+    _invalidations?.removeListener(_onInvalidated);
+    _invalidations = null;
+  }
+
+  void _onInvalidated() {
+    if (!mounted) return;
+    // A cache clear for 401/403 belongs to the same denied request. Keep its
+    // message, and do not let another retained page's clear start an auth loop.
+    final reload = !_suppressInvalidationReload && !growthAccessDenied(_error);
+    _generation++;
+    setState(() {
+      _snapshot = null;
+      _loading = reload;
+      _offline = false;
+      if (reload) _error = null;
+    });
+    if (reload) unawaited(_load(showLoading: false));
   }
 
   bool _isCurrent(int generation, GrowthRepository repository) =>
@@ -103,10 +144,13 @@ class _GrowthPageState extends State<GrowthPage> {
           _offline = false;
           _error = error;
         });
+        _suppressInvalidationReload = true;
         try {
           await repository.clearCache();
         } catch (_) {
           // The rejected response must never make stale data visible again.
+        } finally {
+          _suppressInvalidationReload = false;
         }
         return;
       }

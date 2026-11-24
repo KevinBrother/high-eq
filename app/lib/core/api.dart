@@ -11,12 +11,14 @@ class ApiFailure implements Exception {
   final bool? retryable;
   final int status;
   final DateTime? retryAt;
+  final AppOp? operation;
   const ApiFailure(
     this.status,
     this.code,
     this.message,
     this.retryable, [
     this.retryAt,
+    this.operation,
   ]);
 }
 
@@ -123,6 +125,7 @@ class AppApi {
         error['message'] is String ? error['message'] : '暂时无法连接，请重试',
         error['retryable'] is bool ? error['retryable'] : null,
         DateTime.tryParse(error['retry_at'] is String ? error['retry_at'] : ''),
+        op,
       );
     }
     if (response.headers['content-type']?.split(';').first.trim() !=

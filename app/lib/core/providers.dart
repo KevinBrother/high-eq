@@ -49,6 +49,7 @@ final apiProvider = FutureProvider<AppApi>((ref) async {
     DeviceSecret('session.$name'),
     Directory('${dir.path}/accounts/$name'),
     retirementBarrier: File('${support.path}/session-retirement/$name.v1'),
+    growthDeletionDirectory: Directory('${support.path}/growth-deletion/$name'),
   );
   await sessions.restore();
   final transport = mock ? ExampleTransport() : HttpTransport(http.Client());

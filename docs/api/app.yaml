@@ -1088,7 +1088,16 @@ paths:
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
-        '404': {$ref: '#/components/responses/E404'}
+        '404':
+          description: 当前账号下找不到指定关系人
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+              example:
+                code: contact_not_found
+                message: 未找到这条记录
+                retryable: false
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       x-example-request: GET /v1/contacts/85b72033-9f07-4bbc-8567-fc31f26508ab/summary
   /v1/me/profile:
     get:

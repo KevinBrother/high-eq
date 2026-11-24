@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api.dart';
@@ -8,6 +9,7 @@ import '../../core/providers.dart';
 import '../../core/session.dart';
 import '../../core/transport.dart';
 import '../practice/providers.dart';
+import 'cache.dart';
 import 'demo.dart';
 import 'models.dart';
 
@@ -22,18 +24,27 @@ abstract interface class GrowthRepository {
   Future<CompletionData> complete(String itemId);
 }
 
-class ApiGrowthRepository implements GrowthRepository {
-  ApiGrowthRepository(this.api, this.scope);
+abstract interface class GrowthInvalidationSource {
+  ValueListenable<int> get invalidations;
+}
+
+class ApiGrowthRepository
+    implements GrowthRepository, GrowthInvalidationSource {
+  ApiGrowthRepository(this.api, this.scope, {GrowthCache? cache})
+    : cache = cache ?? GrowthCache(api.sessions, scope);
 
   final AppApi api;
   final AccountScope scope;
+  final GrowthCache cache;
   MobileEndpoints get _wire => MobileEndpoints(api);
-  static const _cacheId = 'growth.snapshot.v1';
-  int _cacheGeneration = 0;
+
+  @override
+  ValueListenable<int> get invalidations => cache.invalidations;
 
   @override
   Future<GrowthSnapshot> load() async {
-    final cacheGeneration = _cacheGeneration;
+    final cacheGeneration = cache.generation;
+    final invalidationRevision = cache.invalidationRevision;
     final outcomes = await Future.wait([
       for (final read in <Future<Json>>[
         _wire.getTodayPlan(scope: scope),
@@ -69,7 +80,11 @@ class ApiGrowthRepository implements GrowthRepository {
       // A completion may have started while these reads were in flight. In
       // that case this snapshot predates the successful write and must not
       // replace the newer completion cache.
-      if (cacheGeneration == _cacheGeneration) await saveCache(snapshot);
+      await cache.writeIfCurrent(
+        cacheGeneration,
+        utf8.encode(jsonEncode(snapshot.asCached(DateTime.now()).toJson())),
+        invalidationRevision: invalidationRevision,
+      );
     } catch (_) {
       // A successful online read must not be presented as an offline snapshot
       // merely because the encrypted cache is unavailable.
@@ -79,11 +94,7 @@ class ApiGrowthRepository implements GrowthRepository {
 
   @override
   Future<GrowthSnapshot?> cached() async {
-    final bytes = await api.sessions.get(
-      scope,
-      CacheKind.continuation,
-      _cacheId,
-    );
+    final bytes = await cache.read();
     if (bytes == null) return null;
     final decoded = jsonDecode(utf8.decode(bytes));
     if (decoded is! Map) throw const FormatException('成长缓存无效');
@@ -91,16 +102,12 @@ class ApiGrowthRepository implements GrowthRepository {
   }
 
   @override
-  Future<void> saveCache(GrowthSnapshot snapshot) => api.sessions.put(
-    scope,
-    CacheKind.continuation,
-    _cacheId,
+  Future<void> saveCache(GrowthSnapshot snapshot) => cache.write(
     utf8.encode(jsonEncode(snapshot.asCached(DateTime.now()).toJson())),
   );
 
   @override
-  Future<void> clearCache() =>
-      api.sessions.remove(scope, CacheKind.continuation, _cacheId);
+  Future<void> clearCache() => cache.clear();
 
   Future<Json> _loadSessions() async {
     final rows = <dynamic>[];
@@ -145,7 +152,7 @@ class ApiGrowthRepository implements GrowthRepository {
 
   @override
   Future<CompletionData> complete(String itemId) async {
-    _cacheGeneration++;
+    cache.invalidateReads();
     try {
       return CompletionData.fromJson(
         await _wire.completePlanItem(scope: scope, id: itemId),
@@ -153,7 +160,7 @@ class ApiGrowthRepository implements GrowthRepository {
     } finally {
       // Also invalidate reads that started after this write was dispatched but
       // before its authoritative result became available.
-      _cacheGeneration++;
+      cache.invalidateReads();
     }
   }
 }
@@ -198,7 +205,8 @@ final growthRepositoryProvider = Provider<GrowthRepository?>((ref) {
     final practice = ref.watch(demoPracticeProvider);
     return DemoGrowthRepository(practice: practice);
   }
-  return ApiGrowthRepository(api, scope);
+  final cache = ref.watch(growthCacheProvider);
+  return cache == null ? null : ApiGrowthRepository(api, scope, cache: cache);
 });
 
 String growthProblem(Object error) {
@@ -216,5 +224,5 @@ String growthProblem(Object error) {
   return '暂时无法加载，请检查连接后重试。';
 }
 
-bool growthAccessDenied(Object error) =>
+bool growthAccessDenied(Object? error) =>
     error is ApiFailure && (error.status == 401 || error.status == 403);

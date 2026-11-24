@@ -16,6 +16,7 @@ import 'package:high_eq/features/onboarding/radar.dart';
 import 'package:http/http.dart' as http;
 
 import '../isolation_test.dart' show MemorySecret, tokens;
+import '../support/real_async.dart';
 import 'support/fakes.dart';
 
 void main() {
@@ -162,7 +163,7 @@ void main() {
   testWidgets('真实客户端业务 401 且 refresh 失败时隐藏缓存', (tester) async {
     final transport = _StatusTransport(401);
     final repository = await _realGrowthRepository(tester, transport);
-    await tester.runAsync(() => repository.saveCache(sampleSnapshot()));
+    await runRealAsync(tester, () => repository.saveCache(sampleSnapshot()));
 
     await tester.pumpWidget(_growthApp(repository));
     await _driveRealGrowth(tester, repository.cacheCleared);
@@ -177,7 +178,7 @@ void main() {
   testWidgets('真实客户端普通 503 时展示离线缓存', (tester) async {
     final transport = _StatusTransport(503);
     final repository = await _realGrowthRepository(tester, transport);
-    await tester.runAsync(() => repository.saveCache(sampleSnapshot()));
+    await runRealAsync(tester, () => repository.saveCache(sampleSnapshot()));
 
     await tester.pumpWidget(_growthApp(repository));
     await _driveRealGrowth(tester, repository.cacheRead);
@@ -185,6 +186,46 @@ void main() {
     expect(find.text('当前显示这台设备上的离线数据，历史成就会保留。'), findsOneWidget);
     expect(find.text('WLEIS 四维变化'), findsOneWidget);
     expect(find.textContaining('自我觉察 · 70 / 100'), findsOneWidget);
+  });
+
+  testWidgets('删除清理缓存后 503 不回退旧分，恢复后展示服务端剩余评分', (tester) async {
+    final transport = _SwitchableGrowthTransport();
+    transport.fixtures =
+        jsonDecode(
+              await runRealAsync(
+                tester,
+                () => File('assets/contract_examples.json').readAsString(),
+              ),
+            )
+            as Map<String, dynamic>;
+    final repository = await _realGrowthRepository(tester, transport);
+    await runRealAsync(tester, () => repository.saveCache(sampleSnapshot()));
+    await runRealAsync(tester, repository.clearCache);
+
+    await tester.pumpWidget(_growthApp(repository));
+    await _driveRealGrowth(tester, repository.cacheRead);
+
+    expect(find.text('服务暂不可用，请稍后重试。'), findsOneWidget);
+    expect(find.text('当前显示这台设备上的离线数据，历史成就会保留。'), findsNothing);
+    expect(find.text('WLEIS 四维变化'), findsNothing);
+    expect(find.text('70 / 100'), findsNothing);
+    expect(find.text('74 / 100'), findsNothing);
+    expect(find.text('20 / 25'), findsNothing);
+
+    repository.loadCompleted = Completer<void>();
+    transport.status = 200;
+    await tester.tap(find.text('重新加载'));
+    await tester.pump();
+    await _driveRealGrowth(tester, repository.loadCompleted);
+
+    await _scrollTo(tester, find.text('62 / 100'));
+    expect(find.text('62 / 100'), findsOneWidget);
+    await _scrollTo(tester, find.text('66 / 100'));
+    expect(find.text('66 / 100'), findsOneWidget);
+    expect(find.text('最近一次 · 整场对练'), findsOneWidget);
+    expect(find.text('74 / 100'), findsNothing);
+    expect(find.text('20 / 25'), findsNothing);
+    expect(find.text('当前显示这台设备上的离线数据，历史成就会保留。'), findsNothing);
   });
 
   testWidgets('刷新收到 403 后清空已展示的成长数据', (tester) async {
@@ -320,11 +361,77 @@ class _StatusTransport implements Transport {
   void close() {}
 }
 
+class _SwitchableGrowthTransport implements Transport {
+  int status = 503;
+  int calls = 0;
+  Map<String, dynamic>? fixtures;
+
+  @override
+  Future<http.StreamedResponse> send(AppOp op, http.Request request) async {
+    calls++;
+    if (status != 200) {
+      return _response({
+        'code': 'unavailable',
+        'message': 'temporarily unavailable',
+        'retryable': true,
+      }, status);
+    }
+    final data = switch (op) {
+      AppOp.getGrowth => {
+        ...(fixtures!['getGrowth'] as Map<String, dynamic>),
+        'training_reference': 62,
+        'valid_behavior_count': 1,
+      },
+      AppOp.listSessions => {
+        'items': [
+          {
+            'session_id': 'remaining-session',
+            'status': 'finished',
+            'mode': 'full_session',
+            'target_item': null,
+            'messages': <Object>[],
+            'completed_at': '2026-11-21T09:00:00+08:00',
+            'result': {
+              'mode': 'full_session',
+              'score': {
+                'nvc': {'total': 66},
+              },
+            },
+          },
+        ],
+        'next_cursor': null,
+      },
+      _ => fixtures![op.name] as Map<String, dynamic>,
+    };
+    return _response(data, 200);
+  }
+
+  http.StreamedResponse _response(Map<String, dynamic> data, int code) =>
+      http.StreamedResponse(
+        Stream.value(utf8.encode(jsonEncode(data))),
+        code,
+        headers: {'content-type': 'application/json'},
+      );
+
+  @override
+  void close() {}
+}
+
 class _TrackedGrowthRepository extends ApiGrowthRepository {
   _TrackedGrowthRepository(super.api, super.scope);
 
   final cacheRead = Completer<void>();
   final cacheCleared = Completer<void>();
+  Completer<void> loadCompleted = Completer<void>();
+
+  @override
+  Future<GrowthSnapshot> load() async {
+    try {
+      return await super.load();
+    } finally {
+      if (!loadCompleted.isCompleted) loadCompleted.complete();
+    }
+  }
 
   @override
   Future<GrowthSnapshot?> cached() async {
@@ -349,13 +456,13 @@ Future<_TrackedGrowthRepository> _realGrowthRepository(
   WidgetTester tester,
   Transport transport,
 ) async {
-  final setup = (await tester.runAsync(() async {
+  final setup = await runRealAsync(tester, () async {
     final dir = await Directory.systemTemp.createTemp('t27-growth-widget-');
     final sessions = Sessions(MemorySecret(), dir);
     final api = AppApi(Uri.https('test.invalid'), transport, sessions);
     final scope = await sessions.activate(tokens('A'));
     return (dir: dir, repository: _TrackedGrowthRepository(api, scope));
-  }))!;
+  });
   addTearDown(() => setup.dir.delete(recursive: true));
   return setup.repository;
 }
@@ -370,17 +477,13 @@ Future<void> _driveRealGrowth(
   WidgetTester tester,
   Completer<void> completed,
 ) async {
-  final deadline = DateTime.now().add(const Duration(seconds: 5));
-  while (!completed.isCompleted) {
-    if (!DateTime.now().isBefore(deadline)) {
-      fail('真实成长缓存流程未在 5 秒内完成');
-    }
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 1)),
-    );
-    await tester.pump();
-  }
-  await tester.pumpAndSettle();
+  await pumpRealAsyncUntil(
+    tester,
+    () =>
+        completed.isCompleted &&
+        find.byType(CircularProgressIndicator).evaluate().isEmpty,
+    reason: '真实成长缓存流程未完成',
+  );
 }
 
 Future<void> _pumpGrowth(

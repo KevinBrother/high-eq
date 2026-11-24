@@ -26,6 +26,9 @@ type Service struct {
 	AI     Runner
 }
 
+// ErrContactNotFound means the account-scoped contact row was absent.
+var ErrContactNotFound = errors.New("contact not found")
+
 func aad(kind string, u, id uuid.UUID) []byte {
 	return []byte(kind + "/" + u.String() + "/" + id.String())
 }
@@ -118,6 +121,9 @@ func (s *Service) Edit(ctx context.Context, tx pgx.Tx, u, id uuid.UUID, in app.E
 }
 func (s *Service) Contact(ctx context.Context, tx pgx.Tx, u, id uuid.UUID) (app.Contact, error) {
 	d, e := s.read(ctx, tx, u, id)
+	if errors.Is(e, pgx.ErrNoRows) {
+		return app.Contact{}, ErrContactNotFound
+	}
 	if e != nil {
 		return app.Contact{}, e
 	}
