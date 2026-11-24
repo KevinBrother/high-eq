@@ -2,6 +2,7 @@ package privacy
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"time"
@@ -93,21 +94,59 @@ func (l *Ledger) keys(ids []uuid.UUID) []string {
 	}
 	return ks
 }
+
 func (l *Ledger) blocked(ctx context.Context, ids []uuid.UUID) (bool, error) {
 	if e := l.settings(ctx); e != nil {
 		return false, e
 	}
-	n, e := l.r.Eval(ctx, guard+`for i=2,#KEYS do if redis.call('exists',KEYS[i])==1 then return 1 end end return 0`, l.keys(ids), l.seal()).Int()
+	n, e := l.r.Eval(ctx, guard+`
+		for i=2,#KEYS do
+			if redis.call('exists',KEYS[i])==1 then return 1 end
+		end
+		return 0`, l.keys(ids), l.seal()).Int()
 	return n == 1, e
 }
+
+//go:embed ledger_write.lua
+var ledgerWrite string
+
+func (l *Ledger) checkCascade(ctx context.Context, other, cascade []uuid.UUID) error {
+	if e := l.settings(ctx); e != nil {
+		return e
+	}
+	keys := append(l.keys(other), l.keys(cascade)[1:]...)
+	n, e := l.r.Eval(ctx, ledgerWrite, keys, l.seal(), 0, len(other)+2).Int()
+	return checkedCascade(n, e)
+}
+
+func checkedCascade(n int, err error) error {
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrHidden
+	}
+	return nil
+}
+
 func (l *Ledger) mark(ctx context.Context, ids []uuid.UUID) error {
+	return l.write(ctx, l.keys(ids), 0)
+}
+
+// cascade starts with the contact root, followed by its currently locked children.
+func (l *Ledger) markCascade(ctx context.Context, other, cascade []uuid.UUID) error {
+	keys := append(l.keys(other), l.keys(cascade)[1:]...)
+	return l.write(ctx, keys, len(other)+2)
+}
+
+func (l *Ledger) write(ctx context.Context, keys []string, parent int) error {
 	if e := l.settings(ctx); e != nil {
 		return e
 	}
 	conn := l.r.Conn()
 	defer conn.Close()
-	_, e := conn.Eval(ctx, guard+`for i=2,#KEYS do local ttl=redis.call('pttl',KEYS[i]); if ttl~=-1 and ttl<tonumber(ARGV[2]) then redis.call('set',KEYS[i],'','PX',ARGV[2]) end end return 1`, l.keys(ids), l.seal(), l.ttl.Milliseconds()).Result()
-	if e != nil {
+	num, e := conn.Eval(ctx, ledgerWrite, keys, l.seal(), l.ttl.Milliseconds(), parent).Int()
+	if e := checkedCascade(num, e); e != nil {
 		return e
 	}
 	cmd := redis.NewCmd(ctx, "WAITAOF", 1, 0, 3000)

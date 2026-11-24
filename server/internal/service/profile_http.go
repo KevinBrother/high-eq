@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"high-eq/server/internal/accounts"
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/gateway"
 	"high-eq/server/internal/privacy"
@@ -91,14 +92,17 @@ func (a appAPI) InferProfile(c *gin.Context, id uuid.UUID) {
 	profileReply(c, v, e)
 }
 func (a appAPI) DeleteContact(c *gin.Context, id uuid.UUID) {
+	if id == uuid.Nil {
+		accountError(c, accounts.ErrInvalid)
+		return
+	}
 	ctx := c.Request.Context()
-	u := principal(c).User
-	e := a.withRights(c, "", func(tx pgx.Tx) error {
-		var ok bool
-		return tx.QueryRow(ctx, `select true from contacts where user_id=$1 and id=$2`, u, id).Scan(&ok)
+	p := principal(c)
+	e := a.profiles.Data.DeleteAuthorized(ctx, privacy.Deletion{UserID: p.User, OperationID: uuid.New(), SourceID: id, Scope: "contacts"}, func(tx pgx.Tx) error {
+		return a.accounts.ValidateSessionTx(ctx, tx, p, false)
 	})
-	if e == nil {
-		e = a.profiles.Data.Delete(ctx, privacy.Deletion{UserID: u, OperationID: uuid.New(), SourceID: id, Scope: "contacts"})
+	if errors.Is(e, privacy.ErrNotFound) {
+		e = pgx.ErrNoRows
 	}
 	profileReply(c, ack, e)
 }

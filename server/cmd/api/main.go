@@ -55,33 +55,7 @@ func run() error {
 			case <-worker.Done():
 				return
 			case <-t.C:
-				if e := s.Marks.PurgeDue(worker, time.Now()); e != nil && worker.Err() == nil {
-					slog.Error("cleanup unavailable", "module", "marks", "result", "retry")
-				}
-				if e := s.Practice.PurgeChatImports(worker, time.Now()); e != nil && worker.Err() == nil {
-					slog.Error("cleanup unavailable", "module", "chat_imports", "result", "retry")
-				}
-				if e := s.Emotion.PurgeDue(worker, time.Now()); e != nil && worker.Err() == nil {
-					slog.Error("cleanup unavailable", "module", "emotion", "result", "retry")
-				}
-				if e := s.Emotion.ReplayPending(worker); e != nil && worker.Err() == nil {
-					slog.Error("feedback pending", "module", "emotion", "result", "retry")
-				}
-				if e := s.Accounts.PurgeDue(worker); e != nil && worker.Err() == nil {
-					slog.Error("cleanup unavailable", "module", "accounts", "result", "retry")
-				}
-				if e := s.Practice.ReplayPending(worker); e != nil && worker.Err() == nil {
-					slog.Error("completion delivery unavailable", "module", "practice", "result", "retry")
-				}
-				if e := s.Reviews.ReplayPending(worker); e != nil && worker.Err() == nil {
-					slog.Error("score delivery pending", "module", "reviews", "result", "retry")
-				}
-				if e := s.Replies.ReplayPending(worker); e != nil && worker.Err() == nil {
-					slog.Error("feedback delivery unavailable", "module", "replies", "result", "retry")
-				}
-				if e := s.Assessments.ReplayPending(worker); e != nil && worker.Err() == nil {
-					slog.Error("completion delivery unavailable", "module", "assessments", "result", "retry")
-				}
+				s.RunMaintenancePass(worker, time.Now())
 			}
 		}
 	}()

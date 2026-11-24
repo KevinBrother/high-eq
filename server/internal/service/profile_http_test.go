@@ -1,9 +1,14 @@
 package service
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
+
+	"high-eq/server/internal/privacy"
 )
 
 // Exercise both the generated operation registration and the explicit allowlist. No listener or vendor required.
@@ -21,5 +26,22 @@ func TestProfileRoutesRequireAccount(t *testing.T) {
 		if w.Code != 401 {
 			t.Fatal(path, w.Code)
 		}
+	}
+}
+
+func TestContactDeletionUnavailableContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	profileReply(c, ack, privacy.ErrHidden)
+	if w.Code != 503 || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("unavailable contact deletion = %d %q", w.Code, w.Header().Get("Content-Type"))
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body) != 3 || body["code"] != "service_unavailable" || body["message"] != "数据暂时不可用，请稍后重试" || body["retryable"] != true {
+		t.Fatalf("unavailable contact deletion body = %#v", body)
 	}
 }

@@ -1020,6 +1020,7 @@ paths:
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
         '404': {$ref: '#/components/responses/E404'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       x-example-request: DELETE /v1/contacts/85b72033-9f07-4bbc-8567-fc31f26508ab
   /v1/contacts/{id}/activate:
     post:

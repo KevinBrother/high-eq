@@ -81,7 +81,7 @@ def check(name):
             err = reply['503']['content']['application/json']['example']
             assert err['code'] == 'moderation_unavailable' and err['retryable'] is True
         for action in (
-            'refreshTokens', 'listMarks', 'createMark', 'editMark', 'deleteMark',
+            'refreshTokens', 'listMarks', 'createMark', 'editMark', 'deleteMark', 'deleteContact',
             'getPurchaseToken', 'createOrder', 'restorePurchase',
             'receiveAppleNotification', 'receiveWechatNotification', 'receiveAlipayNotification',
         ):

@@ -77,15 +77,10 @@ func (a appAPI) ListMarks(c *gin.Context, in app.ListMarksParams) {
 func (a appAPI) DeleteMark(c *gin.Context, id uuid.UUID) {
 	p := principal(c)
 	ctx := c.Request.Context()
-	found, e := a.marks.Data.DeleteSource(ctx, privacy.Deletion{OperationID: uuid.New(), UserID: p.User, SourceID: id, Scope: "manual_marks"}, func(tx pgx.Tx) (bool, error) {
-		if e := a.accounts.ValidateSessionTx(ctx, tx, p, false); e != nil {
-			return false, e
-		}
-		var exists bool
-		e := tx.QueryRow(ctx, `select exists(select from manual_marks where user_id=$1 and id=$2)`, p.User, id).Scan(&exists)
-		return exists, e
+	e := a.marks.Data.DeleteAuthorized(ctx, privacy.Deletion{OperationID: uuid.New(), UserID: p.User, SourceID: id, Scope: "manual_marks"}, func(tx pgx.Tx) error {
+		return a.accounts.ValidateSessionTx(ctx, tx, p, false)
 	})
-	if e == nil && !found {
+	if errors.Is(e, privacy.ErrNotFound) {
 		e = pgx.ErrNoRows
 	}
 	markReply(c, ack, e)

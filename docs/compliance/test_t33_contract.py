@@ -1606,7 +1606,53 @@ class ReviewInventoryContract(unittest.TestCase):
         checkpoint = read("server/internal/reviews/checkpoint.go")
         self.assertIn("generatedCheckpointTTL = 15 * time.Minute", checkpoint)
         self.assertIn("generated_at=null,generated_expired=true", checkpoint)
-        self.assertIn("s.Reviews.ReplayPending(worker)", read("server/cmd/api/main.go"))
+
+        def go_body(path: str, signature: str) -> str:
+            # Keep line boundaries for gofmt-style blocks without matching comments or literals.
+            code = re.sub(
+                r"""//[^\n]*|/\*[\s\S]*?\*/|`[^`]*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'""",
+                lambda match: " " + "\n" * match[0].count("\n"),
+                read(path),
+            )
+            body = re.search(rf"(?ms)^{signature} \{{\n(.*?)^\}}", code)
+            self.assertIsNotNone(body, f"Missing Go function {signature} in {path}")
+            assert body is not None
+            return body[1]
+
+        main_path = "server/cmd/api/main.go"
+        self.assertRegex(
+            go_body(main_path, r"func main\(\)"),
+            r"(?m)^\tif \w+ := run\(\); \w+ != nil \{",
+            "API main must invoke run",
+        )
+        self.assertRegex(
+            go_body(main_path, r"func run\(\) error"),
+            r"(?m)^\tgo func\(\) \{\n"
+            r"(?:^(?:\t\t.*|[ \t]*)\n)*?"
+            r"^\t\t(?P<ticker>\w+) := time\.NewTicker\(time\.Minute\)[ \t]*\n"
+            r"(?:^(?:\t\t.*|[ \t]*)\n)*?"
+            r"^\t\tfor \{\n^\t\t\tselect \{\n"
+            r"(?:^(?:\t\t\t.*|[ \t]*)\n)*?"
+            r"^\t\t\tcase <-(?P=ticker)\.C:[ \t]*\n"
+            r"(?:^[ \t]*\n)*^\t\t\t\ts\.RunMaintenancePass\(worker, time\.Now\(\)\)[ \t]*$",
+            "API minute ticker must invoke the runtime maintenance pass",
+        )
+        self.assertRegex(
+            go_body(
+                "server/internal/service/runtime_maintenance.go",
+                r"func \(s \*Runtime\) RunMaintenancePass\(ctx context\.Context, now time\.Time\)",
+            ),
+            r"(?m)^\tlog\([^\n]*, s\.Reviews\.ReplayPending\(ctx\)\)[ \t]*$",
+            "Runtime maintenance must replay pending reviews",
+        )
+        self.assertRegex(
+            go_body(
+                "server/internal/reviews/events.go",
+                r"func \(s \*Service\) ReplayPending\(ctx context\.Context\) error",
+            ),
+            r"(?m)^\tif \w+ := s\.purgeExpiredGenerated\(ctx\); \w+ != nil \{",
+            "Review replay must purge expired generated checkpoints",
+        )
         fields = read("server/internal/reviews/privacy.go")
         self.assertIn('record["approved_repair_draft"]', fields)
         self.assertIn('record["result"]', fields)

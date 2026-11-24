@@ -11,7 +11,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var ErrHidden = errors.New("data unavailable")
+var (
+	ErrHidden   = errors.New("data unavailable")
+	ErrNotFound = errors.New("data not found")
+)
 
 type Coordinator struct {
 	db       *pgxpool.Pool
@@ -28,6 +31,10 @@ type root struct {
 	scope   string
 	childOf *uuid.UUID
 	pending bool
+}
+
+func (r root) isChildOf(id uuid.UUID) bool {
+	return r.childOf != nil && *r.childOf == id
 }
 
 func roots(ctx context.Context, tx pgx.Tx, user uuid.UUID) ([]root, error) {
@@ -127,6 +134,15 @@ type Deletion struct {
 	Scope                         string
 }
 
+// DeletionIntent is the committed, authoritative result of an ownership check.
+// Its external activity ID has already been resolved to the internal root key.
+type DeletionIntent struct {
+	deletion Deletion
+	rootID   uuid.UUID
+	// Only online contact requests recheck the session-bound barrier in cleanup.
+	recheckContactBarrier bool
+}
+
 var removes = map[string]string{
 	"signal_windows": `delete from signal_windows where user_id=$1 and purge_id=$2`,
 
@@ -146,144 +162,273 @@ func (c *Coordinator) Delete(ctx context.Context, d Deletion) error {
 	return c.DeleteIf(ctx, d, nil)
 }
 
-// DeleteIf rechecks a candidate under the same account lock that records the
-// irreversible intent. Discovery queries may have seen a stale MVCC snapshot.
-func (c *Coordinator) DeleteIf(ctx context.Context, d Deletion, eligible func(pgx.Tx) (bool, error)) error {
-	if _, ok := removes[d.Scope]; !ok || d.UserID == uuid.Nil || d.OperationID == uuid.Nil || (d.Scope == "account") != (d.SourceID == uuid.Nil) {
-		return errors.New("invalid deletion")
-	}
-	if len(c.registry.modules) == 0 {
-		return errors.New("no active data modules")
-	}
-	var target uuid.UUID
-	e := pgx.BeginFunc(ctx, c.db, func(tx pgx.Tx) error {
-		rr, e := roots(ctx, tx, d.UserID)
-		if errors.Is(e, pgx.ErrNoRows) {
-			return nil
-		}
-		if e != nil {
-			return e
-		}
-		if eligible != nil {
-			ok, e := eligible(tx)
-			if e != nil || !ok {
-				return e
-			}
-		}
-		for _, r := range rr {
-			if r.scope == d.Scope && (d.Scope == "account" || r.id == d.SourceID) {
-				target = r.id
-				_, e := tx.Exec(ctx, `insert into pending_erasure values($1) on conflict do nothing`, target)
-				return e
-			}
-		}
-		return nil
+// DeleteOwned is the account-facing deletion boundary. Unlike the idempotent
+// internal Delete, it rejects missing, foreign and wrong-kind resources with
+// ErrNotFound. Activity-scoped requests accept the activity ID and resolve the
+// source ID under the same account lock used to journal the deletion.
+func (c *Coordinator) DeleteOwned(ctx context.Context, d Deletion) error {
+	var found bool
+	e := c.DeleteIf(ctx, d, func(tx pgx.Tx) (uuid.UUID, bool, error) {
+		return c.ownedTarget(ctx, tx, d, &found)
 	})
 	if e != nil {
 		return e
 	}
-	if target == uuid.Nil {
+	if !found {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteAuthorized allows only the exact pending root to be retried by its
+// authenticated owner. A different pending root still blocks business access.
+// A contact retry can pass tombstones from that exact cascade, but not a
+// separately pending or tombstoned child. Session validation, source-key
+// resolution, the ledger read and the SQL intent share the account lock;
+// tombstone writes and cleanup run only after the intent commits. Online
+// contact deletion rechecks the same barrier under the cleanup lock.
+func (c *Coordinator) DeleteAuthorized(ctx context.Context, d Deletion, validate func(pgx.Tx) error) error {
+	if validate == nil || d.Scope == "account" || removes[d.Scope] == "" || d.UserID == uuid.Nil || d.SourceID == uuid.Nil || d.OperationID == uuid.Nil || len(c.registry.modules) == 0 {
+		return errors.New("invalid session-bound deletion")
+	}
+	var intent DeletionIntent
+	err := pgx.BeginFunc(ctx, c.db, func(tx pgx.Tx) error {
+		rr, err := roots(ctx, tx, d.UserID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if err = validate(tx); err != nil {
+			return err
+		}
+		var found bool
+		id, ok, err := c.ownedTarget(ctx, tx, d, &found)
+		if err != nil {
+			return err
+		}
+		if err := c.checkAuthorizedDeletion(ctx, rr, d, id, ok && found); err != nil {
+			return err
+		}
+		if !ok || !found {
+			return ErrNotFound
+		}
+		intent, err = journalRootTx(ctx, tx, d, rr, id)
+		if err != nil {
+			return err
+		}
+		if intent.rootID == uuid.Nil {
+			return ErrNotFound
+		}
+		intent.recheckContactBarrier = d.Scope == "contacts"
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return c.ExecuteDeletion(ctx, intent)
+}
+
+// checkAuthorizedDeletion evaluates the fence for account-owned roots read
+// under the current transaction's account lock.
+func (c *Coordinator) checkAuthorizedDeletion(ctx context.Context, rr []root, d Deletion, id uuid.UUID, owned bool) error {
+	ids, cascade, err := authorizedDeletionRoots(rr, d, id, owned)
+	if err != nil {
+		return err
+	}
+	if len(cascade) != 0 {
+		return c.ledger.checkCascade(ctx, ids, cascade)
+	}
+	blocked, err := c.ledger.blocked(ctx, ids)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		return ErrHidden
+	}
+	return nil
+}
+
+func authorizedDeletionRoots(rr []root, d Deletion, id uuid.UUID, owned bool) (ids, cascade []uuid.UUID, err error) {
+	if owned && d.Scope == "contacts" {
+		for _, r := range rr {
+			if r.id == id && r.scope == d.Scope && r.pending {
+				cascade = []uuid.UUID{id}
+				break
+			}
+		}
+	}
+	ids = make([]uuid.UUID, 0, len(rr))
+	for _, r := range rr {
+		exact := owned && r.id == id && r.scope == d.Scope
+		if r.pending && !exact {
+			return nil, nil, ErrHidden
+		}
+		if len(cascade) != 0 && r.isChildOf(id) {
+			cascade = append(cascade, r.id)
+		} else if !r.pending {
+			ids = append(ids, r.id)
+		}
+	}
+	return ids, cascade, nil
+}
+
+// JournalOwnedDeletionTx performs the account-facing ownership check and writes
+// durable intent in the caller-owned authority transaction. It deliberately
+// does not touch Redis or execute cleanup: callers must commit this transaction
+// first, then pass the returned intent to ExecuteDeletion for retryable work.
+func (c *Coordinator) JournalOwnedDeletionTx(ctx context.Context, tx pgx.Tx, d Deletion) (DeletionIntent, error) {
+	var found bool
+	intent, e := c.prepareDeletionTx(ctx, tx, d, func(tx pgx.Tx) (uuid.UUID, bool, error) {
+		return c.ownedTarget(ctx, tx, d, &found)
+	})
+	if e != nil {
+		return DeletionIntent{}, e
+	}
+	if !found || intent.rootID == uuid.Nil {
+		return DeletionIntent{}, ErrNotFound
+	}
+	return intent, nil
+}
+
+func (c *Coordinator) ownedTarget(ctx context.Context, tx pgx.Tx, d Deletion, found *bool) (uuid.UUID, bool, error) {
+	switch d.Scope {
+	case "sessions", "reviews", "replies":
+		predicate := map[string]string{
+			"sessions": "kind in ('practice','drill')",
+			"reviews":  "kind='review'",
+			"replies":  "kind='reply'",
+		}[d.Scope]
+		var source uuid.UUID
+		e := tx.QueryRow(ctx, `select source_id from activities where user_id=$1 and id=$2 and `+predicate, d.UserID, d.SourceID).Scan(&source)
+		if errors.Is(e, pgx.ErrNoRows) {
+			return uuid.Nil, false, nil
+		}
+		if e != nil {
+			return uuid.Nil, false, e
+		}
+		e = tx.QueryRow(ctx, `select exists(select from erasure_roots where user_id=$1 and scope=$2 and root_id=$3)`, d.UserID, d.Scope, source).Scan(found)
+		return source, *found, e
+	default:
+		e := tx.QueryRow(ctx, `select exists(select from erasure_roots where user_id=$1 and scope=$2 and root_id=$3)`, d.UserID, d.Scope, d.SourceID).Scan(found)
+		return d.SourceID, *found, e
+	}
+}
+
+// DeleteIf rechecks a candidate under the same account lock that records the
+// irreversible intent. The optional resolver runs inside that lock and returns
+// the source/root ID to journal. Discovery queries may have seen a stale MVCC
+// snapshot, so callers must resolve the final candidate here.
+func (c *Coordinator) DeleteIf(ctx context.Context, d Deletion, eligible func(pgx.Tx) (uuid.UUID, bool, error)) error {
+	var intent DeletionIntent
+	e := pgx.BeginFunc(ctx, c.db, func(tx pgx.Tx) error {
+		var e error
+		intent, e = c.prepareDeletionTx(ctx, tx, d, eligible)
+		return e
+	})
+	if e != nil {
+		return e
+	}
+	if intent.rootID == uuid.Nil {
 		return c.ledger.Check(ctx)
 	}
-	return c.finish(ctx, d, target)
+	return c.ExecuteDeletion(ctx, intent)
 }
 
-// DeleteSource is the session-bound variant of DeleteIf. The account lock is
-// acquired before eligible runs, and the same transaction records the durable
-// deletion intent. A retry may cross only the exact pending root it is deleting;
-// every other pending or ledger barrier remains fail-closed.
-func (c *Coordinator) DeleteSource(ctx context.Context, d Deletion, eligible func(pgx.Tx) (bool, error)) (bool, error) {
+func (c *Coordinator) prepareDeletionTx(ctx context.Context, tx pgx.Tx, d Deletion, eligible func(pgx.Tx) (uuid.UUID, bool, error)) (DeletionIntent, error) {
 	if _, ok := removes[d.Scope]; !ok || d.UserID == uuid.Nil || d.OperationID == uuid.Nil || (d.Scope == "account") != (d.SourceID == uuid.Nil) {
-		return false, errors.New("invalid deletion")
+		return DeletionIntent{}, errors.New("invalid deletion")
 	}
 	if len(c.registry.modules) == 0 {
-		return false, errors.New("no active data modules")
+		return DeletionIntent{}, errors.New("no active data modules")
 	}
-	var target uuid.UUID
-	found := false
-	e := pgx.BeginFunc(ctx, c.db, func(tx pgx.Tx) error {
-		rr, e := roots(ctx, tx, d.UserID)
-		if errors.Is(e, pgx.ErrNoRows) {
-			return nil
-		}
-		if e != nil {
-			return e
-		}
-		var otherIDs []uuid.UUID
-		for _, r := range rr {
-			exact := r.scope == d.Scope && (d.Scope == "account" || r.id == d.SourceID)
-			if r.pending && !exact {
-				return ErrHidden
-			}
-			if !r.pending {
-				otherIDs = append(otherIDs, r.id)
-			}
-		}
-		blocked, e := c.ledger.blocked(ctx, otherIDs)
-		if e != nil {
-			return e
-		}
-		if blocked {
-			return ErrHidden
-		}
-		if eligible != nil {
-			ok, e := eligible(tx)
-			if e != nil || !ok {
-				return e
-			}
-		}
-		for _, r := range rr {
-			if r.scope == d.Scope && (d.Scope == "account" || r.id == d.SourceID) {
-				target, found = r.id, true
-				_, e := tx.Exec(ctx, `insert into pending_erasure values($1) on conflict do nothing`, target)
-				return e
-			}
-		}
-		return nil
-	})
+	rr, e := roots(ctx, tx, d.UserID)
+	if errors.Is(e, pgx.ErrNoRows) {
+		return DeletionIntent{}, nil
+	}
 	if e != nil {
-		return false, e
+		return DeletionIntent{}, e
 	}
-	if target == uuid.Nil {
-		return found, c.ledger.Check(ctx)
+	sourceID := d.SourceID
+	if eligible != nil {
+		var ok bool
+		sourceID, ok, e = eligible(tx)
+		if e != nil {
+			return DeletionIntent{}, e
+		}
+		if !ok {
+			return DeletionIntent{}, nil
+		}
 	}
-	return found, c.finish(ctx, d, target)
+	return journalRootTx(ctx, tx, d, rr, sourceID)
 }
 
-func (c *Coordinator) finish(ctx context.Context, d Deletion, target uuid.UUID) error {
-	return pgx.BeginFunc(ctx, c.db, func(tx pgx.Tx) error {
-		rr, e := roots(ctx, tx, d.UserID)
-		if errors.Is(e, pgx.ErrNoRows) {
-			return nil
+func journalRootTx(ctx context.Context, tx pgx.Tx, d Deletion, rr []root, sourceID uuid.UUID) (DeletionIntent, error) {
+	if d.Scope != "account" {
+		d.SourceID = sourceID
+	}
+	for _, r := range rr {
+		if r.scope == d.Scope && (d.Scope == "account" || r.id == sourceID) {
+			_, e := tx.Exec(ctx, `insert into pending_erasure values($1) on conflict do nothing`, r.id)
+			return DeletionIntent{deletion: d, rootID: r.id}, e
 		}
+	}
+	return DeletionIntent{}, nil
+}
+
+// ExecuteDeletion performs the retryable tombstone and physical cleanup for an
+// already committed intent. A failed attempt leaves pending_erasure in place.
+func (c *Coordinator) ExecuteDeletion(ctx context.Context, intent DeletionIntent) error {
+	if intent.rootID == uuid.Nil || intent.deletion.OperationID == uuid.Nil || intent.deletion.UserID == uuid.Nil {
+		return errors.New("invalid deletion intent")
+	}
+	return pgx.BeginFunc(ctx, c.db, func(tx pgx.Tx) error {
+		return c.finishTx(ctx, tx, intent)
+	})
+}
+
+func (c *Coordinator) finishTx(ctx context.Context, tx pgx.Tx, intent DeletionIntent) error {
+	d := intent.deletion
+	target := intent.rootID
+	rr, e := roots(ctx, tx, d.UserID)
+	if errors.Is(e, pgx.ErrNoRows) {
+		return nil
+	}
+	if e != nil {
+		return e
+	}
+	var ids []uuid.UUID
+	found := false
+	for _, r := range rr {
+		if r.id == target && r.pending && r.scope == d.Scope {
+			found = true
+		}
+		if r.id == target || d.Scope == "account" || (d.Scope == "contacts" && r.isChildOf(target)) {
+			ids = append(ids, r.id)
+		}
+	}
+	if !found {
+		return nil
+	}
+	// The journal commit released the account lock. Recheck both stores under
+	// the cleanup lock, with the Redis check atomic with writing the batch.
+	if intent.recheckContactBarrier {
+		other, cascade, e := authorizedDeletionRoots(rr, d, target, true)
 		if e != nil {
 			return e
 		}
-		var ids []uuid.UUID
-		found := false
-		for _, r := range rr {
-			if r.id == target && r.pending && r.scope == d.Scope {
-				found = true
-			}
-			if r.id == target || d.Scope == "account" || (d.Scope == "contacts" && r.childOf != nil && *r.childOf == target) {
-				ids = append(ids, r.id)
-			}
-		}
-		if !found {
-			return nil
-		}
-		if e := c.ledger.mark(ctx, ids); e != nil {
+		if e := c.ledger.markCascade(ctx, other, cascade); e != nil {
 			return e
 		}
-		if _, e := tx.Exec(ctx, removes[d.Scope], d.UserID, target); e != nil {
-			return e
-		}
-		for _, m := range c.registry.modules {
-			if e := m.Delete(ctx, tx, d); e != nil {
-				return e
-			}
-		}
-		_, e = tx.Exec(ctx, `delete from pending_erasure where root_id=any($1::uuid[])`, ids)
+	} else if e := c.ledger.mark(ctx, ids); e != nil {
 		return e
-	})
+	}
+	if _, e := tx.Exec(ctx, removes[d.Scope], d.UserID, target); e != nil {
+		return e
+	}
+	for _, m := range c.registry.modules {
+		if e := m.Delete(ctx, tx, d); e != nil {
+			return e
+		}
+	}
+	_, e = tx.Exec(ctx, `delete from pending_erasure where root_id=any($1::uuid[])`, ids)
+	return e
 }

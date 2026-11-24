@@ -103,10 +103,10 @@ func (s *Service) PurgeDue(ctx context.Context) error {
 			return e
 		}
 		for _, id := range ids {
-			if e = s.guard.DeleteIf(ctx, privacy.Deletion{Scope: "account", UserID: id, OperationID: uuid.New()}, func(tx pgx.Tx) (bool, error) {
+			if e = s.guard.DeleteIf(ctx, privacy.Deletion{Scope: "account", UserID: id, OperationID: uuid.New()}, func(tx pgx.Tx) (uuid.UUID, bool, error) {
 				var due bool
 				e := tx.QueryRow(ctx, `select coalesce(closure_requested_at<=clock_timestamp()-interval '360 hours',false) from users where id=$1`, id).Scan(&due)
-				return due, e
+				return uuid.Nil, due, e
 			}); e != nil {
 				return e
 			}
