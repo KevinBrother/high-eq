@@ -75,6 +75,47 @@ void main() {
     expect(await ApiPractice(repo.api, b).read(sid), isNull);
     await expectLater(repo.get(sid), throwsA(isA<SessionChanged>()));
   });
+  test('计划目标按精确 ID 跨场景和分页查找', () async {
+    const targetId = '00000000-0000-4000-8000-000000000099';
+    final calls = <String>[];
+    transport.handle = (op, req) async {
+      expect(op, AppOp.listLevels);
+      final query = req.url.queryParameters;
+      final scene = query['scene']!;
+      final cursor = query['cursor'];
+      calls.add('$scene:${cursor ?? 'first'}');
+      if (scene != Scene.social.name) {
+        return response({'items': [], 'next_cursor': null});
+      }
+      if (cursor == null) {
+        return response({
+          'items': [
+            {'id': 'another-level', 'title': '非目标关卡'},
+          ],
+          'next_cursor': 'social-page-2',
+        });
+      }
+      expect(cursor, 'social-page-2');
+      return response({
+        'items': [
+          {'id': targetId, 'title': '计划目标关卡'},
+        ],
+        'next_cursor': null,
+      });
+    };
+
+    final target = await repo.findLevel(targetId);
+
+    expect(target?['id'], targetId);
+    expect(calls, [
+      'work:first',
+      'partner:first',
+      'family:first',
+      'friends:first',
+      'social:first',
+      'social:social-page-2',
+    ]);
+  });
   test('真实解帧：进行中、复用原 ID、服务已存但断线；重开只 GET，评分失败读取原日退款', () async {
     var sends = 0, finishes = 0;
     final bodies = <Json>[];

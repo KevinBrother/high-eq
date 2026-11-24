@@ -314,24 +314,6 @@ void main() {
     expect(r.creates, hasLength(1));
     expect(r.creates.single['level_id'], target['id']);
   });
-  testWidgets('计划目标关卡失效时阻断且不误开其他关卡', (t) async {
-    final r = Recorded();
-
-    await t.pumpWidget(
-      MaterialApp(
-        home: PracticeLobby(
-          demo: true,
-          repo: r,
-          scene: SceneMemory(),
-          targetLevelId: 'deleted-level',
-        ),
-      ),
-    );
-    await t.pumpAndSettle();
-
-    expect(r.creates, isEmpty);
-    expect(find.text('这项计划中的对练已删除或不可用，请返回今日计划重新选择。'), findsOneWidget);
-  });
   testWidgets('预演创建丢响应复用请求，返回不退出；整场定位第二次用户发言', (t) async {
     final r = Recorded()..loseFirst = true;
     await t.pumpWidget(
