@@ -44,6 +44,7 @@ class PermissionFlow:
     request_dispatched: bool = True
     capture_channel_installed: bool = True
     preserves_first_request: bool = True
+    pending_save_stage: str = "after_pending_guard"
 
 
 class SyntheticPermissionFlow:
@@ -52,14 +53,37 @@ class SyntheticPermissionFlow:
     def __init__(self, evidence: PermissionFlow):
         self.evidence = evidence
         self._pending = False
+        self.permission_checks = 0
+        self.system_permission_requests = 0
 
-    def request(self) -> None:
-        self._pending = (
-            self.evidence.preserves_first_request
-            and self.evidence.request_dispatched
-            and self.evidence.capture_channel_installed
-            and self.evidence.saves_pending_result
-        )
+    def request(self, *, granted: bool = False) -> bool | None:
+        """Model one Flutter request against the source-derived ordering."""
+        if (
+            not self.evidence.request_dispatched
+            or not self.evidence.capture_channel_installed
+        ):
+            return None
+        self.permission_checks += 1
+
+        if self.evidence.pending_save_stage == "before_permission_check":
+            self._pending = True
+        if granted:
+            return True
+        if not self.evidence.preserves_first_request:
+            return False
+        if self._pending:
+            return False
+        if self.evidence.pending_save_stage == "before_pending_guard":
+            self._pending = True
+            return False
+        if not self.evidence.saves_pending_result:
+            return False
+
+        self._pending = True
+        if self.evidence.platform_request_code is not None:
+            self.system_permission_requests += 1
+            return None
+        return False
 
     def complete(self, request_code: int, granted: bool) -> bool | None:
         if not self._pending:
@@ -160,6 +184,22 @@ def _line_statement_spans(body: str, pattern: re.Pattern[str]) -> list[tuple[int
 
 def _top_level_has(body: str, pattern: re.Pattern[str]) -> bool:
     return bool(_line_statement_spans(body, pattern))
+
+
+def _pending_save_stage(
+    save_spans: list[tuple[int, int]],
+    permission_check_spans: list[tuple[int, int]],
+    pending_guard_spans: list[tuple[int, int]],
+) -> str:
+    """Classify where the pending result is stored relative to both guards."""
+    if not save_spans:
+        return "missing"
+    save_start = save_spans[0][0]
+    if not permission_check_spans or save_start < permission_check_spans[0][0]:
+        return "before_permission_check"
+    if not pending_guard_spans or save_start < pending_guard_spans[0][0]:
+        return "before_pending_guard"
+    return "after_pending_guard"
 
 
 def _has_literal_false_condition(source: str) -> bool:
@@ -366,11 +406,21 @@ def android_permission_flow(entry: str, capture: str) -> PermissionFlow:
     reversed_pending_guard = re.compile(
         r"if\s*\(\s*pendingPermission\s*==\s*null\s*\)\s*\{"
     )
-    preserves_first_request = bool(
-        _line_statement_spans(request_body, positive_pending_guard)
-    ) and not bool(_line_statement_spans(request_body, reversed_pending_guard))
+    positive_pending_guard_spans = _line_statement_spans(
+        request_body, positive_pending_guard
+    )
+    preserves_first_request = bool(positive_pending_guard_spans) and not bool(
+        _line_statement_spans(request_body, reversed_pending_guard)
+    )
     save_spans = _line_statement_spans(
         request_body, re.compile(r"pendingPermission\s*=\s*result\b")
+    )
+    permission_check_spans = _line_statement_spans(
+        request_body,
+        re.compile(r"if\s*\(\s*hasPermission\s*\(\s*\)\s*\)\s*\{"),
+    )
+    pending_save_stage = _pending_save_stage(
+        save_spans, permission_check_spans, positive_pending_guard_spans
     )
     request_pattern = re.compile(r"activity\s*\.\s*requestPermissions\s*\(")
     request_call_spans = _line_statement_spans(request_body, request_pattern)
@@ -446,6 +496,7 @@ def android_permission_flow(entry: str, capture: str) -> PermissionFlow:
         request_dispatched=request_dispatched,
         capture_channel_installed=capture_channel_installed,
         preserves_first_request=preserves_first_request,
+        pending_save_stage=pending_save_stage,
     )
 
 
@@ -466,6 +517,13 @@ def android_permission_behavior_errors(
         errors.append(
             "Android VoiceCapture does not route requestPermission to the "
             "microphone permission request"
+        )
+    first_request = SyntheticPermissionFlow(flow)
+    first_request.request()
+    if first_request.system_permission_requests != 1:
+        errors.append(
+            "Android VoiceCapture returns without a system microphone permission "
+            "request on the first call"
         )
     if not flow.entry_delegates_matching_request:
         if _android_entry_early_returns_for_matching_request(entry, capture):
@@ -623,11 +681,20 @@ def ios_permission_flow(entry: str, capture: str, project: str) -> PermissionFlo
     reversed_pending_guard = re.compile(
         r"if\s+pendingPermission\s*==\s*nil\s*\{"
     )
-    preserves_first_request = bool(
-        _line_statement_spans(request, positive_pending_guard)
-    ) and not bool(_line_statement_spans(request, reversed_pending_guard))
+    positive_pending_guard_spans = _line_statement_spans(
+        request, positive_pending_guard
+    )
+    preserves_first_request = bool(positive_pending_guard_spans) and not bool(
+        _line_statement_spans(request, reversed_pending_guard)
+    )
     save_spans = _line_statement_spans(
         request, re.compile(r"pendingPermission\s*=\s*result\b")
+    )
+    permission_check_spans = _line_statement_spans(
+        request, re.compile(r"if\s+hasRecordPermission\s*\(\s*\)\s*\{")
+    )
+    pending_save_stage = _pending_save_stage(
+        save_spans, permission_check_spans, positive_pending_guard_spans
     )
     platform_requests = bool(
         re.search(r"AVAudioApplication\s*\.\s*requestRecordPermission\s*\{", request)
@@ -674,6 +741,7 @@ def ios_permission_flow(entry: str, capture: str, project: str) -> PermissionFlo
         channel_installed=channel_installed,
         sources_member=sources_member,
         preserves_first_request=preserves_first_request,
+        pending_save_stage=pending_save_stage,
     )
 
 
@@ -692,6 +760,13 @@ def ios_permission_behavior_errors(
     if not flow.saves_pending_result:
         errors.append(
             "iOS VoiceCapture does not save the pending Flutter permission result"
+        )
+    first_request = SyntheticPermissionFlow(flow)
+    first_request.request()
+    if first_request.system_permission_requests != 1:
+        errors.append(
+            "iOS VoiceCapture returns without a system microphone permission "
+            "request on the first call"
         )
     if not flow.preserves_first_request:
         errors.append(

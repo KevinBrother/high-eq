@@ -51,6 +51,7 @@ class NativePermissionBehaviorGateContract(unittest.TestCase):
 
         synthetic = SyntheticPermissionFlow(flow)
         synthetic.request()
+        self.assertEqual(synthetic.system_permission_requests, 1)
         self.assertIsNone(synthetic.complete(flow.request_code + 1, True))
         self.assertFalse(synthetic.complete(flow.request_code, False))
         self.assertIsNone(synthetic.complete(flow.request_code, True))
@@ -107,6 +108,31 @@ class NativePermissionBehaviorGateContract(unittest.TestCase):
         self.assertIn(
             "Android VoiceCapture does not save the pending Flutter permission result",
             android_permission_behavior_errors(read(ANDROID_ENTRY), mutated),
+        )
+
+    def test_android_gate_rejects_pending_result_saved_before_first_decision(self) -> None:
+        capture = read(ANDROID_CAPTURE)
+        assignment = "        pendingPermission = result\n"
+        request = "    private fun requestPermission(result: MethodChannel.Result) {\n"
+        self.assertIn(assignment, capture)
+        self.assertIn(request, capture)
+        mutated = capture.replace(assignment, "", 1)
+        mutated = mutated.replace(request, request + assignment, 1)
+        errors = android_permission_behavior_errors(
+            read(ANDROID_ENTRY), mutated
+        )
+        self.assertIn(
+            "Android VoiceCapture returns without a system microphone permission "
+            "request on the first call",
+            errors,
+        )
+        synthetic = SyntheticPermissionFlow(
+            android_permission_flow(read(ANDROID_ENTRY), mutated)
+        )
+        synthetic.request()
+        self.assertEqual(
+            getattr(synthetic, "system_permission_requests", None),
+            0,
         )
 
     def test_android_gate_rejects_reversed_pending_condition(self) -> None:
@@ -221,6 +247,7 @@ class NativePermissionBehaviorGateContract(unittest.TestCase):
 
         synthetic = SyntheticPermissionFlow(flow)
         synthetic.request()
+        self.assertEqual(synthetic.system_permission_requests, 1)
         self.assertIsNone(synthetic.complete(flow.request_code + 1, True))
         self.assertFalse(synthetic.complete(flow.request_code, False))
         self.assertIsNone(synthetic.complete(flow.request_code, True))
@@ -260,6 +287,33 @@ class NativePermissionBehaviorGateContract(unittest.TestCase):
                 read(IOS_PROJECT),
                 dart_platform=read(DART_PLATFORM),
             ),
+        )
+
+    def test_ios_gate_rejects_pending_result_saved_before_first_decision(self) -> None:
+        capture = read(IOS_CAPTURE)
+        assignment = "    pendingPermission = result\n"
+        request = "  private func requestRecordPermission(_ result: @escaping FlutterResult) {\n"
+        self.assertIn(assignment, capture)
+        self.assertIn(request, capture)
+        mutated = capture.replace(assignment, "", 1)
+        mutated = mutated.replace(request, request + assignment, 1)
+        errors = ios_permission_behavior_errors(
+            read(IOS_ENTRY), mutated, read(IOS_PROJECT)
+        )
+        self.assertIn(
+            "iOS VoiceCapture returns without a system microphone permission "
+            "request on the first call",
+            errors,
+        )
+        synthetic = SyntheticPermissionFlow(
+            ios_permission_flow(
+                read(IOS_ENTRY), mutated, read(IOS_PROJECT)
+            )
+        )
+        synthetic.request()
+        self.assertEqual(
+            getattr(synthetic, "system_permission_requests", None),
+            0,
         )
 
     def test_ios_gate_rejects_reversed_pending_condition(self) -> None:

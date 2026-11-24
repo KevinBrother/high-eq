@@ -23,6 +23,54 @@ class T29LiveExecutionContract(unittest.TestCase):
         self.assertEqual(result.returncode, 37, result.describe())
         self.assertTrue(result.reached_live_test, result.describe())
 
+    def test_live_probe_rejects_name_filter_that_deselects_live_dart(self) -> None:
+        invocation = (
+            "  test --no-pub -r expanded \\\n"
+            "  tool/t29/proxy_isolation_test.dart \\\n"
+            "  tool/t29/live_test.dart\n"
+        )
+        self.assertIn(invocation, run_t29_live_probe.source)
+        result = run_t29_live_probe(
+            live_source=run_t29_live_probe.source.replace(
+                invocation,
+                "  test --no-pub -r expanded \\\n"
+                "  --name 'fixture and business clients bypass' \\\n"
+                "  tool/t29/proxy_isolation_test.dart \\\n"
+                "  tool/t29/live_test.dart\n",
+                1,
+            )
+        )
+        self.assertEqual(result.returncode, 0, result.describe())
+        self.assertFalse(result.reached_live_test, result.describe())
+        self.assertTrue(
+            any(
+                "selected no live_test.dart cases" in item
+                for item in result.violations
+            ),
+            result.describe(),
+        )
+
+    def test_live_probe_accepts_name_filter_that_selects_live_dart(self) -> None:
+        invocation = (
+            "  test --no-pub -r expanded \\\n"
+            "  tool/t29/proxy_isolation_test.dart \\\n"
+            "  tool/t29/live_test.dart\n"
+        )
+        self.assertIn(invocation, run_t29_live_probe.source)
+        result = run_t29_live_probe(
+            live_source=run_t29_live_probe.source.replace(
+                invocation,
+                "  test --no-pub -r expanded \\\n"
+                "  --name 'client' \\\n"
+                "  tool/t29/proxy_isolation_test.dart \\\n"
+                "  tool/t29/live_test.dart\n",
+                1,
+            )
+        )
+        self.assertEqual(result.returncode, 0, result.describe())
+        self.assertTrue(result.reached_live_test, result.describe())
+        self.assertEqual(result.violations, (), result.describe())
+
     def test_live_probe_rejects_an_entry_exit_zero_mutation(self) -> None:
         result = run_t29_live_probe(
             live_source=run_t29_live_probe.source.replace(
