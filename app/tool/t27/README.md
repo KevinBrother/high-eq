@@ -23,7 +23,7 @@ python3 app/tool/t27/history_journey.py \
 | `page.account-isolation` | 通过真实登录接口及 Sessions 激活 B，旧 A scope 被拒绝。B 遇到 503 时没有 A 的缓存，重试后从真实服务读到空历史，参考分仍待解锁。冷重开 B 后从本地加密缓存读回这一状态。 |
 | `service.contact-summary-after` | 删除成功并核验级联后，同一地址对 A 返回 `404 contact_not_found`，无凭证和无效令牌分别返回 `401 unauthenticated`。 |
 
-每次运行的日志在 `build/t27-history/run-*/`。服务启动、播种、HTTP 请求、UI 等待及整个进程均有截止时间。`journey.log` 保留 `BEGIN(...)`、`PASS(...)`、`FAIL(...)` 和请求计数。退出码 `0` 表示整链通过，`1` 表示进入用例后的断言失败或超时，`2` 表示前置条件不足或工具未能启动用例。核对本卡终稿时，从同一轮日志确认下方所列各阶段回执和 `RESULT: PASS`。
+每次运行的日志在 `build/t27-history/run-*/`。服务启动、播种、HTTP 请求、UI 等待及整个进程均有截止时间。`journey.log` 保留 `BEGIN(...)`、`PASS(...)`、`FAIL(...)` 和请求计数。启动器核对 Go 用例和各阶段的成功回执后才输出 `RESULT: PASS` 并以 `0` 退出。`1` 表示断言失败、超时或缺少成功回执，`2` 表示前置条件不足或用例未启动，`3` 表示 Go 用例明确跳过。
 
 不启动服务的游标回归可直接运行：
 
@@ -37,6 +37,16 @@ dart app/tool/t27/history_cursor_smoke.dart
 cd app
 flutter test --no-pub -r expanded test/contacts/repository_test.dart \
   --plain-name '提交后丢回执，列表即使已空仍可只读核对并重建离线成长'
+```
+
+## GitHub Actions
+
+`T27 growth and practice` 保留旧的成长 HTTP 旅程与 Flutter 回归，新增关系人核对入口、旅程组件辅助回归，以及独立 PG17、缓存 Redis 和 AOF Redis 上的正式历史旅程。推送、拉取请求和手动运行均可触发。运行摘要逐项给出 `PASS`、`FAIL`、`NOT RUN`、`SKIPPED` 或 `CANCELLED`。三项均须有成功回执。摘要和检查步骤只输出固定结果，原始测试日志保留在运行环境中或随临时文件清理。
+
+在仓库根目录离线复跑回执回归，无需 Flutter 或本地服务。
+
+```sh
+python3 -B -m unittest discover -s app/tool/t27 -p test_ci_check.py -v
 ```
 
 ## 终稿宿主复验（2026-11-24）

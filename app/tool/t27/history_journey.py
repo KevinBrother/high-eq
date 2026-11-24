@@ -15,6 +15,15 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[3]
+REQUIRED_PHASES = (
+    "service.runtime", "service.seed", "service.order-and-cursor",
+    "service.reference-before", "service.contact-summary-before",
+    "page.fixture", "page.lobby-order-and-back", "page.growth-history",
+    "page.offline-without-deletion", "page.contact-deleted", "page.deleted-cache",
+    "page.growth-recovery", "page.account-isolation", "page.journey", "page.runner",
+    "service.delete-cascade", "service.contact-summary-after", "journey",
+)
+PHASE_PASS = re.compile(r"(?:\S+\.go:\d+:\s+)?PASS\(([a-z.-]+)\)")
 
 
 class NotRun(RuntimeError):
@@ -23,6 +32,10 @@ class NotRun(RuntimeError):
 
 class Failed(RuntimeError):
     """An assertion or a bounded phase failed."""
+
+
+class Skipped(RuntimeError):
+    """Go reported that the journey test was skipped."""
 
 
 def executable(value, label):
@@ -219,15 +232,20 @@ def run_test(go, env, log):
     if status is None:
         stages = [m.group(1) for line in lines if (m := re.search(r"BEGIN\(([^)]+)\)", line))]
         raise Failed(f"{stages[-1] if stages else 'go.startup'} exceeded the runner deadline, see {log}")
+    if status == 0 and any(line.startswith("--- SKIP: TestT27HistoryJourney (") for line in lines):
+        raise Skipped(f"Go skipped TestT27HistoryJourney, see {log}")
     if any("NOT RUN(page.startup)" in line for line in lines):
         raise NotRun(f"page.startup did not reach the widget test, see {log}")
     if not any("BEGIN(service.runtime)" in line for line in lines):
         raise NotRun(f"Go did not enter the integration test (exit {status}), see {log}")
     if status != 0:
         raise Failed(f"journey exited {status}, see {log}")
-    for receipt in ("PASS(page.journey)", "PASS(service.delete-cascade)", "PASS(journey)"):
-        if not any(line.strip().endswith(receipt) for line in lines):
-            raise Failed(f"missing {receipt}, see {log}")
+    passed = {match[1] for line in lines if (match := PHASE_PASS.fullmatch(line.strip()))}
+    missing = [f"PASS({phase})" for phase in REQUIRED_PHASES if phase not in passed]
+    if missing:
+        raise Failed(f"missing {', '.join(missing)}, see {log}")
+    if not any(line.startswith("--- PASS: TestT27HistoryJourney (") for line in lines):
+        raise Failed(f"Go omitted the TestT27HistoryJourney pass, see {log}")
     print("RESULT: PASS", flush=True)
 
 
@@ -269,3 +287,6 @@ if __name__ == "__main__":
     except Failed as error:
         print(f"FAIL(journey): {error}", file=sys.stderr)
         sys.exit(1)
+    except Skipped as error:
+        print(f"SKIPPED(journey): {error}", file=sys.stderr)
+        sys.exit(3)

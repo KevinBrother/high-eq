@@ -2,48 +2,50 @@ name: T27 growth and practice
 on:
   push:
     paths:
-      - 'app/lib/core/**'
-      - 'app/lib/features/growth/**'
-      - 'app/lib/features/practice/**'
-      - 'app/lib/features/home/shell.dart'
-      - 'app/lib/main.dart'
+      - 'app/lib/**'
+      - 'app/assets/**'
+      - 'app/pubspec.yaml'
+      - 'app/pubspec.lock'
       - 'app/test/client_test.dart'
+      - 'app/test/contacts/**'
       - 'app/test/growth/**'
+      - 'app/test/isolation_test.dart'
       - 'app/test/marks/book_test.dart'
       - 'app/test/practice/**'
+      - 'app/test/support/**'
       - 'app/tool/t27/**'
-      - 'server/internal/growth/**'
-      - 'server/internal/assessment/**'
-      - 'server/internal/service/growth*'
-      - 'server/internal/service/assessment*'
-      - 'server/internal/service/runtime*'
-      - 'server/internal/service/http.go'
-      - 'server/content/t26.yaml'
-      - 'server/content/embed.go'
-      - 'server/migrations/*growth*'
+      - 'docs/api/app.yaml'
+      - 'server/internal/**'
+      - 'server/content/**'
+      - 'server/migrations/**'
+      - 'server/cmd/**'
+      - 'server/Dockerfile'
+      - 'server/go.mod'
+      - 'server/go.sum'
       - 'docker-compose.yml'
       - '.github/workflows/t27-growth.yml'
   pull_request:
     paths:
-      - 'app/lib/core/**'
-      - 'app/lib/features/growth/**'
-      - 'app/lib/features/practice/**'
-      - 'app/lib/features/home/shell.dart'
-      - 'app/lib/main.dart'
+      - 'app/lib/**'
+      - 'app/assets/**'
+      - 'app/pubspec.yaml'
+      - 'app/pubspec.lock'
       - 'app/test/client_test.dart'
+      - 'app/test/contacts/**'
       - 'app/test/growth/**'
+      - 'app/test/isolation_test.dart'
       - 'app/test/marks/book_test.dart'
       - 'app/test/practice/**'
+      - 'app/test/support/**'
       - 'app/tool/t27/**'
-      - 'server/internal/growth/**'
-      - 'server/internal/assessment/**'
-      - 'server/internal/service/growth*'
-      - 'server/internal/service/assessment*'
-      - 'server/internal/service/runtime*'
-      - 'server/internal/service/http.go'
-      - 'server/content/t26.yaml'
-      - 'server/content/embed.go'
-      - 'server/migrations/*growth*'
+      - 'docs/api/app.yaml'
+      - 'server/internal/**'
+      - 'server/content/**'
+      - 'server/migrations/**'
+      - 'server/cmd/**'
+      - 'server/Dockerfile'
+      - 'server/go.mod'
+      - 'server/go.sum'
       - 'docker-compose.yml'
       - '.github/workflows/t27-growth.yml'
   workflow_dispatch:
@@ -52,7 +54,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with: {persist-credentials: false}
@@ -76,13 +78,89 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+      - name: Check receipt handling offline
+        run: python3 -B -m unittest discover -s app/tool/t27 -p test_ci_check.py
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
         with: {flutter-version: '3.38.10', cache: true}
       - name: Install locked Flutter dependencies
+        id: flutter_deps
         working-directory: app
-        run: flutter pub get --enforce-lockfile
-      - name: T27 client regression
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter precache --linux
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Prepare Go modules for offline journey
+        id: go_modules
+        working-directory: server
+        run: go mod download
+      - name: Install native PostgreSQL 17 and Redis binaries
+        id: native_stack
+        run: |
+          sudo apt-get update
+          if ! apt-cache show postgresql-17 >/dev/null 2>&1; then
+            sudo install -d -m 0755 /usr/share/postgresql-common/pgdg
+            sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+              -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+            echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' \
+              | sudo tee /etc/apt/sources.list.d/t27-pgdg.list >/dev/null
+            sudo apt-get update
+          fi
+          sudo apt-get install -y --no-install-recommends postgresql-17 redis-server
+      - name: T27 client regression and deletion recovery
+        id: client
+        if: ${{ !cancelled() && steps.flutter_deps.outcome == 'success' }}
         working-directory: app
-        run: flutter test test/client_test.dart test/growth test/practice test/marks/book_test.dart
+        run: |
+          python3 tool/t27/ci_check.py client flutter test --no-pub --reporter json \
+            test/client_test.dart test/growth test/practice test/marks/book_test.dart \
+            test/contacts/flows_test.dart test/contacts/repository_test.dart \
+            tool/t27/history_journey_support_test.dart
       - name: Real loopback growth HTTP
-        run: app/tool/t27/live.sh
+        id: legacy
+        if: ${{ !cancelled() && steps.flutter_deps.outcome == 'success' }}
+        env:
+          T27_LIVE_REPORTER: json
+        run: python3 app/tool/t27/ci_check.py legacy app/tool/t27/live.sh
+      - name: Real history recovery and contact summary journey
+        id: history
+        if: ${{ !cancelled() && steps.flutter_deps.outcome == 'success' && steps.go_modules.outcome == 'success' && steps.native_stack.outcome == 'success' }}
+        run: |
+          python3 app/tool/t27/ci_check.py history python3 app/tool/t27/history_journey.py \
+            --pg-bin /usr/lib/postgresql/17/bin --redis /usr/bin/redis-server
+      - name: T27 verification summary
+        if: ${{ always() }}
+        env:
+          CLIENT_OUTCOME: ${{ steps.client.outcome }}
+          CLIENT_RECEIPT: ${{ steps.client.outputs.receipt }}
+          LEGACY_OUTCOME: ${{ steps.legacy.outcome }}
+          LEGACY_RECEIPT: ${{ steps.legacy.outputs.receipt }}
+          HISTORY_OUTCOME: ${{ steps.history.outcome }}
+          HISTORY_RECEIPT: ${{ steps.history.outputs.receipt }}
+        run: |
+          all_passed=true
+          record() {
+            local label="$1" outcome="$2" receipt="$3" status
+            case "$outcome/$receipt" in
+              success/PASS) status=PASS ;;
+              failure/"NOT RUN") status='NOT RUN' ;;
+              failure/SKIPPED) status=SKIPPED ;;
+              cancelled/*) status=CANCELLED ;;
+              skipped/*|/) status='NOT RUN' ;;
+              *) status=FAIL ;;
+            esac
+            printf '| %s | %s |\n' "$label" "$status"
+            if [[ "$status" != PASS ]]; then all_passed=false; fi
+          }
+          {
+            echo '## T27 verification'
+            echo
+            echo '| Check | Status |'
+            echo '| --- | --- |'
+            record 'Flutter regressions and manual deletion check' "$CLIENT_OUTCOME" "$CLIENT_RECEIPT"
+            record 'Original growth HTTP journey' "$LEGACY_OUTCOME" "$LEGACY_RECEIPT"
+            record 'Formal 100+1 history, cache recovery, deletion cascade and contact summary' "$HISTORY_OUTCOME" "$HISTORY_RECEIPT"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [[ "$all_passed" == true ]]

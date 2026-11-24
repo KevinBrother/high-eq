@@ -68,4 +68,4 @@ dc exec -T cache redis-cli SET "dev:ticket:apple:$T27_DEV_TICKET" \
 
 export T27_ORIGIN="$origin"
 cd "$root/app"
-flutter test --no-pub -r expanded tool/t27/live_test.dart
+flutter test --no-pub --reporter "${T27_LIVE_REPORTER:-expanded}" tool/t27/live_test.dart
