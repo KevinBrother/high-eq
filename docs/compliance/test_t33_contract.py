@@ -21,6 +21,7 @@ try:  # Supports both `python -m unittest` and direct script execution.
         command_execution_issues,
         ios_runner_source_files,
         load_historical_evidence,
+        practice_consent_contract_errors,
         parse_workflow_jobs,
         uses_ignored_build_path,
         workflow_event_names,
@@ -35,6 +36,7 @@ except ImportError:  # pragma: no cover - exercised by the documented CLI form.
         command_execution_issues,
         ios_runner_source_files,
         load_historical_evidence,
+        practice_consent_contract_errors,
         parse_workflow_jobs,
         uses_ignored_build_path,
         workflow_event_names,
@@ -48,6 +50,49 @@ COMPLIANCE = ROOT / "docs" / "compliance"
 BASELINE = "f60ace3"
 CANDIDATE = "ce479034bcba174475fa8fbc156be66a3b22ba5371b5344602f29394185d638a"
 OLD_BASELINE = "bd6e34e0ce8f3b96da61f7eea2e391a40cdcf70c"
+
+PRACTICE_LOBBY_CONTRACT_FIXTURE = """
+class PracticeLobby {
+  Future<bool> ensurePracticeConsent({bool Function()? stillCurrent}) async {
+    final granted = await widget.repo.practiceConsent();
+    if (granted) return true;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(),
+    );
+    if (ok != true) return false;
+    await widget.repo.grantPracticeConsent();
+    final confirmed = await widget.repo.practiceConsent();
+    if (!confirmed) {
+      throw const ApiFailure(403, 'forbidden', '练习授权未生效，请重试。', true);
+    }
+    return true;
+  }
+
+  Future<void> create(Json intent, {required bool Function() stillCurrent}) async {
+    final isCurrent = stillCurrent;
+    if (!await ensurePracticeConsent(stillCurrent: isCurrent)) return;
+    final body = intent['input'] as Json;
+    final s = await repo.create(body);
+  }
+
+  Future<void> start(Json input, {required bool Function() stillCurrent}) async {
+    await create({'input': input}, stillCurrent: stillCurrent);
+  }
+
+  Future<void> open(Json input, {required bool Function() stillCurrent}) async {
+    await start(input, stillCurrent: stillCurrent);
+  }
+
+  Future<void> _resumePending(Json intent, bool Function() isCurrent) async {
+    await create(intent, stillCurrent: isCurrent);
+  }
+
+  Future<void> _openTargetLevel(Json target, bool Function() isCurrent) async {
+    await start(target, stillCurrent: isCurrent);
+  }
+}
+"""
 
 
 def read(path: str | Path) -> str:
@@ -805,16 +850,110 @@ class BaselineSourceFactsContract(unittest.TestCase):
         self.assertIn("notice.v1` 不能代替服务端同意", read("docs/compliance/separate-consents.md"))
 
     def test_practice_consent_precedes_creation_and_rechecks_after_grant(self) -> None:
-        lobby = read("app/lib/features/practice/lobby.dart")
-        consent = lobby.split("Future<bool> ensurePracticeConsent()", 1)[1].split("Future<void> create(", 1)[0]
-        self.assertLess(consent.index("practiceConsent()"), consent.index("showDialog"))
-        self.assertLess(consent.index("if (ok != true"), consent.index("grantPracticeConsent()"))
-        self.assertLess(consent.index("grantPracticeConsent()"), consent.rindex("practiceConsent()"))
-        create = lobby.split("Future<void> create(Json intent)", 1)[1].split("Future<void> open(", 1)[0]
-        self.assertLess(create.index("if (!await ensurePracticeConsent()) return"), create.index("widget.repo.create(body)"))
+        published_lobby = read("app/lib/features/practice/lobby.dart")
+        self.assertEqual(practice_consent_contract_errors(published_lobby), [])
+
+        lobby = PRACTICE_LOBBY_CONTRACT_FIXTURE
+        self.assertEqual(practice_consent_contract_errors(lobby), [])
+
+        create_guard = (
+            "    if (!await ensurePracticeConsent(stillCurrent: isCurrent)) return;\n"
+        )
+        create_request = "    final s = await repo.create(body);\n"
+        altered = lobby.replace(create_guard, "", 1)
+        altered = altered.replace(
+            create_request, create_request + create_guard, 1
+        )
+        self.assertNotEqual(altered, lobby)
+        self.assertIn(
+            "practice create must follow the consent gate",
+            practice_consent_contract_errors(altered),
+        )
+
+        reread = (
+            "    final confirmed = await widget.repo.practiceConsent();\n"
+        )
+        altered = lobby.replace(reread, "    final confirmed = granted;\n", 1)
+        self.assertNotEqual(altered, lobby)
+        self.assertIn(
+            "practice consent re-read must occur exactly once",
+            practice_consent_contract_errors(altered),
+        )
+
+        cases = (
+            (
+                "create gate",
+                create_guard,
+                "    // if (!await ensurePracticeConsent(stillCurrent: isCurrent)) return;\n",
+                "practice consent gate must occur exactly once",
+            ),
+            (
+                "declined grant guard",
+                "    if (ok != true) return false;\n",
+                "    // if (ok != true) return false;\n",
+                "declined practice consent guard must occur exactly once",
+            ),
+            (
+                "false re-read rejection",
+                "    if (!confirmed) {\n"
+                "      throw const ApiFailure(403, 'forbidden', '练习授权未生效，请重试。', true);\n"
+                "    }\n",
+                "    /* if (!confirmed) {\n"
+                "      throw const ApiFailure(403, 'forbidden', '练习授权未生效，请重试。', true);\n"
+                "    } */\n",
+                "practice consent confirmation must occur exactly once",
+            ),
+        )
+        for name, executable, commented, expected in cases:
+            with self.subTest(name=name):
+                self.assertIn(executable, lobby)
+                altered = lobby.replace(executable, commented, 1)
+                self.assertNotEqual(altered, lobby)
+                self.assertIn(expected, practice_consent_contract_errors(altered))
+
+        formatted_gate = (
+            "    if (!await ensurePracticeConsent(\n"
+            "      stillCurrent: isCurrent,\n"
+            "    )) return;\n"
+        )
+        formatted_create = (
+            "    final decoy = 'final s = await repo.create(body);';\n"
+            "    final s = await repo\n"
+            "        .create(\n"
+            "          body,\n"
+            "        );\n"
+        )
+        formatted = lobby.replace(create_guard, formatted_gate, 1).replace(
+            create_request, formatted_create, 1
+        )
+        self.assertNotEqual(formatted, lobby)
+        self.assertEqual(practice_consent_contract_errors(formatted), [])
+
         repo = read("app/lib/features/practice/repository.dart")
         self.assertIn("purpose: 'practice'", repo)
         self.assertIn("'version': 'v1', 'granted': true", repo)
+
+    def test_practice_consent_recheck_requires_executable_throw(self) -> None:
+        throw = (
+            "      throw const ApiFailure(403, 'forbidden', "
+            "'练习授权未生效，请重试。', true);\n"
+        )
+        variants = {
+            "removed": "",
+            "commented": "      // throw const ApiFailure(403, 'forbidden');\n",
+            "string": "      final hint = 'throw const ApiFailure(403)';",
+        }
+        self.assertIn(throw, PRACTICE_LOBBY_CONTRACT_FIXTURE)
+        for name, replacement in variants.items():
+            with self.subTest(name=name):
+                altered = PRACTICE_LOBBY_CONTRACT_FIXTURE.replace(
+                    throw, replacement, 1
+                )
+                self.assertNotEqual(altered, PRACTICE_LOBBY_CONTRACT_FIXTURE)
+                self.assertIn(
+                    "practice consent confirmation must throw when re-read remains false",
+                    practice_consent_contract_errors(altered),
+                )
 
     def test_t19_practice_contract_is_substantive(self) -> None:
         migration = read("server/migrations/20261122003019_practice_work.up.sql")

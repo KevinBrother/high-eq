@@ -432,6 +432,31 @@ def _has_top_level_statement(body: str, statement: re.Pattern[str]) -> bool:
     return False
 
 
+def _has_top_level_keyword_statement(body: str, keyword: str) -> bool:
+    """Return whether a normalized body has a direct statement with keyword."""
+    depth = 0
+    statement_start = 0
+
+    def starts_with_keyword(end: int) -> bool:
+        statement = body[statement_start:end].lstrip()
+        return bool(re.match(rf"{re.escape(keyword)}\b", statement))
+
+    for index, char in enumerate(body):
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth = max(0, depth - 1)
+            if depth == 0:
+                if starts_with_keyword(index + 1):
+                    return True
+                statement_start = index + 1
+        elif char == ";" and depth == 0:
+            if starts_with_keyword(index + 1):
+                return True
+            statement_start = index + 1
+    return starts_with_keyword(len(body))
+
+
 def android_permission_callback_errors(entry: str, native_sources: Mapping[str, str]) -> list[str]:
     """Require an executable MainActivity callback and a real VoiceCapture handler."""
     errors: list[str] = []
@@ -627,3 +652,212 @@ def load_historical_evidence(path: str | Path) -> Mapping[str, Any] | None:
         return json.loads(Path(path).read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
         return None
+
+
+def _mask_dart_noncode(source: str) -> str:
+    """Blank Dart comments and string literals while preserving line breaks."""
+    masked = list(source)
+
+    def blank(start: int, end: int) -> None:
+        for index in range(start, min(end, len(masked))):
+            if masked[index] not in "\r\n":
+                masked[index] = " "
+
+    index = 0
+    while index < len(source):
+        if source.startswith("//", index):
+            end = source.find("\n", index)
+            end = len(source) if end < 0 else end
+            blank(index, end)
+            index = end
+            continue
+        if source.startswith("/*", index):
+            depth = 1
+            blank(index, index + 2)
+            index += 2
+            while index < len(source) and depth:
+                if source.startswith("/*", index):
+                    depth += 1
+                    blank(index, index + 2)
+                    index += 2
+                elif source.startswith("*/", index):
+                    depth -= 1
+                    blank(index, index + 2)
+                    index += 2
+                else:
+                    blank(index, index + 1)
+                    index += 1
+            continue
+
+        quote = next(
+            (value for value in ("'''", '"""', "'", '"') if source.startswith(value, index)),
+            "",
+        )
+        if not quote:
+            index += 1
+            continue
+        blank(index, index + len(quote))
+        index += len(quote)
+        while index < len(source):
+            if source.startswith(quote, index):
+                blank(index, index + len(quote))
+                index += len(quote)
+                break
+            if source[index] == "\\" and index + 1 < len(source):
+                blank(index, index + 2)
+                index += 2
+            else:
+                blank(index, index + 1)
+                index += 1
+    return "".join(masked)
+
+
+def _compact_dart_code(source: str) -> str:
+    """Normalize formatting whitespace without joining distinct identifiers."""
+    compact = re.sub(r"\s+", " ", source).strip()
+    return re.sub(r"\s*([(){}\[\],:;.?!<>+*/=\-])\s*", r"\1", compact)
+
+
+def dart_method_body(source: str, name: str) -> str:
+    """Return a Future method body with comments and string literals blanked."""
+    declaration = re.compile(
+        rf"\bFuture<(?:void|bool)>\s+{re.escape(name)}\s*\(.*?\)\s+async\s*\{{",
+        re.S,
+    )
+    body = _braced_body(_mask_dart_noncode(source), declaration)
+    if body is None:
+        raise ValueError(f"missing or unterminated Dart method {name}")
+    return body
+
+
+def practice_consent_contract_errors(source: str) -> list[str]:
+    """Check practice consent ordering and every create/recovery funnel."""
+    try:
+        ensure = _compact_dart_code(dart_method_body(source, "ensurePracticeConsent"))
+        create = _compact_dart_code(dart_method_body(source, "create"))
+        start = _compact_dart_code(dart_method_body(source, "start"))
+        open_session = _compact_dart_code(dart_method_body(source, "open"))
+        resume = _compact_dart_code(dart_method_body(source, "_resumePending"))
+        target = _compact_dart_code(dart_method_body(source, "_openTargetLevel"))
+    except ValueError as error:
+        return [str(error)]
+
+    def without_trailing_commas(code: str) -> str:
+        return code.replace(",)", ")")
+
+    ensure = without_trailing_commas(ensure)
+    create = without_trailing_commas(create)
+    start = without_trailing_commas(start)
+    open_session = without_trailing_commas(open_session)
+    resume = without_trailing_commas(resume)
+    target = without_trailing_commas(target)
+
+    errors: list[str] = []
+
+    def once(body: str, label: str, needle: str) -> int:
+        compact_needle = without_trailing_commas(_compact_dart_code(needle))
+        count = body.count(compact_needle)
+        if count != 1:
+            errors.append(f"{label} must occur exactly once")
+            return -1
+        return body.index(compact_needle)
+
+    def before(label: str, earlier: int, later: int) -> None:
+        if earlier >= 0 and later >= 0 and earlier >= later:
+            errors.append(label)
+
+    granted = once(
+        ensure,
+        "initial practice consent read",
+        "final granted = await widget.repo.practiceConsent();",
+    )
+    shortcut = once(
+        ensure, "existing grant shortcut", "if (granted) return true;"
+    )
+    dialog = once(
+        ensure, "explicit practice consent dialog", "final ok = await showDialog<bool>("
+    )
+    declined = once(
+        ensure, "declined practice consent guard", "if (ok != true) return false;"
+    )
+    grant = once(
+        ensure, "practice consent grant", "await widget.repo.grantPracticeConsent();"
+    )
+    reread = once(
+        ensure,
+        "practice consent re-read",
+        "final confirmed = await widget.repo.practiceConsent();",
+    )
+    confirmed = once(ensure, "practice consent confirmation", "if (!confirmed) {")
+    before(
+        "practice consent must be read before the existing-grant shortcut",
+        granted,
+        shortcut,
+    )
+    before(
+        "the explicit practice consent dialog must follow the consent read",
+        shortcut,
+        dialog,
+    )
+    before(
+        "the declined practice consent guard must follow the dialog",
+        dialog,
+        declined,
+    )
+    before(
+        "practice consent must not be granted before explicit acceptance",
+        declined,
+        grant,
+    )
+    before(
+        "practice consent must be re-read after grant",
+        grant,
+        reread,
+    )
+    before(
+        "the re-read practice consent must be confirmed after grant",
+        reread,
+        confirmed,
+    )
+    confirmation_branch = _braced_body(
+        ensure,
+        re.compile(r"\bif\s*\(\s*!\s*confirmed\s*\)"),
+    )
+    if confirmation_branch is None or not _has_top_level_keyword_statement(
+        confirmation_branch, "throw"
+    ):
+        errors.append(
+            "practice consent confirmation must throw when re-read remains false"
+        )
+
+    consent_gate = once(
+        create,
+        "practice consent gate",
+        "if (!await ensurePracticeConsent(stillCurrent: isCurrent)) return;",
+    )
+    create_request = once(
+        create, "practice create request", "final s = await repo.create(body);"
+    )
+    before(
+        "practice create must follow the consent gate",
+        consent_gate,
+        create_request,
+    )
+
+    compact_source = _compact_dart_code(_mask_dart_noncode(source))
+    direct_create = re.compile(r"\b(?:widget\.)?repo\.create\(")
+    direct_creates = direct_create.findall(compact_source)
+    create_call_sites = direct_create.findall(create)
+    if len(direct_creates) != 1 or len(create_call_sites) != 1:
+        errors.append("practice repository create must be called only from create")
+
+    if "start(" not in target:
+        errors.append("planned practice target must enter the start funnel")
+    if "await create({" not in start:
+        errors.append("practice start must enter the create funnel")
+    if "create(intent,stillCurrent:isCurrent)" not in resume:
+        errors.append("practice recovery must enter the create funnel")
+    if "start(input" not in open_session:
+        errors.append("practice repeat must enter the start funnel")
+
+    return errors
