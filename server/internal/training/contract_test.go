@@ -59,8 +59,9 @@ func TestPracticeEnvelopeAndScoreProjection(t *testing.T) {
 func TestCreateBranchesAndCatalogCursor(t *testing.T) {
 	id := uuid.New()
 	scene, text := "work", "合成会议"
+	nul, blank := "合成\x00会议", " \t\n"
 	l := catalog[0]
-	for _, bad := range []Input{{}, {ID: id}, {ID: id, Level: &l.Id, Scenario: &text}, {ID: id, Scene: &scene}, {ID: id, Level: &uuid.Nil}, {ID: id, Scenario: &text, Scene: &scene, Contact: &uuid.Nil}} {
+	for _, bad := range []Input{{}, {ID: id}, {ID: id, Level: &l.Id, Scenario: &text}, {ID: id, Scene: &scene}, {ID: id, Scene: &scene, Scenario: &nul}, {ID: id, Scene: &scene, Scenario: &blank}, {ID: id, Level: &uuid.Nil}, {ID: id, Scenario: &text, Scene: &scene, Contact: &uuid.Nil}} {
 		if _, _, _, _, e := bad.describe(); e == nil {
 			t.Fatal("invalid creation accepted")
 		}

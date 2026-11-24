@@ -17,19 +17,19 @@ type Reader interface {
 }
 
 func ValidTask(t admin.Task) bool {
-	switch t {
-	case admin.TaskClassification, admin.TaskContentGeneration, admin.TaskProfileInference, admin.TaskReplySuggestion, admin.TaskReviewAnalysis, admin.TaskRolePlay, admin.TaskScoring:
-		return true
-	}
-	return false
+	_, ok := taskVariables[t]
+	return ok
 }
 
 // Create uses the caller's read-committed audit transaction. Serialize numbering per task;
 // take a fresh statement snapshot AFTER acquiring the lock so concurrent editors both save.
 func Create(ctx context.Context, tx pgx.Tx, v admin.CreatePromptVersionJSONBody) (admin.PromptVersion, error) {
 	var out admin.PromptVersion
-	if !ValidTask(v.Task) || Validate(v.Template) != nil {
+	if !ValidTask(v.Task) {
 		return out, ErrTemplate
+	}
+	if err := ValidateForTask(v.Task, v.Template); err != nil {
+		return out, err
 	}
 	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(11011,hashtext($1))`, string(v.Task)); err != nil {
 		return out, ErrStorage
@@ -53,6 +53,25 @@ func Publish(ctx context.Context, tx pgx.Tx, r admin.PromptRelease) error {
 	}
 	if r.ExperimentVersionId != nil && (*r.ExperimentVersionId == uuid.Nil || *r.ExperimentVersionId == r.PrimaryVersionId) {
 		return ErrRelease
+	}
+	checkVersion := func(id uuid.UUID) error {
+		var template string
+		err := tx.QueryRow(ctx, `select template from prompt_versions where task=$1 and id=$2`, r.Task, id).Scan(&template)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return ErrStorage
+		}
+		return ValidateForTask(r.Task, template)
+	}
+	if err := checkVersion(r.PrimaryVersionId); err != nil {
+		return err
+	}
+	if r.ExperimentVersionId != nil {
+		if err := checkVersion(*r.ExperimentVersionId); err != nil {
+			return err
+		}
 	}
 	_, err := tx.Exec(ctx, `insert into prompt_releases(task,model_id,primary_version_id,experiment_version_id,experiment_percent)
         values($1,$2,$3,$4,$5) on conflict (task,model_id) do update set

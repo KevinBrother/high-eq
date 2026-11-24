@@ -590,10 +590,12 @@ type CreateSessionInput1 struct {
 	ContactId *openapi_types.UUID `json:"contact_id,omitempty"`
 
 	// PreviousId 仅可引用本账号已完成且启动参数相同的上一次练习；无法关联时返回 400。
-	PreviousId *openapi_types.UUID      `json:"previous_id,omitempty"`
-	RequestId  openapi_types.UUID       `json:"request_id"`
-	Scenario   string                   `json:"scenario"`
-	Scene      CreateSessionInput1Scene `json:"scene"`
+	PreviousId *openapi_types.UUID `json:"previous_id,omitempty"`
+	RequestId  openapi_types.UUID  `json:"request_id"`
+
+	// Scenario 自定义场景正文，按 UTF-8 编码计 1–6,000 字节。全空白、含 NUL 或非法 UTF-8 返回 400。完整正文只进入首条 user 消息；提示词变量 {{scene}} 仅接收 scene 指定的场景类别。
+	Scenario string                   `json:"scenario"`
+	Scene    CreateSessionInput1Scene `json:"scene"`
 }
 
 // CreateSessionInput1Scene defines model for CreateSessionInput.1.Scene.

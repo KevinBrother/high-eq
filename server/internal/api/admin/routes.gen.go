@@ -269,7 +269,7 @@ type PromptVersion struct {
 	Id        openapi_types.UUID `json:"id"`
 	Task      Task               `json:"task"`
 
-	// Template 说明趋势可用性或缺失原因，不是冷启动倒计时。
+	// Template 模板仅解释 {{变量名}}；role_play 可用 {{scene}}，scoring 可用 {{assessment}}、{{target_item}}、{{retry}}，profile_inference 可用 {{scene}}、{{options}}，其他任务不得使用变量。保存和发布按生产调用实际变量上限预检：role_play.scene 94 字节（自定义场景只传不超过 7 字节的类别），scoring.assessment 12 字节、target_item 11 字节、retry 96 字节，profile_inference.scene 7 字节、options 当前序列化 501 字节；合法输入展开结果必须非空且不超过 256 KiB，模板本身不超过 64 KiB。不支持变量、非法语法、NUL、非法 UTF-8、空白渲染或与任务不匹配时返回 400。
 	Template string `json:"template"`
 	Version  int    `json:"version"`
 }
@@ -367,7 +367,7 @@ type ListPromptVersionsParams struct {
 type CreatePromptVersionJSONBody struct {
 	Task Task `json:"task"`
 
-	// Template 说明趋势可用性或缺失原因，不是冷启动倒计时。
+	// Template 模板仅解释 {{变量名}}；role_play 可用 {{scene}}，scoring 可用 {{assessment}}、{{target_item}}、{{retry}}，profile_inference 可用 {{scene}}、{{options}}，其他任务不得使用变量。保存和发布按生产调用实际变量上限预检：role_play.scene 94 字节（自定义场景只传不超过 7 字节的类别），scoring.assessment 12 字节、target_item 11 字节、retry 96 字节，profile_inference.scene 7 字节、options 当前序列化 501 字节；合法输入展开结果必须非空且不超过 256 KiB，模板本身不超过 64 KiB。不支持变量、非法语法、NUL、非法 UTF-8、空白渲染或与任务不匹配时返回 400。
 	Template string `json:"template"`
 }
 

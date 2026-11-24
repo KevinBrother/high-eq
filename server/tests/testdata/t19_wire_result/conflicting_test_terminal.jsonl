@@ -1,0 +1,5 @@
+{"Time":"2026-11-24T00:00:00Z","Action":"start","Package":"high-eq/server/internal/service"}
+{"Time":"2026-11-24T00:00:00Z","Action":"run","Package":"high-eq/server/internal/service","Test":"TestPracticeWire"}
+{"Time":"2026-11-24T00:00:00Z","Action":"pass","Package":"high-eq/server/internal/service","Test":"TestPracticeWire","Elapsed":0.01}
+{"Time":"2026-11-24T00:00:00Z","Action":"fail","Package":"high-eq/server/internal/service","Test":"TestPracticeWire","Elapsed":0.02}
+{"Time":"2026-11-24T00:00:00Z","Action":"pass","Package":"high-eq/server/internal/service","Elapsed":0.01}

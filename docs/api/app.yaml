@@ -3510,7 +3510,11 @@ components:
         - scene
         properties:
           request_id: {type: string, format: uuid}
-          scenario: {type: string, minLength: 1}
+          scenario:
+            type: string
+            minLength: 1
+            description: >-
+              自定义场景正文，按 UTF-8 编码计 1–6,000 字节。全空白、含 NUL 或非法 UTF-8 返回 400。完整正文只进入首条 user 消息；提示词变量 {{scene}} 仅接收 scene 指定的场景类别。
           scene: {type: string, enum: [work, partner, family, friends, social]}
           contact_id: {type: string, format: uuid}
           previous_id: {type: string, format: uuid, description: 仅可引用本账号已完成且启动参数相同的上一次练习；无法关联时返回 400。}

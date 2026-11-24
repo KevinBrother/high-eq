@@ -101,6 +101,40 @@ void main() {
     expect(writes.last['experiment_version_id'], isNull);
     expect(writes.last['experiment_percent'], 0);
   });
+  testWidgets('提示词页展示任务变量并在提交前拒绝不支持变量', (t) async {
+    var posts = 0;
+    await open(t, '/prompts', (r) async {
+      final path = r.url.pathSegments.last;
+      if (r.method == 'POST') {
+        posts++;
+        return response({
+          'id': 'new',
+          'version': 2,
+          'template': jsonDecode(r.body)['template'],
+        });
+      }
+      final items = switch (path) {
+        'prompt-models' => [
+          {'id': 'm', 'name': '生成目标', 'enabled': true},
+        ],
+        'prompt-versions' => [
+          {'id': 'old', 'version': 1, 'template': '请围绕 {{scene}} 展开练习。'},
+        ],
+        'prompt-releases' => <Object>[],
+        _ => throw StateError('unexpected endpoint'),
+      };
+      return response({'items': items, 'next_cursor': null});
+    });
+
+    expect(find.textContaining('可用变量：{{scene}}'), findsOneWidget);
+    await t.enterText(find.byType(TextField), '请结合 {{profile}} 回答。');
+    await t.tap(find.text('保存为新版本'));
+    await t.pumpAndSettle();
+
+    expect(posts, 0);
+    expect(find.textContaining('不支持变量 {{profile}}'), findsOneWidget);
+    expect(find.textContaining('{{scene}}'), findsWidgets);
+  });
   testWidgets('看板显示查询值并区分缺价和数值投影缺失', (t) async {
     await open(t, '/metrics', (r) async {
       expect(r.url.path, '/admin/v1/metrics');
@@ -135,5 +169,43 @@ void main() {
     expect(find.text('74 分'), findsOneWidget);
     expect(find.text('2 份'), findsOneWidget);
     expect(find.textContaining('尚无数值投影：1'), findsOneWidget);
+  });
+  testWidgets('提示词页显示后台 400 的固定诊断文案', (t) async {
+    var posts = 0;
+    await open(t, '/prompts', (request) async {
+      final path = request.url.pathSegments.last;
+      if (request.method == 'POST') {
+        posts++;
+        return http.Response.bytes(
+          utf8.encode(
+            jsonEncode({
+              'code': 'invalid_argument',
+              'message': '提示词模板语法无效或超过 64 KiB',
+              'retryable': false,
+            }),
+          ),
+          400,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }
+      final items = switch (path) {
+        'prompt-models' => [
+          {'id': 'm', 'name': '生成目标', 'enabled': true},
+        ],
+        'prompt-versions' => [
+          {'id': 'old', 'version': 1, 'template': '旧模板'},
+        ],
+        'prompt-releases' => <Object>[],
+        _ => throw StateError('unexpected endpoint'),
+      };
+      return response({'items': items, 'next_cursor': null});
+    });
+
+    await t.enterText(find.byType(TextField), '请围绕 {{scene}} 展开练习。');
+    await t.tap(find.text('保存为新版本'));
+    await t.pumpAndSettle();
+
+    expect(posts, 1);
+    expect(find.text('提示词模板语法无效或超过 64 KiB'), findsOneWidget);
   });
 }

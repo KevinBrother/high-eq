@@ -31,6 +31,23 @@ func runnerError(e error) error {
 	}
 }
 
+func rolePlayCall(j job, msgs []gateway.Message, emit func(context.Context, gateway.Event) error) gateway.Call {
+	return gateway.Call{
+		Scope: j.scope(), Task: gateway.RolePlay, Mode: gateway.Stream,
+		Variables: map[string]string{"scene": rolePlayScene(j)}, Messages: msgs, Emit: emit,
+	}
+}
+
+// A catalog level has a server-owned, frozen scene. A custom setup keeps its
+// complete text in the first user JSON message; only the validated category may
+// influence the system prompt.
+func rolePlayScene(j job) string {
+	if j.input.Level == nil && j.input.Scene != nil {
+		return *j.input.Scene
+	}
+	return j.scene
+}
+
 func (s *Service) Send(parent context.Context, p accounts.Principal, id uuid.UUID, in app.SendMessageInput, emit Emit) error {
 	j, replay, e := s.claim(parent, p, id, in.ClientMessageId, "message", in.Text)
 	if e != nil {
@@ -59,7 +76,7 @@ func (s *Service) Send(parent context.Context, p accounts.Principal, id uuid.UUI
 			disconnected = emit(f) != nil
 		}
 	}
-	reply, e := runner.Run(ctx, gateway.Call{Scope: j.scope(), Task: gateway.RolePlay, Mode: gateway.Stream, Messages: msgs, Emit: func(c context.Context, v gateway.Event) error {
+	reply, e := runner.Run(ctx, rolePlayCall(j, msgs, func(c context.Context, v gateway.Event) error {
 		if v.Name != "fragment" {
 			return nil
 		}
@@ -77,7 +94,7 @@ func (s *Service) Send(parent context.Context, p accounts.Principal, id uuid.UUI
 		text.WriteString(v.Text)
 		send(Frame{"fragment", map[string]any{"client_message_id": j.key, "text": v.Text}})
 		return nil
-	}})
+	}))
 	if t := reply.Terminal; t != nil {
 		settlementErr := s.settleTerminal(ctx, &j, *t)
 		send(Frame{t.Name(), t})

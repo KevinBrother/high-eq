@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	"high-eq/server/internal/api/app"
+	"high-eq/server/internal/promptvars"
 )
 
 func TestLevelsAndBoundaries(t *testing.T) {
@@ -29,6 +30,21 @@ func TestLevelsAndBoundaries(t *testing.T) {
 	}
 	if fits(30, 0, 1) || fits(1, 29999, 2) || !fits(29, 29999, 1) {
 		t.Fatal("turn/token boundary")
+	}
+}
+
+func TestRolePlayPromptSceneFitsPublishedBound(t *testing.T) {
+	longest := 0
+	for _, level := range catalog {
+		longest = max(longest, len(level.Scene)+len("：")+len(level.scenario))
+	}
+	if longest != promptvars.RolePlaySceneMaxBytes {
+		t.Fatalf("catalog scene max=%d, prompt contract=%d", longest, promptvars.RolePlaySceneMaxBytes)
+	}
+	for _, scene := range []string{"work", "partner", "family", "friends", "social"} {
+		if len(scene) > promptvars.RolePlaySceneMaxBytes {
+			t.Fatalf("custom scene category %q exceeds prompt contract", scene)
+		}
 	}
 }
 

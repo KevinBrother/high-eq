@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -73,7 +74,9 @@ func (in Input) describe() (scene, mode, kind string, target *string, e error) {
 		}
 		return "", "", "", nil, ErrMissing
 	}
-	if in.Scene == nil || !validScene(*in.Scene) || in.Scenario == nil || strings.TrimSpace(*in.Scenario) == "" || len(*in.Scenario) > 6000 {
+	if in.Scene == nil || !validScene(*in.Scene) || in.Scenario == nil ||
+		!utf8.ValidString(*in.Scenario) || strings.ContainsRune(*in.Scenario, 0) ||
+		strings.TrimSpace(*in.Scenario) == "" || len(*in.Scenario) > 6000 {
 		return "", "", "", nil, accounts.ErrInvalid
 	}
 	return *in.Scene + "：" + *in.Scenario, "full_session", "practice", nil, nil

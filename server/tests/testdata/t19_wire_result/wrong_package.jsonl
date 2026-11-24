@@ -1,0 +1,6 @@
+{"Time":"2026-11-24T00:00:00Z","Action":"start","Package":"example.test/other"}
+{"Time":"2026-11-24T00:00:00Z","Action":"run","Package":"example.test/other","Test":"TestPracticeWire"}
+{"Time":"2026-11-24T00:00:00Z","Action":"pass","Package":"example.test/other","Test":"TestPracticeWire","Elapsed":0.01}
+{"Time":"2026-11-24T00:00:00Z","Action":"pass","Package":"example.test/other","Elapsed":0.01}
+{"Time":"2026-11-24T00:00:00Z","Action":"start","Package":"high-eq/server/internal/service"}
+{"Time":"2026-11-24T00:00:00Z","Action":"pass","Package":"high-eq/server/internal/service","Elapsed":0.01}

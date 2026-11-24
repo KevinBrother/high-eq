@@ -10,10 +10,12 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"high-eq/server/internal/adminops"
 	"high-eq/server/internal/api/admin"
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/gateway"
@@ -44,6 +47,12 @@ type practiceWire struct {
 	ctx                 context.Context
 	mode                atomic.Pointer[upstreamCase]
 	generations, grades atomic.Int32
+	primaryModel        uuid.UUID
+	fallbackModel       uuid.UUID
+	promptVersions      map[admin.Task]uuid.UUID
+	captureMu           sync.Mutex
+	lastSystem          string
+	lastUser            string
 }
 
 func (h *practiceWire) must(e error) {
@@ -166,6 +175,10 @@ func (h *practiceWire) vendor(w http.ResponseWriter, r *http.Request) {
 		chunk(score, "stop")
 	} else {
 		h.generations.Add(1)
+		h.captureMu.Lock()
+		h.lastSystem = req.Messages[0].Content
+		h.lastUser = req.Messages[1].Content
+		h.captureMu.Unlock()
 		chunk("合成甲。", "")
 		if c.hold != nil {
 			select {
@@ -219,6 +232,9 @@ func newPracticeWire(t *testing.T) *practiceWire {
 		return id
 	}
 	m, b, mod := mk(gateway.Model, "primary"), mk(gateway.Model, "fallback"), mk(gateway.Moderation, "moderator")
+	h.primaryModel = m
+	h.fallbackModel = b
+	h.promptVersions = make(map[admin.Task]uuid.UUID)
 	for _, task := range []admin.Task{"role_play", "scoring"} {
 		h.exec(`insert into model_routes(task,primary_model,fallback_model,moderation_model)values($1,$2,$3,$4)`, task, m, b, mod)
 		h.must(pgx.BeginFunc(h.ctx, h.s.db, func(tx pgx.Tx) error {
@@ -238,6 +254,7 @@ func newPracticeWire(t *testing.T) *practiceWire {
 					return e
 				}
 			}
+			h.promptVersions[task] = v.Id
 			for _, id := range []uuid.UUID{m, b} {
 				if e := prompts.Publish(h.ctx, tx, admin.PromptRelease{Task: task, ModelId: id, PrimaryVersionId: v.Id}); e != nil {
 					return e
@@ -269,6 +286,47 @@ func (h *practiceWire) request(tok, method, path string, in any) (*http.Response
 	req.Header.Set("Authorization", "Bearer "+tok)
 	return (&http.Client{Timeout: 20 * time.Second}).Do(req)
 }
+
+func (h *practiceWire) adminRequest(tok, method, path string, in any) (*http.Response, error) {
+	b, _ := json.Marshal(in)
+	base := h.api.URL + "/admin/v1/"
+	for strings.HasPrefix(path, "/") {
+		path = strings.TrimPrefix(path, "/")
+	}
+	req, e := http.NewRequest(method, base+path, bytes.NewReader(b))
+	if e != nil {
+		return nil, e
+	}
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	return (&http.Client{Timeout: 20 * time.Second}).Do(req)
+}
+
+func (h *practiceWire) admin(tok, method, path string, in any, status int, out any) {
+	h.t.Helper()
+	r, e := h.adminRequest(tok, method, path, in)
+	h.must(e)
+	defer r.Body.Close()
+	if r.StatusCode != status {
+		raw, _ := io.ReadAll(r.Body)
+		h.t.Fatalf("%s %s: got %d want %d: %s", method, path, r.StatusCode, status, raw)
+	}
+	if out != nil {
+		h.must(json.NewDecoder(r.Body).Decode(out))
+	}
+}
+
+func (h *practiceWire) adminLogin() string {
+	h.t.Helper()
+	login := uuid.NewString()
+	const password = "fixture-password-only"
+	_, e := adminops.Provision(h.ctx, h.s.db, login, password, "operator")
+	h.must(e)
+	var auth admin.AdminSession
+	h.admin("", "POST", "auth/login", admin.AdminLoginJSONBody{Login: login, Password: password}, 200, &auth)
+	return auth.AccessToken
+}
 func (h *practiceWire) json(tok, method, path string, in any, status int, out any) {
 	h.t.Helper()
 	r := h.open(tok, method, path, in, status)
@@ -285,6 +343,11 @@ func (h *practiceWire) user() app.Tokens {
 	h.json(u.AccessToken, "PUT", "me/consents/practice", map[string]any{"version": "v1", "granted": true}, 200, nil)
 	return u
 }
+func (h *practiceWire) assessmentUser() app.Tokens {
+	u := h.user()
+	h.json(u.AccessToken, "PUT", "me/consents/assessment", map[string]any{"version": "v1", "granted": true}, 200, nil)
+	return u
+}
 func (h *practiceWire) logout(u app.Tokens) {
 	h.json(u.AccessToken, "POST", "auth/logout", map[string]string{"refresh_token": u.RefreshToken}, 200, nil)
 }
@@ -297,6 +360,17 @@ func (h *practiceWire) create(u app.Tokens, level int) string {
 	} else {
 		in["level_id"] = fmt.Sprintf("19000000-0000-4000-8000-%012d", level)
 	}
+	var v training.Session
+	h.json(u.AccessToken, "POST", "sessions", in, 200, &v)
+	if v.ID.String() != id {
+		h.t.Fatal("request id")
+	}
+	h.json(u.AccessToken, "POST", "sessions", in, 200, &v)
+	return "sessions/" + id
+}
+func (h *practiceWire) createLevel(u app.Tokens, level uuid.UUID) string {
+	id := uuid.NewString()
+	in := map[string]any{"request_id": id, "level_id": level}
 	var v training.Session
 	h.json(u.AccessToken, "POST", "sessions", in, 200, &v)
 	if v.ID.String() != id {

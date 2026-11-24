@@ -36,8 +36,11 @@ func reply(c *gin.Context, v any, e error) {
 	}
 	c.JSON(200, v)
 }
+
+const maxAppJSONBody int64 = 32 << 10
+
 func input(c *gin.Context, v any) bool {
-	d := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 32<<10))
+	d := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, maxAppJSONBody))
 	d.DisallowUnknownFields()
 	if e := d.Decode(v); e != nil || d.Decode(new(any)) != io.EOF {
 		accountError(c, accounts.ErrInvalid)

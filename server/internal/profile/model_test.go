@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -8,7 +9,27 @@ import (
 
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/emotion"
+	"high-eq/server/internal/promptvars"
 )
+
+func TestProfilePromptVariablesFitPublishedBounds(t *testing.T) {
+	opts := make([][]string, len(axes))
+	for i, axis := range axes {
+		opts[i] = axis.options
+	}
+	raw, err := json.Marshal(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) != promptvars.ProfileOptionsMaxBytes {
+		t.Fatalf("serialized options=%d bytes, prompt contract=%d", len(raw), promptvars.ProfileOptionsMaxBytes)
+	}
+	for _, scene := range []string{"work", "partner", "family", "friends", "social"} {
+		if len(scene) > promptvars.ProfileSceneMaxBytes {
+			t.Fatalf("profile scene category %q exceeds prompt contract", scene)
+		}
+	}
+}
 
 func TestIndependentEvidence(t *testing.T) {
 	var d dossier

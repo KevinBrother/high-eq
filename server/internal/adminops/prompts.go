@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
@@ -17,8 +18,12 @@ import (
 // Enforce required fields including nullable experiment_version_id. In particular,
 // accidentally omitting experiment_percent must not silently disable a live experiment.
 func promptBody(c *gin.Context, out any, fields ...string) bool {
+	rawRequest, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 512<<10))
+	if err != nil || !utf8.Valid(rawRequest) {
+		return false
+	}
 	var body map[string]json.RawMessage
-	dec := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 512<<10))
+	dec := json.NewDecoder(bytes.NewReader(rawRequest))
 	if dec.Decode(&body) != nil || dec.Decode(&struct{}{}) != io.EOF || len(body) != len(fields) {
 		return false
 	}
@@ -33,7 +38,11 @@ func promptBody(c *gin.Context, out any, fields ...string) bool {
 }
 func promptError(c *gin.Context, e error) {
 	switch {
-	case errors.Is(e, prompts.ErrRelease), errors.Is(e, prompts.ErrTemplate):
+	case errors.Is(e, prompts.ErrVariable):
+		rejectMessage(c, 400, "invalid_argument", "提示词变量不受支持，或用合法输入渲染后为空、超过 256 KiB")
+	case errors.Is(e, prompts.ErrTemplate):
+		rejectMessage(c, 400, "invalid_argument", "提示词模板语法无效或超过 64 KiB")
+	case errors.Is(e, prompts.ErrRelease):
 		reject(c, 400)
 	case errors.Is(e, prompts.ErrNotFound):
 		reject(c, 404)

@@ -111,7 +111,7 @@ func verifyDashboard(t *testing.T, db *pgxpool.Pool) {
 	}
 	var v, other admin.PromptVersion
 	for _, ptr := range []*admin.PromptVersion{&v, &other} {
-		req("POST", "prompt-versions", admin.CreatePromptVersionJSONBody{Task: admin.TaskScoring, Template: "synthetic {{scene}}"}, 200, ptr)
+		req("POST", "prompt-versions", admin.CreatePromptVersionJSONBody{Task: admin.TaskScoring, Template: "synthetic {{assessment}}"}, 200, ptr)
 	}
 	exec(`insert into users(id,age_confirmed_at) values($1,now())`, user)
 	sources := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New()}

@@ -48,14 +48,7 @@ class AdminApi {
           .then(http.Response.fromStream)
           .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200) {
-        throw ApiFailure(response.statusCode, switch (response.statusCode) {
-          400 => '请检查输入后重试',
-          401 => '凭据无效或会话已过期，请重新登录',
-          404 => '配置不存在或不再满足准入条件，请刷新清单',
-          409 => '配置仍在使用或不符合准入条款，请核对主备、字段和留存',
-          403 => '当前角色无权执行此操作',
-          _ => '服务暂不可用，请稍后重试',
-        });
+        throw ApiFailure(response.statusCode, _failureMessage(response));
       }
       return jsonDecode(utf8.decode(response.bodyBytes))
           as Map<String, dynamic>;
@@ -125,4 +118,29 @@ class AdminApi {
     String token,
     Map<String, String> filters,
   ) => _request('GET', 'audit-logs', token: token, query: filters);
+}
+
+String _failureMessage(http.Response response) {
+  final fallback = switch (response.statusCode) {
+    400 => '请检查输入后重试',
+    401 => '凭据无效或会话已过期，请重新登录',
+    404 => '配置不存在或不再满足准入条件，请刷新清单',
+    409 => '配置仍在使用或不符合准入条款，请核对主备、字段和留存',
+    403 => '当前角色无权执行此操作',
+    _ => '服务暂不可用，请稍后重试',
+  };
+  if (response.statusCode != 400) return fallback;
+  try {
+    final body = jsonDecode(utf8.decode(response.bodyBytes));
+    if (body is Map<String, dynamic>) {
+      final message = body['message'];
+      if (message is String) {
+        final trimmed = message.trim();
+        if (trimmed.isNotEmpty && trimmed.length <= 240) return trimmed;
+      }
+    }
+  } on FormatException {
+    // A proxy or gateway may return a non-JSON body; keep the fixed status copy.
+  }
+  return fallback;
 }

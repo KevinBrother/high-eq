@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"high-eq/server/internal/api/admin"
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/events"
 	"high-eq/server/internal/gateway"
@@ -705,6 +706,137 @@ func TestPracticeWire(t *testing.T) {
 		}
 	})
 	t.Run("owner_only_relaunch_inputs", h.checkRelaunch)
+
+	// Run the write-producing wire checks after the existing assertions and replays.
+	t.Run("strict_utf8_create_session_entrypoint", func(t *testing.T) {
+		u := h.user()
+		beforeActivities, beforeGenerations := h.number(`select count(*) from activities where user_id=$1`, u.UserId), h.generations.Load()
+		post := func(token string, raw []byte) *http.Response {
+			t.Helper()
+			req, err := http.NewRequest(http.MethodPost, h.api.URL+"/v1/sessions", bytes.NewReader(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if token != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+			resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return resp
+		}
+		assertRejected := func(token string, raw []byte, want int) {
+			t.Helper()
+			resp := post(token, raw)
+			defer resp.Body.Close()
+			response, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != want {
+				t.Fatalf("status=%d want %d: %s", resp.StatusCode, want, response)
+			}
+			if strings.Contains(string(response), "合成") {
+				t.Fatalf("response echoed request text: %s", response)
+			}
+		}
+
+		invalid := append([]byte(`{"request_id":"`+uuid.NewString()+`","scene":"work","scenario":"合成`), 0xff)
+		invalid = append(invalid, []byte(`"}`)...)
+		assertRejected("", invalid, http.StatusUnauthorized)
+		assertRejected(u.AccessToken, invalid, http.StatusBadRequest)
+		if got := h.number(`select count(*) from activities where user_id=$1`, u.UserId); got != beforeActivities {
+			t.Fatalf("invalid encoding wrote %d activities, want %d", got, beforeActivities)
+		}
+		if got := h.generations.Load(); got != beforeGenerations {
+			t.Fatalf("invalid encoding made %d model calls, want %d", got, beforeGenerations)
+		}
+
+		id := uuid.NewString()
+		scenario := "合法多字节场景 �"
+		valid := []byte(`{"request_id":"` + id + `","scene":"work","scenario":"` + scenario + `"}`)
+		resp := post(u.AccessToken, valid)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			response, _ := io.ReadAll(resp.Body)
+			t.Fatalf("valid UTF-8 status=%d want 200: %s", resp.StatusCode, response)
+		}
+		var created training.SessionSummary
+		if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+			t.Fatal(err)
+		}
+		if created.ID.String() != id {
+			t.Fatalf("created session ID=%s want %s", created.ID, id)
+		}
+		detail := h.history(u, "sessions/"+id)
+		if detail.Setup == nil || detail.Setup.Scenario == nil || *detail.Setup.Scenario != scenario {
+			t.Fatalf("stored scenario=%v want %q", detail.Setup, scenario)
+		}
+	})
+
+	t.Run("strict_utf8_admin_prompt_entrypoint", func(t *testing.T) {
+		token := h.adminLogin()
+		beforePrompts, beforeGenerations := h.number(`select count(*) from prompt_versions where task='reply_suggestion'`), h.generations.Load()
+		post := func(raw []byte, authenticated bool) *http.Response {
+			t.Helper()
+			req, err := http.NewRequest(http.MethodPost, h.api.URL+"/admin/v1/prompt-versions", bytes.NewReader(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if authenticated {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+			resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return resp
+		}
+		assertRejected := func(raw []byte, authenticated bool, want int) {
+			t.Helper()
+			resp := post(raw, authenticated)
+			defer resp.Body.Close()
+			response, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != want {
+				t.Fatalf("status=%d want %d: %s", resp.StatusCode, want, response)
+			}
+			if strings.Contains(string(response), "合成") {
+				t.Fatalf("response echoed template text: %s", response)
+			}
+		}
+
+		invalid := append([]byte(`{"task":"reply_suggestion","template":"合成`), 0xff)
+		invalid = append(invalid, []byte(`"}`)...)
+		assertRejected(invalid, false, http.StatusUnauthorized)
+		assertRejected(invalid, true, http.StatusBadRequest)
+		if got := h.number(`select count(*) from prompt_versions where task='reply_suggestion'`); got != beforePrompts {
+			t.Fatalf("invalid encoding wrote %d prompt versions, want %d", got, beforePrompts)
+		}
+		if got := h.generations.Load(); got != beforeGenerations {
+			t.Fatalf("invalid encoding made %d model calls, want %d", got, beforeGenerations)
+		}
+
+		template := "合法多字节模板 �"
+		resp := post([]byte(`{"task":"reply_suggestion","template":"`+template+`"}`), true)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			response, _ := io.ReadAll(resp.Body)
+			t.Fatalf("valid UTF-8 status=%d want 200: %s", resp.StatusCode, response)
+		}
+		var stored admin.PromptVersion
+		h.must(json.NewDecoder(resp.Body).Decode(&stored))
+		var persisted string
+		if err := h.s.db.QueryRow(h.ctx, `select template from prompt_versions where id=$1`, stored.Id).Scan(&persisted); err != nil {
+			t.Fatal(err)
+		}
+		if stored.Task != admin.TaskReplySuggestion || stored.Template != template || persisted != template {
+			t.Fatalf("stored prompt=%+v persisted=%q want task=reply_suggestion template=%q", stored, persisted, template)
+		}
+	})
 }
 func (h *practiceWire) exportDelete(u app.Tokens, p string, id uuid.UUID) {
 	var raw bytes.Buffer

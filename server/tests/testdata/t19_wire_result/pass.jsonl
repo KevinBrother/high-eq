@@ -1,0 +1,7 @@
+{"Time":"2026-11-24T00:00:00Z","Action":"start","Package":"high-eq/server/internal/service"}
+{"Time":"2026-11-24T00:00:00Z","Action":"run","Package":"high-eq/server/internal/service","Test":"TestPracticeWire"}
+{"Time":"2026-11-24T00:00:00Z","Action":"output","Package":"high-eq/server/internal/service","Test":"TestPracticeWire","Output":"=== RUN   TestPracticeWire\n"}
+{"Time":"2026-11-24T00:00:00Z","Action":"output","Package":"high-eq/server/internal/service","Test":"TestPracticeWire","Output":"    --- SKIP: TestPracticeWire (0.00s)\n"}
+{"Time":"2026-11-24T00:00:00Z","Action":"pass","Package":"high-eq/server/internal/service","Test":"TestPracticeWire","Elapsed":0.01}
+{"Time":"2026-11-24T00:00:00Z","Action":"output","Package":"high-eq/server/internal/service","Output":"PASS\n"}
+{"Time":"2026-11-24T00:00:00Z","Action":"pass","Package":"high-eq/server/internal/service","Elapsed":0.01}

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"high-eq/server/internal/gateway"
 	"high-eq/server/internal/prompts"
+	"high-eq/server/internal/promptvars"
 )
 
 type step struct {
@@ -31,6 +32,22 @@ func (s *spy) Run(_ context.Context, c gateway.Call) (gateway.Reply, error) {
 
 var turns = []Turn{{"assistant", "想谈什么？"}, {"user", "昨天两份报表都是我做的。"}, {"assistant", "哪里需要调整？"}, {"user", "你就是个废物！"}}
 var scope = gateway.Scope{User: uuid.New(), Operation: uuid.New()}
+
+func TestScoringPromptVariablesFitPublishedBounds(t *testing.T) {
+	for _, assessment := range []string{"full_session", "single_skill", "full_review"} {
+		if len(assessment) > promptvars.ScoringAssessmentMaxBytes {
+			t.Fatalf("assessment %q exceeds prompt contract", assessment)
+		}
+	}
+	for _, target := range []string{"observation", "feeling", "need", "request"} {
+		if len(target) > promptvars.ScoringTargetItemMaxBytes {
+			t.Fatalf("target %q exceeds prompt contract", target)
+		}
+	}
+	if len(retryInstruction) != promptvars.ScoringRetryMaxBytes {
+		t.Fatalf("retry=%d bytes, prompt contract=%d", len(retryInstruction), promptvars.ScoringRetryMaxBytes)
+	}
+}
 
 const good = `{"safety_flag":false,"mode":"express","nvc":{"observation":{"score":15,"reason":"事实加一处评判"},"feeling":{"score":0,"reason":"无情绪"},"need":{"score":0,"reason":"指责"},"request":{"score":0,"reason":"无请求"},"total":99},"emotion":{"read_others":{"level":1,"reason":"未回应"},"self_management":{"level":1,"reason":"攻击"},"relationship":{"level":1,"reason":"辱骂"}},"target_turn":2,"better_version":"一起理一下分工好吗？","why_better":"具体请求"}`
 

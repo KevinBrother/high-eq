@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -56,16 +58,46 @@ func TestPromptLifecycle(t *testing.T) {
 			}
 		}
 	}
-	request("GET", "prompt-versions", nil, 401, nil)
-	login := uuid.NewString()
-	const pw = "fixture-password-only"
-	actor, e := adminops.Provision(ctx, db, login, pw, "operator")
-	if e != nil {
-		t.Fatal(e)
+	postRaw := func(token string, raw []byte) *http.Response {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/admin/v1/prompt-versions", bytes.NewReader(raw))
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w.Result()
 	}
-	var auth admin.AdminSession
-	request("POST", "auth/login", admin.AdminLoginJSONBody{Login: login, Password: pw}, 200, &auth)
-	token = auth.AccessToken
+	rejectRaw := func(token string, raw []byte, want int) {
+		t.Helper()
+		resp := postRaw(token, raw)
+		defer resp.Body.Close()
+		response, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != want {
+			t.Fatalf("status=%d want %d: %s", resp.StatusCode, want, response)
+		}
+		if bytes.Contains(response, []byte("合成")) {
+			t.Fatalf("response echoed template text: %s", response)
+		}
+	}
+	request("GET", "prompt-versions", nil, 401, nil)
+	loginOperator := func() (uuid.UUID, string) {
+		t.Helper()
+		login := uuid.NewString()
+		const pw = "fixture-password-only"
+		actor, err := adminops.Provision(ctx, db, login, pw, "operator")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var auth admin.AdminSession
+		request("POST", "auth/login", admin.AdminLoginJSONBody{Login: login, Password: pw}, 200, &auth)
+		return actor, auth.AccessToken
+	}
+	actor, token := loginOperator()
+
 	const task = admin.TaskReplySuggestion
 	create := func(task admin.Task, src string) admin.PromptVersion {
 		t.Helper()
@@ -74,8 +106,17 @@ func TestPromptLifecycle(t *testing.T) {
 		return v
 	}
 	request("POST", "prompt-versions", admin.CreatePromptVersionJSONBody{Task: task, Template: "{{oops"}, 400, nil)
-	a := create(task, "test-A {{x}}")
-	b := create(task, "test-B {{x}}")
+	var roleVersions int
+	if e = db.QueryRow(ctx, `select count(*) from prompt_versions where task='role_play'`).Scan(&roleVersions); e != nil {
+		t.Fatal(e)
+	}
+	request("POST", "prompt-versions", admin.CreatePromptVersionJSONBody{Task: admin.TaskRolePlay, Template: "{{profile}}"}, 400, nil)
+	var afterInvalid int
+	if e = db.QueryRow(ctx, `select count(*) from prompt_versions where task='role_play'`).Scan(&afterInvalid); e != nil || afterInvalid != roleVersions {
+		t.Fatal("invalid variable changed role-play versions", roleVersions, afterInvalid, e)
+	}
+	a := create(task, "test-A")
+	b := create(task, "test-B")
 	foreign := create(admin.TaskClassification, "fixture")
 	if b.Version != a.Version+1 || a.Id == b.Id {
 		t.Fatal("not a new consecutive version")
@@ -97,9 +138,9 @@ func TestPromptLifecycle(t *testing.T) {
 		t.Fatal(e)
 	}
 	release := admin.PromptRelease{Task: task, ModelId: model, PrimaryVersionId: a.Id}
-	check := func(id uuid.UUID, text string) {
+	check := func(task admin.Task, id uuid.UUID, text string, vars map[string]string) {
 		t.Helper()
-		got, s, e := prompts.Resolve(ctx, db, string(task), model, user, map[string]string{"x": "PRIVATE-FIXTURE"})
+		got, s, e := prompts.Resolve(ctx, db, string(task), model, user, vars)
 		if e != nil || got != id || s != text {
 			t.Fatal("published snapshot differs", e)
 		}
@@ -108,22 +149,41 @@ func TestPromptLifecycle(t *testing.T) {
 		t.Fatal("draft was live")
 	}
 	request("PUT", "prompt-releases", release, 200, nil)
-	check(a.Id, "test-A PRIVATE-FIXTURE")
+	check(task, a.Id, "test-A", nil)
 	release.ExperimentPercent = 100
 	request("PUT", "prompt-releases", release, 400, nil)
 	release.ExperimentVersionId = &foreign.Id
 	request("PUT", "prompt-releases", release, 404, nil)
-	check(a.Id, "test-A PRIVATE-FIXTURE")
+	check(task, a.Id, "test-A", nil)
 	release.ExperimentVersionId = &b.Id
 	request("PUT", "prompt-releases", release, 200, nil)
-	check(b.Id, "test-B PRIVATE-FIXTURE")
+	check(task, b.Id, "test-B", nil)
 	release.ExperimentPercent = 0
 	release.ExperimentVersionId = nil
 	request("PUT", "prompt-releases", release, 200, nil)
-	check(a.Id, "test-A PRIVATE-FIXTURE")
-	if _, _, e := prompts.Resolve(ctx, db, string(task), model, user, nil); !errors.Is(e, prompts.ErrVariable) {
+	check(task, a.Id, "test-A", nil)
+
+	const official = "请围绕 {{scene}} 展开练习。"
+	role := create(admin.TaskRolePlay, official)
+	roleRelease := admin.PromptRelease{Task: admin.TaskRolePlay, ModelId: model, PrimaryVersionId: role.Id}
+	request("PUT", "prompt-releases", roleRelease, 200, nil)
+	if _, _, e := prompts.Resolve(ctx, db, string(admin.TaskRolePlay), model, user, nil); !errors.Is(e, prompts.ErrVariable) {
 		t.Fatal("missing variable accepted")
 	}
+	check(admin.TaskRolePlay, role.Id, "请围绕 合成场景 展开练习。", map[string]string{"scene": "合成场景"})
+
+	// A direct SQL insert models an invalid historical version. Publishing it must
+	// fail before moving the live pointer, and the current version must remain resolvable.
+	var invalidRole admin.PromptVersion
+	e = db.QueryRow(ctx, `insert into prompt_versions(task,version,template)
+		select 'role_play',coalesce(max(version),0)+1,'{{profile}}' from prompt_versions where task='role_play'
+		returning id,task,version,template,created_at`).Scan(&invalidRole.Id, &invalidRole.Task, &invalidRole.Version, &invalidRole.Template, &invalidRole.CreatedAt)
+	if e != nil {
+		t.Fatal(e)
+	}
+	invalidRelease := admin.PromptRelease{Task: admin.TaskRolePlay, ModelId: model, PrimaryVersionId: invalidRole.Id}
+	request("PUT", "prompt-releases", invalidRelease, 400, nil)
+	check(admin.TaskRolePlay, role.Id, "请围绕 回滚后场景 展开练习。", map[string]string{"scene": "回滚后场景"})
 	var relPage struct {
 		Items []admin.PromptRelease
 		Next  *string `json:"next_cursor"`
@@ -152,7 +212,65 @@ func TestPromptLifecycle(t *testing.T) {
 	}
 	var ok, failed int
 	var leak bool
-	if e = db.QueryRow(ctx, `select count(*) filter(where result='ok'),count(*) filter(where result='failed'),coalesce(bool_or(target like '%PRIVATE%' or target like '%{{%'),false) from admin_audit_logs where actor_id=$1 and action in ('createPromptVersion','setPromptRelease')`, actor).Scan(&ok, &failed, &leak); e != nil || ok != 6 || failed != 3 || leak {
+	if e = db.QueryRow(ctx, `select count(*) filter(where result='ok'),count(*) filter(where result='failed'),coalesce(bool_or(target like '%PRIVATE%' or target like '%{{%'),false) from admin_audit_logs where actor_id=$1 and action in ('createPromptVersion','setPromptRelease')`, actor).Scan(&ok, &failed, &leak); e != nil || ok != 8 || failed != 5 || leak {
 		t.Fatal("incorrect audit", ok, failed, leak, e)
+	}
+
+	// Keep UTF-8 fixture writes out of the lifecycle actor's totals and paging.
+	utf8Actor, utf8Token := loginOperator()
+	expectCreateAudit := func(actor uuid.UUID, result string, write func()) {
+		t.Helper()
+		counts := func() (total, matching int) {
+			t.Helper()
+			err := db.QueryRow(ctx, `select count(*), count(*) filter (where result=$2 and target='prompts')
+				from admin_audit_logs where actor_id=$1 and action='createPromptVersion'`, actor, result).Scan(&total, &matching)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return total, matching
+		}
+		before, matchedBefore := counts()
+		write()
+		after, matchedAfter := counts()
+		if after-before != 1 || matchedAfter-matchedBefore != 1 {
+			t.Fatalf("createPromptVersion audit for actor=%s result=%s target=prompts: total delta=%d matching delta=%d want 1/1",
+				actor, result, after-before, matchedAfter-matchedBefore)
+		}
+	}
+	promptCount := func() int {
+		t.Helper()
+		var count int
+		if err := db.QueryRow(ctx, `select count(*) from prompt_versions where task=$1`, task).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	promptCountBefore := promptCount()
+	invalidVersion := append([]byte(`{"task":"reply_suggestion","template":"合成`), 0xff)
+	invalidVersion = append(invalidVersion, []byte(`"}`)...)
+	expectCreateAudit(uuid.Nil, "denied", func() { rejectRaw("", invalidVersion, 401) })
+	expectCreateAudit(utf8Actor, "failed", func() { rejectRaw(utf8Token, invalidVersion, 400) })
+	if after := promptCount(); after != promptCountBefore {
+		t.Fatalf("invalid encoding wrote prompt versions: before=%d after=%d", promptCountBefore, after)
+	}
+	validTemplate := "合法多字节模板 �"
+	validVersion := []byte(`{"task":"reply_suggestion","template":"` + validTemplate + `"}`)
+	expectCreateAudit(utf8Actor, "ok", func() {
+		resp := postRaw(utf8Token, validVersion)
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			response, _ := io.ReadAll(resp.Body)
+			t.Fatalf("valid UTF-8 status=%d want 200: %s", resp.StatusCode, response)
+		}
+		var stored admin.PromptVersion
+		if err := json.NewDecoder(resp.Body).Decode(&stored); err != nil {
+			t.Fatal(err)
+		}
+		if stored.Task != task || stored.Template != validTemplate {
+			t.Fatalf("stored prompt=%+v want task=%s template=%q", stored, task, validTemplate)
+		}
+	})
+	if after := promptCount(); after != promptCountBefore+1 {
+		t.Fatalf("valid encoding wrote %d prompt versions, want 1", after-promptCountBefore)
 	}
 }

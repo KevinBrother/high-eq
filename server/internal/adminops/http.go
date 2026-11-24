@@ -79,6 +79,9 @@ func reject(c *gin.Context, status int) {
 	case 501:
 		code, msg = "not_implemented", "此功能尚未开放"
 	}
+	rejectMessage(c, status, code, msg)
+}
+func rejectMessage(c *gin.Context, status int, code, msg string) {
 	c.AbortWithStatusJSON(status, gin.H{"code": code, "message": msg, "retryable": status == 500})
 }
 

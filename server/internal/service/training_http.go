@@ -10,8 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"high-eq/server/internal/accounts"
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/gateway"
+	"high-eq/server/internal/httpjson"
 	"high-eq/server/internal/training"
 )
 
@@ -45,6 +47,10 @@ func (a appAPI) ListLevels(c *gin.Context, p app.ListLevelsParams) {
 	practiceReply(c, v, e)
 }
 func (a appAPI) CreateSession(c *gin.Context) {
+	if _, err := httpjson.ReadStrictUTF8(c.Writer, c.Request, maxAppJSONBody); err != nil {
+		accountError(c, accounts.ErrInvalid)
+		return
+	}
 	var in training.Input
 	if !input(c, &in) {
 		return

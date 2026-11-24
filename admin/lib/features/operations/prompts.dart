@@ -94,6 +94,14 @@ class _Prompts extends ConsumerState<PromptPage> {
 
   Future<void> write(bool draft, {String? rollback}) async {
     if (busy || !ready) return;
+    final template = draft
+        ? editor.text
+        : version(rollback ?? selected)?['template'] as String?;
+    final invalid = validateTaskTemplate(task, template ?? '');
+    if (invalid != null) {
+      setState(() => error = invalid);
+      return;
+    }
     setState(() {
       busy = true;
       error = null;
@@ -167,6 +175,7 @@ class _Prompts extends ConsumerState<PromptPage> {
                     selected = null;
                     compare = null;
                     editor.clear();
+                    error = null;
                   });
                   load();
                 },
@@ -204,13 +213,13 @@ class _Prompts extends ConsumerState<PromptPage> {
             ),
             TextField(
               controller: editor,
-              onChanged: (_) => setState(() {}),
+              onChanged: (_) => setState(() => error = null),
               enabled: !busy,
               minLines: 3,
               maxLines: 10,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: '模板正文',
-                helperText: '使用 {{变量名}}；不要粘贴真实对话。',
+                helperText: '${taskVariableHint(task)}；不要粘贴真实对话。',
               ),
             ),
             Align(
@@ -219,8 +228,9 @@ class _Prompts extends ConsumerState<PromptPage> {
                 onPressed: busy
                     ? null
                     : () {
-                        if (editor.text.trim().isEmpty) {
-                          setState(() => error = '请先填写模板正文');
+                        final invalid = validateTaskTemplate(task, editor.text);
+                        if (invalid != null) {
+                          setState(() => error = invalid);
                           return;
                         }
                         write(true);

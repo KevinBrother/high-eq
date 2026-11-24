@@ -28,6 +28,8 @@ type Service struct {
 	hooks  Hooks
 }
 
+const retryInstruction = "上一次输出格式无效。请按当前分支重新生成一个严格合规的 JSON 对象。"
+
 // New binds the router to authenticated server state for ONE operation.
 func New(r Runner, scope gateway.Scope, hooks ...Hooks) *Service {
 	var h Hooks
@@ -136,7 +138,7 @@ func run[T any](parent context.Context, s *Service, c gateway.Call, parse func([
 			}
 		}
 		// Never echo rejected model text, or mutate the first attempt's variable map.
-		c.Variables = map[string]string{"assessment": c.Variables["assessment"], "target_item": c.Variables["target_item"], "retry": "上一次输出格式无效。请按当前分支重新生成一个严格合规的 JSON 对象。"}
+		c.Variables = map[string]string{"assessment": c.Variables["assessment"], "target_item": c.Variables["target_item"], "retry": retryInstruction}
 	}
 	return failed, ErrSchema
 }

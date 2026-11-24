@@ -39,7 +39,7 @@ func TestConcurrentDraftNumbers(t *testing.T) {
 			var v admin.PromptVersion
 			e := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
 				var err error
-				v, err = Create(ctx, tx, admin.CreatePromptVersionJSONBody{Task: admin.TaskReviewAnalysis, Template: "fixture {{scene}}"})
+				v, err = Create(ctx, tx, admin.CreatePromptVersionJSONBody{Task: admin.TaskReviewAnalysis, Template: "fixture"})
 				return err
 			})
 			out <- result{v.Version, e}
