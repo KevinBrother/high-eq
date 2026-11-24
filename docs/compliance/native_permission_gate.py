@@ -43,6 +43,7 @@ class PermissionFlow:
     sources_member: bool = True
     request_dispatched: bool = True
     capture_channel_installed: bool = True
+    preserves_first_request: bool = True
 
 
 class SyntheticPermissionFlow:
@@ -54,7 +55,8 @@ class SyntheticPermissionFlow:
 
     def request(self) -> None:
         self._pending = (
-            self.evidence.request_dispatched
+            self.evidence.preserves_first_request
+            and self.evidence.request_dispatched
             and self.evidence.capture_channel_installed
             and self.evidence.saves_pending_result
         )
@@ -90,6 +92,36 @@ def _strip_swift_comments(source: str) -> str:
         previous = source
         source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
     return re.sub(r"//[^\n]*", "", source)
+
+
+def _strip_dart_comments(source: str) -> str:
+    without_blocks = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    return re.sub(r"//[^\n]*", "", without_blocks)
+
+
+def _dart_control_channel_name(source: str) -> str | None:
+    match = re.search(
+        r"static\s+const\s+controlChannel\s*=\s*MethodChannel\s*\(\s*"
+        r"['\"]([^'\"]+)['\"]",
+        _strip_dart_comments(source),
+    )
+    return match.group(1) if match else None
+
+
+def _kotlin_control_channel_name(source: str) -> str | None:
+    match = re.search(
+        r'\bconst\s+val\s+CONTROL_CHANNEL\s*=\s*"([^"]+)"',
+        _strip_kotlin_comments(source),
+    )
+    return match.group(1) if match else None
+
+
+def _swift_control_channel_name(source: str) -> str | None:
+    match = re.search(
+        r'\bstatic\s+let\s+controlChannelName\s*=\s*"([^"]+)"',
+        _strip_swift_comments(source),
+    )
+    return match.group(1) if match else None
 
 
 def _braced_body(source: str, declaration: re.Pattern[str]) -> str | None:
@@ -328,6 +360,15 @@ def android_permission_flow(entry: str, capture: str) -> PermissionFlow:
     request_body = _braced_body(
         clean_capture, re.compile(r"fun\s+requestPermission\s*\([^)]*\)")
     ) or ""
+    positive_pending_guard = re.compile(
+        r"if\s*\(\s*pendingPermission\s*!=\s*null\s*\)\s*\{"
+    )
+    reversed_pending_guard = re.compile(
+        r"if\s*\(\s*pendingPermission\s*==\s*null\s*\)\s*\{"
+    )
+    preserves_first_request = bool(
+        _line_statement_spans(request_body, positive_pending_guard)
+    ) and not bool(_line_statement_spans(request_body, reversed_pending_guard))
     save_spans = _line_statement_spans(
         request_body, re.compile(r"pendingPermission\s*=\s*result\b")
     )
@@ -404,10 +445,13 @@ def android_permission_flow(entry: str, capture: str) -> PermissionFlow:
         channel_installed=channel_installed,
         request_dispatched=request_dispatched,
         capture_channel_installed=capture_channel_installed,
+        preserves_first_request=preserves_first_request,
     )
 
 
-def android_permission_behavior_errors(entry: str, capture: str) -> list[str]:
+def android_permission_behavior_errors(
+    entry: str, capture: str, *, dart_platform: str = ""
+) -> list[str]:
     flow = android_permission_flow(entry, capture)
     errors: list[str] = []
     if flow.request_code < 0:
@@ -437,6 +481,10 @@ def android_permission_behavior_errors(entry: str, capture: str) -> list[str]:
         errors.append(
             "Android VoiceCapture does not save the pending Flutter permission result"
         )
+    if not flow.preserves_first_request:
+        errors.append(
+            "Android VoiceCapture does not preserve the first microphone request"
+        )
     if flow.platform_request_code != flow.request_code:
         errors.append(
             "Android VoiceCapture does not request microphone permission with the "
@@ -457,6 +505,16 @@ def android_permission_behavior_errors(entry: str, capture: str) -> list[str]:
             "Android VoiceCapture does not complete the pending Flutter result from "
             "the platform grant result"
         )
+    if dart_platform:
+        dart_channel = _dart_control_channel_name(dart_platform)
+        if (
+            dart_channel is None
+            or _kotlin_control_channel_name(capture) != dart_channel
+        ):
+            errors.append(
+                "Android VoiceCapture control channel name does not match "
+                "Flutter platform.dart"
+            )
     return errors
 
 
@@ -503,12 +561,15 @@ def _ios_channel_installed(entry: str) -> bool:
     )
     if capture_property is None or launch is None:
         return False
+    registrar_pattern = re.compile(
+        r"if\s+let\s+registrar\s*=\s*registrar\s*\(\s*"
+        r"forPlugin:\s*\"VoiceCapture\"\s*\)"
+    )
+    if not _line_statement_spans(launch, registrar_pattern):
+        return False
     registrar = _braced_body(
         launch,
-        re.compile(
-            r"if\s+let\s+registrar\s*=\s*registrar\s*\(\s*"
-            r"forPlugin:\s*\"VoiceCapture\"\s*\)"
-        ),
+        registrar_pattern,
     )
     if registrar is None or not _top_level_has(
         registrar,
@@ -556,6 +617,15 @@ def ios_permission_flow(entry: str, capture: str, project: str) -> PermissionFlo
         )
     )
     request = _swift_function_body(clean_capture, "requestRecordPermission") or ""
+    positive_pending_guard = re.compile(
+        r"if\s+pendingPermission\s*!=\s*nil\s*\{"
+    )
+    reversed_pending_guard = re.compile(
+        r"if\s+pendingPermission\s*==\s*nil\s*\{"
+    )
+    preserves_first_request = bool(
+        _line_statement_spans(request, positive_pending_guard)
+    ) and not bool(_line_statement_spans(request, reversed_pending_guard))
     save_spans = _line_statement_spans(
         request, re.compile(r"pendingPermission\s*=\s*result\b")
     )
@@ -603,10 +673,13 @@ def ios_permission_flow(entry: str, capture: str, project: str) -> PermissionFlo
         result_for_denied=False if returns_granted else None,
         channel_installed=channel_installed,
         sources_member=sources_member,
+        preserves_first_request=preserves_first_request,
     )
 
 
-def ios_permission_behavior_errors(entry: str, capture: str, project: str) -> list[str]:
+def ios_permission_behavior_errors(
+    entry: str, capture: str, project: str, *, dart_platform: str = ""
+) -> list[str]:
     flow = ios_permission_flow(entry, capture, project)
     clean_capture = _strip_swift_comments(capture)
     request = _swift_function_body(clean_capture, "requestRecordPermission") or ""
@@ -619,6 +692,10 @@ def ios_permission_behavior_errors(entry: str, capture: str, project: str) -> li
     if not flow.saves_pending_result:
         errors.append(
             "iOS VoiceCapture does not save the pending Flutter permission result"
+        )
+    if not flow.preserves_first_request:
+        errors.append(
+            "iOS VoiceCapture does not preserve the first microphone request"
         )
     if flow.platform_request_code is None:
         errors.append(
@@ -641,6 +718,16 @@ def ios_permission_behavior_errors(entry: str, capture: str, project: str) -> li
             "iOS VoiceCapture does not complete the pending Flutter result with "
             "result(granted)"
         )
+    if dart_platform:
+        dart_channel = _dart_control_channel_name(dart_platform)
+        if (
+            dart_channel is None
+            or _swift_control_channel_name(capture) != dart_channel
+        ):
+            errors.append(
+                "iOS VoiceCapture control channel name does not match "
+                "Flutter platform.dart"
+            )
     return errors
 
 
@@ -652,16 +739,20 @@ def native_permission_behavior_errors(
     ios_capture: str,
     ios_project: str,
     native_sources: Mapping[str, str],
+    dart_platform: str = "",
 ) -> list[str]:
     """Combined gate used by the main T33 contract."""
     errors = android_permission_behavior_errors(
-        android_entry, native_sources.get(ANDROID_CAPTURE_PATH, android_capture)
+        android_entry,
+        native_sources.get(ANDROID_CAPTURE_PATH, android_capture),
+        dart_platform=dart_platform,
     )
     errors.extend(
         ios_permission_behavior_errors(
             ios_entry,
             native_sources.get(IOS_CAPTURE_PATH, ios_capture),
             ios_project,
+            dart_platform=dart_platform,
         )
     )
     return errors

@@ -34,6 +34,7 @@ ANDROID_CAPTURE = (
 IOS_ENTRY = "app/ios/Runner/AppDelegate.swift"
 IOS_CAPTURE = "app/ios/Runner/VoiceCapture.swift"
 IOS_PROJECT = "app/ios/Runner.xcodeproj/project.pbxproj"
+DART_PLATFORM = "app/lib/features/voice/platform.dart"
 
 
 def read(path: str) -> str:
@@ -106,6 +107,45 @@ class NativePermissionBehaviorGateContract(unittest.TestCase):
         self.assertIn(
             "Android VoiceCapture does not save the pending Flutter permission result",
             android_permission_behavior_errors(read(ANDROID_ENTRY), mutated),
+        )
+
+    def test_android_gate_rejects_reversed_pending_condition(self) -> None:
+        capture = read(ANDROID_CAPTURE)
+        guard = "        if (pendingPermission != null) {\n"
+        self.assertIn(guard, capture)
+        mutated = capture.replace(
+            guard, "        if (pendingPermission == null) {\n", 1
+        )
+        errors = android_permission_behavior_errors(
+            read(ANDROID_ENTRY), mutated
+        )
+        self.assertIn(
+            "Android VoiceCapture does not preserve the first microphone request",
+            errors,
+        )
+        synthetic = SyntheticPermissionFlow(
+            android_permission_flow(read(ANDROID_ENTRY), mutated)
+        )
+        synthetic.request()
+        self.assertIsNone(synthetic.complete(synthetic.evidence.request_code, True))
+
+    def test_android_gate_rejects_control_channel_name_drift(self) -> None:
+        capture = read(ANDROID_CAPTURE)
+        channel = 'const val CONTROL_CHANNEL = "cn.higheq/voice-capture"\n'
+        self.assertIn(channel, capture)
+        mutated = capture.replace(
+            channel,
+            'const val CONTROL_CHANNEL = "cn.higheq/voice-capture-drift"\n',
+            1,
+        )
+        self.assertIn(
+            "Android VoiceCapture control channel name does not match "
+            "Flutter platform.dart",
+            android_permission_behavior_errors(
+                read(ANDROID_ENTRY),
+                mutated,
+                dart_platform=read(DART_PLATFORM),
+            ),
         )
 
     def test_android_gate_rejects_hidden_platform_permission_request(self) -> None:
@@ -187,6 +227,62 @@ class NativePermissionBehaviorGateContract(unittest.TestCase):
 
         synthetic.request()
         self.assertTrue(synthetic.complete(flow.request_code, True))
+
+    def test_ios_gate_rejects_unreachable_channel_installation(self) -> None:
+        entry = read(IOS_ENTRY)
+        registrar = (
+            '    if let registrar = registrar(forPlugin: "VoiceCapture") {\n'
+        )
+        self.assertIn(registrar, entry)
+        mutated = entry.replace(registrar, "    return true\n" + registrar, 1)
+        self.assertIn(
+            "iOS AppDelegate does not install the VoiceCapture channel",
+            ios_permission_behavior_errors(
+                mutated, read(IOS_CAPTURE), read(IOS_PROJECT)
+            ),
+        )
+
+    def test_ios_gate_rejects_control_channel_name_drift(self) -> None:
+        capture = read(IOS_CAPTURE)
+        channel = 'static let controlChannelName = "cn.higheq/voice-capture"\n'
+        self.assertIn(channel, capture)
+        mutated = capture.replace(
+            channel,
+            'static let controlChannelName = "cn.higheq/voice-capture-drift"\n',
+            1,
+        )
+        self.assertIn(
+            "iOS VoiceCapture control channel name does not match "
+            "Flutter platform.dart",
+            ios_permission_behavior_errors(
+                read(IOS_ENTRY),
+                mutated,
+                read(IOS_PROJECT),
+                dart_platform=read(DART_PLATFORM),
+            ),
+        )
+
+    def test_ios_gate_rejects_reversed_pending_condition(self) -> None:
+        capture = read(IOS_CAPTURE)
+        guard = "    if pendingPermission != nil {\n"
+        self.assertIn(guard, capture)
+        mutated = capture.replace(
+            guard, "    if pendingPermission == nil {\n", 1
+        )
+        errors = ios_permission_behavior_errors(
+            read(IOS_ENTRY), mutated, read(IOS_PROJECT)
+        )
+        self.assertIn(
+            "iOS VoiceCapture does not preserve the first microphone request",
+            errors,
+        )
+        synthetic = SyntheticPermissionFlow(
+            ios_permission_flow(
+                read(IOS_ENTRY), mutated, read(IOS_PROJECT)
+            )
+        )
+        synthetic.request()
+        self.assertIsNone(synthetic.complete(synthetic.evidence.request_code, True))
 
     def test_ios_gate_rejects_hidden_platform_permission_request(self) -> None:
         capture = read(IOS_CAPTURE)

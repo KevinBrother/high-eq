@@ -24,6 +24,7 @@ try:  # Supports both `python -m unittest` and direct script execution.
         parse_workflow_jobs,
         uses_ignored_build_path,
         workflow_event_names,
+        workflow_has_path_filters,
         workflow_path_is_triggered,
         workflow_trigger_paths,
     )
@@ -37,6 +38,7 @@ except ImportError:  # pragma: no cover - exercised by the documented CLI form.
         parse_workflow_jobs,
         uses_ignored_build_path,
         workflow_event_names,
+        workflow_has_path_filters,
         workflow_path_is_triggered,
         workflow_trigger_paths,
     )
@@ -193,7 +195,9 @@ T29_WIRE_TRIGGER_PATHS = (
     "server/cmd/api/main.go",
     "server/internal/api/app/routes.gen.go",
     "server/internal/fieldcrypt/cipher.go",
+    "server/internal/membership/collection.go",
     "server/internal/service/entitlements_http.go",
+    "docker-compose.yml",
     ".github/workflows/t29-t30-wire.yml",
 )
 
@@ -365,7 +369,7 @@ def voice_ci_errors(workflow: str) -> list[str]:
             "hosted Verify workflow must trigger on both push and pull_request"
         )
     for event in ("push", "pull_request"):
-        if workflow_trigger_paths(workflow, event):
+        if workflow_has_path_filters(workflow, event):
             errors.append(
                 f"hosted Verify workflow {event} must not use path filters"
             )
@@ -2644,6 +2648,34 @@ class T29VoiceEvidenceContract(unittest.TestCase):
                         f"{event} must trigger the direct Go input {path}",
                     )
 
+    def test_wire_rejects_missing_actual_live_dependencies(self) -> None:
+        workflow = read(".github/workflows/t29-t30-wire.yml")
+        mutations = (
+            (
+                "docker-compose.yml",
+                workflow.replace(
+                    "      - 'docker-compose.yml'\n",
+                    "      - '!docker-compose.yml'\n",
+                ),
+            ),
+            (
+                "server/internal/membership/collection.go",
+                workflow.replace(
+                    "      - 'server/**'\n",
+                    "      - 'server/**'\n"
+                    "      - '!server/internal/membership/collection.go'\n",
+                ),
+            ),
+        )
+        for path, altered in mutations:
+            self.assertNotEqual(altered, workflow, path)
+            for event in ("push", "pull_request"):
+                with self.subTest(event=event, path=path):
+                    self.assertIn(
+                        f"T29 wire workflow {event} paths do not trigger {path!r}",
+                        t29_wire_workflow_errors(altered),
+                    )
+
     def test_wire_path_negation_and_document_only_rules_are_effective(self) -> None:
         workflow = read(".github/workflows/t29-t30-wire.yml")
         for event in ("push", "pull_request"):
@@ -2684,6 +2716,22 @@ class T29VoiceEvidenceContract(unittest.TestCase):
                     f"T29 wire workflow {event} must not trigger documentation-only "
                     "input 'docs/compliance/README.md'",
                     t29_wire_workflow_errors(docs_only),
+                )
+
+    def test_verify_rejects_both_github_path_filter_styles(self) -> None:
+        workflow = read(".github/workflows/verify.yml")
+        event = "pull_request"
+        for filter_name in ("paths", "paths-ignore"):
+            altered = workflow.replace(
+                f"  {event}:\n",
+                f"  {event}:\n    {filter_name}:\n      - 'docs/**'\n",
+                1,
+            )
+            self.assertNotEqual(altered, workflow, filter_name)
+            with self.subTest(filter=filter_name):
+                self.assertIn(
+                    f"hosted Verify workflow {event} must not use path filters",
+                    voice_ci_errors(altered),
                 )
 
     def test_verify_required_work_cannot_be_skipped_or_tolerate_failure(self) -> None:

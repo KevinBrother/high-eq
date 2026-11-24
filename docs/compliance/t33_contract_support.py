@@ -230,6 +230,22 @@ def workflow_trigger_path_rules(workflow: str, event: str) -> tuple[WorkflowPath
     return tuple(rules)
 
 
+def workflow_has_path_filters(workflow: str, event: str) -> bool:
+    """Return whether one event declares either GitHub path-filter style."""
+    lines = _without_yaml_comments(workflow)
+    try:
+        start = lines.index(f"  {event}:") + 1
+    except ValueError:
+        return False
+
+    for line in lines[start:]:
+        if re.match(r"^  [A-Za-z_][A-Za-z0-9_-]*:", line):
+            break
+        if re.match(r"^    (?:paths|paths-ignore)\s*:", line):
+            return True
+    return False
+
+
 def workflow_event_names(workflow: str) -> set[str]:
     """Return the events declared by the workflow's top-level `on` trigger."""
     lines = _without_yaml_comments(workflow)
