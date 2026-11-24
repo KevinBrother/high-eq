@@ -6,12 +6,13 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -24,7 +25,6 @@ import (
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/events"
 	"high-eq/server/internal/gateway"
-	"high-eq/server/internal/privacy"
 	"high-eq/server/internal/training"
 )
 
@@ -699,10 +699,145 @@ func TestPracticeWire(t *testing.T) {
 					if level == 1 && (prior.Progress.Score != 15 || res.Progress.Score != 25) || level == 5 && (prior.Score.NVC.Total != 60 || res.Score.NVC.Total != 100 || prior.Score.ID == res.Score.ID) {
 						t.Fatal("prior score/source not preserved")
 					}
-					h.exportDelete(u, p, sid)
+					h.exportDelete(t, u, p, sid, res)
 				}
 				previous = sid
 			}
+		}
+	})
+	t.Run("chat_import_export_is_isolated_metadata", func(t *testing.T) {
+		owner, foreign := h.user(), h.user()
+		ownerLive := uuid.MustParse(strings.TrimPrefix(h.create(owner, 0), "sessions/"))
+		ownerExpired := uuid.MustParse(strings.TrimPrefix(h.create(owner, 0), "sessions/"))
+		foreignLive := uuid.MustParse(strings.TrimPrefix(h.create(foreign, 0), "sessions/"))
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		ownerLiveAt := now.Add(-time.Minute)
+		ownerExpiredAt := now.Add(-24 * time.Hour)
+		foreignLiveAt := now.Add(-time.Minute)
+		liveSecret, expiredSecret, foreignSecret := "owner-live-ciphertext", "owner-expired-ciphertext", "other-live-ciphertext"
+		h.exec(`insert into chat_imports(activity_id,received_at,original_enc) values($1,$2,$3),($4,$5,$6),($7,$8,$9)`,
+			ownerLive, ownerLiveAt, []byte(liveSecret),
+			ownerExpired, ownerExpiredAt, []byte(expiredSecret),
+			foreignLive, foreignLiveAt, []byte(foreignSecret))
+
+		r := h.open(owner.AccessToken, "GET", "me/export", nil, 200)
+		defer r.Body.Close()
+		if got := r.Header.Get("Content-Type"); got != "application/zip" {
+			t.Fatalf("export content type = %q", got)
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		z, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files := make(map[string][]byte, len(z.File))
+		var names []string
+		for _, f := range z.File {
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, exists := files[f.Name]; exists {
+				t.Fatalf("duplicate ZIP entry: %s", f.Name)
+			}
+			files[f.Name] = body
+			names = append(names, f.Name)
+		}
+		strict := func(name string, dst any) {
+			t.Helper()
+			body, ok := files[name]
+			if !ok {
+				t.Fatalf("missing ZIP entry %s", name)
+			}
+			dec := json.NewDecoder(bytes.NewReader(body))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(dst); err != nil {
+				t.Fatalf("strict decode %s: %v", name, err)
+			}
+			var trailing any
+			if err := dec.Decode(&trailing); err != io.EOF {
+				t.Fatalf("%s has trailing JSON: %v", name, err)
+			}
+		}
+
+		var manifest struct {
+			Modules []string `json:"modules"`
+			Files   []string `json:"files"`
+		}
+		strict("manifest.json", &manifest)
+		if !reflect.DeepEqual(names, manifest.Files) {
+			t.Fatalf("ZIP entries = %v; manifest = %v", names, manifest.Files)
+		}
+		wantFiles := []string{"manifest.json"}
+		for _, name := range manifest.Modules {
+			wantFiles = append(wantFiles, name+".json")
+		}
+		if !reflect.DeepEqual(manifest.Files, wantFiles) {
+			t.Fatalf("manifest files = %v, want %v", manifest.Files, wantFiles)
+		}
+		if !slices.Contains(manifest.Modules, "training") || !slices.Contains(manifest.Modules, "chat_imports") {
+			t.Fatalf("manifest modules = %v, want training and chat_imports", manifest.Modules)
+		}
+
+		type exportedSession struct {
+			training.Session
+			Source uuid.UUID `json:"source_id"`
+		}
+		var sessions []exportedSession
+		strict("training.json", &sessions)
+		var liveSession, expiredSession bool
+		for _, session := range sessions {
+			if session.Source == uuid.Nil {
+				t.Fatalf("training session %s has no source_id", session.ID)
+			}
+			switch session.ID {
+			case ownerLive:
+				liveSession = true
+			case ownerExpired:
+				expiredSession = true
+			}
+		}
+		if len(sessions) != 2 || !liveSession || !expiredSession {
+			t.Fatalf("training export did not contain exactly the owner sessions: %+v", sessions)
+		}
+		if bytes.Contains(files["training.json"], []byte(`"activity_id"`)) {
+			t.Fatal("training.json contains chat import metadata")
+		}
+
+		var imports []struct {
+			ActivityID         uuid.UUID `json:"activity_id"`
+			ReceivedAt         time.Time `json:"received_at"`
+			ContentUnavailable bool      `json:"content_unavailable"`
+		}
+		strict("chat_imports.json", &imports)
+		if len(imports) != 1 {
+			t.Fatalf("chat imports = %+v, want one live owner record", imports)
+		}
+		if imports[0].ActivityID != ownerLive || !imports[0].ReceivedAt.Equal(ownerLiveAt) || !imports[0].ContentUnavailable {
+			t.Fatalf("chat import = %+v, want live owner metadata unavailable", imports[0])
+		}
+		importBody := files["chat_imports.json"]
+		for _, forbidden := range []string{
+			ownerExpired.String(), foreignLive.String(), "original_enc", liveSecret,
+			base64.StdEncoding.EncodeToString([]byte(liveSecret)),
+		} {
+			if bytes.Contains(importBody, []byte(forbidden)) {
+				t.Fatalf("chat_imports.json leaked %q: %s", forbidden, importBody)
+			}
+		}
+		for _, file := range files {
+			t35Exclude(t, file, liveSecret, expiredSecret, foreignSecret, `"original_enc":`,
+				base64.StdEncoding.EncodeToString([]byte(liveSecret)),
+				base64.StdEncoding.EncodeToString([]byte(expiredSecret)),
+				base64.StdEncoding.EncodeToString([]byte(foreignSecret)))
 		}
 	})
 	t.Run("owner_only_relaunch_inputs", h.checkRelaunch)
@@ -837,46 +972,4 @@ func TestPracticeWire(t *testing.T) {
 			t.Fatalf("stored prompt=%+v persisted=%q want task=reply_suggestion template=%q", stored, persisted, template)
 		}
 	})
-}
-func (h *practiceWire) exportDelete(u app.Tokens, p string, id uuid.UUID) {
-	var raw bytes.Buffer
-	h.must(h.s.Data.Export(h.ctx, privacy.ExportRequest{UserID: u.UserId, OperationID: uuid.New()}, &raw))
-	z, e := zip.NewReader(bytes.NewReader(raw.Bytes()), int64(raw.Len()))
-	h.must(e)
-	found := false
-	for _, f := range z.File {
-		if f.Name != "training.json" {
-			continue
-		}
-		r, e := f.Open()
-		h.must(e)
-		var v []struct {
-			training.Session
-			Source uuid.UUID `json:"source_id"`
-		}
-		h.must(json.NewDecoder(r).Decode(&v))
-		r.Close()
-		for _, s := range v {
-			if s.ID != id {
-				continue
-			}
-			found = true
-			if len(s.Messages) == 0 || s.Result == nil || s.Source == uuid.Nil {
-				h.t.Fatal("incomplete export")
-			}
-			if h.number(`select count(*) from practice_messages where activity_id=$1 and position(convert_to($2,'UTF8') in content_enc)>0`, id, s.Messages[0].Text) != 0 {
-				h.t.Fatal("plaintext at rest")
-			}
-			h.must(h.s.Data.Delete(h.ctx, privacy.Deletion{UserID: u.UserId, OperationID: uuid.New(), SourceID: s.Source, Scope: "sessions"}))
-		}
-	}
-	if !found {
-		h.t.Fatal("missing export")
-	}
-	h.json(u.AccessToken, "GET", p, nil, 404, nil)
-	for _, table := range []string{"practice_work", "practice_messages", "quota_attempts", "quota_ledger", "ai_calls", "scores", "drill_progress"} {
-		if h.number(fmt.Sprintf("select count(*) from %s where activity_id=$1", table), id) != 0 {
-			h.t.Fatal("retained", table)
-		}
-	}
 }

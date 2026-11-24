@@ -9,6 +9,8 @@ import WechatOpenSDK
 /// No SDK is asked for authorization until the corresponding user gesture.
 final class MobileCommerce: NSObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
   weak var window: UIWindow?
+  var onExportPresented: ((Int) -> Void)?
+  private let privacyExport = PrivacyExportShare()
   private var authorizing: FlutterResult?
   private var appleController: ASAuthorizationController?
   private var pending: [String: StoreKit.Transaction] = [:]
@@ -39,6 +41,22 @@ final class MobileCommerce: NSObject, ASAuthorizationControllerDelegate, ASAutho
       }
       #endif
       result(unavailable)
+    case "cleanupStatus":
+      result(privacyExport.cleanupStatus)
+    case "shareExport":
+      guard let requestId = args["requestId"] as? Int, requestId > 0 else {
+        result(unavailable); return
+      }
+      privacyExport.present(
+        path: args["path"] as? String,
+        mimeType: args["mimeType"] as? String,
+        from: window,
+        onPresented: { [weak self] in self?.onExportPresented?(requestId) }
+      ) { outcome in
+        result(outcome == .completed
+          ? nil
+          : FlutterError(code: outcome.rawValue, message: nil, details: nil))
+      }
     case "available": result(configured("SubscriptionMonthly") != nil && configured("SubscriptionYearly") != nil)
     case "purchase", "restore", "finish":
       Task { @MainActor in

@@ -1,20 +1,28 @@
+import 'dart:convert';
+
 import '../../core/api.dart';
 import '../../core/app_op.g.dart';
 import '../../core/endpoints.g.dart';
 import '../../core/session.dart';
 import '../../core/transport.dart';
+import 'inference.dart';
 import 'models.dart';
 import 'purpose.dart';
 
 abstract interface class ContactsRepository {
-  Future<Set<ContactPurpose>> currentGrants();
+  Future<ContactConsentSnapshot> currentConsents();
   Future<void> grant(ContactPurpose purpose);
   Future<Book> load();
   Future<List<Question>> questions();
   Future<void> save(Json input, {String? id});
   Future<void> remove(String id);
   Future<void> choose(String id);
-  Future<Json> infer(String id, String requestId, String text);
+  Future<ProfileInferenceResult> infer(
+    String id,
+    String requestId,
+    String text, {
+    required ContactInferenceGrant authorization,
+  });
 }
 
 class ApiContacts implements ContactsRepository {
@@ -23,7 +31,7 @@ class ApiContacts implements ContactsRepository {
   final AccountScope scope;
   late final _consents = ContactDecisions(api, scope);
   @override
-  Future<Set<ContactPurpose>> currentGrants() => _consents.current();
+  Future<ContactConsentSnapshot> currentConsents() => _consents.current();
   @override
   Future<void> grant(ContactPurpose purpose) => _consents.grant(purpose);
   @override
@@ -94,10 +102,46 @@ class ApiContacts implements ContactsRepository {
   }
 
   @override
-  Future<Json> infer(String id, String requestId, String text) =>
-      api.inferProfile(
-        scope: scope,
-        id: id,
-        body: {'request_id': requestId, 'chat_text': text},
-      );
+  Future<ProfileInferenceResult> infer(
+    String id,
+    String requestId,
+    String text, {
+    required ContactInferenceGrant authorization,
+  }) async {
+    var status = 0;
+    ContactInferenceGrant? verified;
+    final payload = await api.api
+        .bytesGuarded(
+          AppOp.inferProfile,
+          scope: scope,
+          path: {'id': id},
+          body: {'request_id': requestId, 'chat_text': text},
+          onStatus: (value) => status = value,
+          beforeSend: () async {
+            verified = null;
+            final current = await _consents.current();
+            if (current.inferenceGrant != authorization) {
+              throw const ContactConsentChanged();
+            }
+            verified = current.inferenceGrant;
+          },
+          checkBeforeSend: () {
+            if (verified != authorization) {
+              throw const ContactConsentChanged();
+            }
+            verified = null;
+          },
+        )
+        .transform(utf8.decoder)
+        .join();
+    api.api.sessions.require(scope);
+    Object? value;
+    try {
+      value = jsonDecode(payload);
+    } on FormatException {
+      return ProfileInferenceTerminal(status);
+    }
+    if (value is! Json) return ProfileInferenceTerminal(status);
+    return decodeProfileInferenceResult(status, value, requestId);
+  }
 }

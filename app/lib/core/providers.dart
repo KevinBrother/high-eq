@@ -57,9 +57,8 @@ final apiProvider = FutureProvider<AppApi>((ref) async {
   return AppApi(origin, transport, sessions);
 });
 
-/// The active identity changes synchronously when a session is revoked. Keep
-/// that transition observable without asking account-scoped providers to read
-/// a nullable session and throw while their old page is still mounted.
+/// The signed-in navigator overrides this with its own login lease. Consumers
+/// outside that navigator can still observe the live session transition.
 final accountScopeProvider = Provider<AccountScope?>((ref) {
   final api = ref.watch(apiProvider).requireValue;
   final identity = api.sessions.identity;
@@ -67,7 +66,7 @@ final accountScopeProvider = Provider<AccountScope?>((ref) {
   identity.addListener(changed);
   ref.onDispose(() => identity.removeListener(changed));
   return identity.value;
-});
+}, dependencies: []);
 
 final consentProvider = FutureProvider<ConsentGate>(
   (ref) async => ConsentGate(await ref.watch(apiProvider.future)),

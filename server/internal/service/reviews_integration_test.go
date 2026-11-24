@@ -22,6 +22,7 @@ import (
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/events"
 	"high-eq/server/internal/gateway"
+	"high-eq/server/internal/growth"
 	"high-eq/server/internal/privacy"
 	"high-eq/server/internal/scoring"
 )
@@ -168,7 +169,11 @@ func TestReviewLifecycle(t *testing.T) {
 	path := "reviews/" + v.Id.String()
 	check(request("GET", path, b.AccessToken, nil), 404, nil)
 	check(request("DELETE", path, b.AccessToken, nil), 404, nil)
+	replay = app.Review{}
 	check(request("GET", path, a.AccessToken, nil), 200, &replay)
+	if replay.Submitted.RequestId != in.RequestId {
+		t.Fatal("review detail lost the submitted request ID")
+	}
 	usage(1)
 	// If T25 is present use its real feedback endpoint. The journal itself contains
 	// no assertion of another person's state; a score never emits a profile vote.
@@ -270,8 +275,31 @@ func TestReviewLifecycle(t *testing.T) {
 	usage(2)
 	s.Reviews.Router = original
 	consent(a.AccessToken, true)
+	for _, purpose := range []string{"contacts", "manual_mark"} {
+		check(request("PUT", "me/consents/"+purpose, a.AccessToken, map[string]any{"version": "v1", "granted": true}), 200, nil)
+	}
+	var contact app.Contact
+	check(request("POST", "contacts", a.AccessToken, map[string]string{"nickname": "T35 合成复盘对象", "scene": "work"}), 200, &contact)
+	var mark app.Mark
+	check(request("POST", "marks", a.AccessToken, app.CreateMarkInput{RequestId: uuid.New()}), 200, &mark)
+	// Seed the same encrypted signal shape used by the profile fixture, then
+	// link it through the public review route.
+	signal := app.SignalEvent{
+		Id: uuid.New(), StartsAt: time.Now().UTC().Truncate(30 * time.Second),
+		Kind: "conversation_rhythm", Confirmation: "pending",
+	}
+	signalData, err := json.Marshal(signal)
+	must(err)
+	signalEnc, err := s.Fields.Seal(signalData, []byte("event/"+a.UserId.String()+"/"+signal.Id.String()))
+	must(err)
+	_, err = s.db.Exec(ctx, "insert into signal_events(user_id,id,occurred_at,event_enc) values($1,$2,$3,$4)",
+		a.UserId, signal.Id, signal.StartsAt, signalEnc)
+	must(err)
+	bad.ContactId, bad.MarkId, bad.SignalEventId = &contact.Id, &mark.Id, &signal.Id
+	bad.OccurredAt = &signal.StartsAt
 	bad.RequestId = uuid.New()
-	check(post(bad), 200, nil)
+	var linkedReview app.Review
+	check(post(bad), 200, &linkedReview)
 	usage(3)
 	bad.RequestId = uuid.New()
 	prior := f.analyses.Load()
@@ -279,23 +307,146 @@ func TestReviewLifecycle(t *testing.T) {
 	if prior != f.analyses.Load() {
 		t.Fatal("exhausted quota reached upstream")
 	}
-	export := func(user uuid.UUID, name string) string {
-		var buf bytes.Buffer
-		must(s.Data.Export(ctx, privacy.ExportRequest{UserID: user, OperationID: uuid.New()}, &buf))
-		z, e := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-		must(e)
-		f, e := z.Open(name)
-		must(e)
-		defer f.Close()
-		b, e := io.ReadAll(f)
-		must(e)
-		return string(b)
+	if empty := t35Part(t, t35Download(t, router, b.AccessToken), "reviews"); string(empty) != "[]" {
+		t.Fatal("reviews.json exposed an owned review to the account without reviews")
 	}
-	if data := export(a.UserId, "reviews.json"); !strings.Contains(data, source.String()) || !strings.Contains(data, "合成引文") || !strings.Contains(data, in.Happened) || strings.Contains(data, "input_mac") || export(b.UserId, "reviews.json") != "[]" {
-		t.Fatal("invalid journal export")
+	consent(b.AccessToken, true)
+	foreignInput := in
+	// The replay key is scoped to an account. Reuse it across owners to prove
+	// the exported groups cannot be correlated by the original key.
+	foreignInput.Happened = "T35-SYNTHETIC-FOREIGN-REVIEW"
+	var foreign app.Review
+	check(request("POST", "reviews", b.AccessToken, foreignInput), 200, &foreign)
+	export := func(token, name string) string {
+		t.Helper()
+		return string(t35Part(t, t35Download(t, router, token), name))
 	}
-	if !strings.Contains(export(a.UserId, "ai_calls.json"), source.String()) {
-		t.Fatal("missing linked calls")
+	assertNoReplayIDs := func(archive *zip.Reader) {
+		t.Helper()
+		for _, entry := range archive.File {
+			r, err := entry.Open()
+			must(err)
+			body, err := io.ReadAll(r)
+			r.Close()
+			must(err)
+			for _, id := range []uuid.UUID{in.RequestId, second.Submitted.RequestId, linkedReview.Submitted.RequestId} {
+				if strings.Contains(entry.Name, id.String()) || bytes.Contains(body, []byte(id.String())) {
+					t.Fatalf("%s contains internal request ID %s", entry.Name, id)
+				}
+			}
+		}
+	}
+	archive := t35Download(t, router, a.AccessToken)
+	foreignArchive := t35Download(t, router, b.AccessToken)
+	assertNoReplayIDs(archive)
+	assertNoReplayIDs(foreignArchive)
+	reviewData := t35Part(t, archive, "reviews")
+	t35Exclude(t, reviewData, foreign.Id.String(), foreignInput.Happened, foreign.Score.ScoreId.String(),
+		"input_mac", `"generated_enc":`, `"generated_call_id":`, `"repair_enc":`, `"request_id":`,
+		in.RequestId.String(), linkedReview.Submitted.RequestId.String())
+	var reviewRows []struct {
+		ID       uuid.UUID   `json:"id"`
+		Source   uuid.UUID   `json:"source_id"`
+		Contact  *uuid.UUID  `json:"contact_id"`
+		Mark     *uuid.UUID  `json:"mark_id"`
+		Signal   *uuid.UUID  `json:"signal_event_id"`
+		ScoredAt *time.Time  `json:"scored_at"`
+		Result   *app.Review `json:"result"`
+	}
+	t35Decode(t, reviewData, &reviewRows)
+	wantOwned, wantLinked := v, linkedReview
+	wantOwned.Submitted.RequestId, wantLinked.Submitted.RequestId = uuid.Nil, uuid.Nil
+	var owned, associations bool
+	for _, row := range reviewRows {
+		if row.ID == v.Id && row.Source == source && row.ScoredAt != nil && row.ScoredAt.Equal(at) && row.Result != nil {
+			owned = reflect.DeepEqual(*row.Result, wantOwned)
+		}
+		associations = associations || row.ID == linkedReview.Id && row.Contact != nil &&
+			*row.Contact == contact.Id && row.Mark != nil && *row.Mark == mark.Id &&
+			row.Signal != nil && *row.Signal == signal.Id && row.Result != nil &&
+			reflect.DeepEqual(*row.Result, wantLinked)
+	}
+	if !owned || !associations || !bytes.Contains(reviewData, []byte("合成引文")) {
+		t.Fatal("reviews.json missing the owner's journal, approved repair or score detail")
+	}
+	foreignData := t35Part(t, foreignArchive, "reviews")
+	t35Exclude(t, foreignData, v.Id.String(), in.Happened, source.String(), foreignInput.RequestId.String())
+	var foreignRows []struct {
+		ID     uuid.UUID   `json:"id"`
+		Result *app.Review `json:"result"`
+	}
+	t35Decode(t, foreignData, &foreignRows)
+	foreign.Submitted.RequestId = uuid.Nil
+	if len(foreignRows) != 1 || foreignRows[0].ID != foreign.Id || !reflect.DeepEqual(foreignRows[0].Result, &foreign) {
+		t.Fatal("reviews.json did not return exactly the other account's own completed review")
+	}
+
+	aiData := t35Part(t, archive, "ai_calls")
+	t35Exclude(t, aiData, foreign.Id.String(), foreign.Score.ScoreId.String(), in.Happened, "合成引文", v.RepairPhrase,
+		`"messages":`, `"prompt":`, `"input":`, `"output":`, "synthetic-key")
+	type exportedCall struct {
+		ID        uuid.UUID       `json:"id"`
+		Operation uuid.UUID       `json:"operation_id"`
+		Activity  uuid.UUID       `json:"activity_id"`
+		Score     uuid.UUID       `json:"score_id"`
+		Model     uuid.UUID       `json:"model_id"`
+		Prompt    uuid.UUID       `json:"prompt_version_id"`
+		Outcome   string          `json:"outcome"`
+		Task      string          `json:"task"`
+		Started   time.Time       `json:"started_at"`
+		Latency   json.RawMessage `json:"latency_ms"`
+		Input     json.RawMessage `json:"input_tokens"`
+		Output    json.RawMessage `json:"output_tokens"`
+		Cost      json.RawMessage `json:"cost_cny"`
+	}
+	var calls []exportedCall
+	t35Decode(t, aiData, &calls)
+	var callID uuid.UUID
+	must(s.db.QueryRow(ctx, "select id from ai_calls where activity_id=$1 and score_id=$2 and task='scoring'", v.Id, source).Scan(&callID))
+	linked := false
+	for _, call := range calls {
+		linked = linked || call.ID == callID && call.Operation != uuid.Nil && call.Activity == v.Id &&
+			call.Score == source && call.Model != uuid.Nil && call.Prompt != uuid.Nil &&
+			call.Outcome == "ok" && call.Task == "scoring" && !call.Started.IsZero() &&
+			len(call.Latency) > 0 && len(call.Input) > 0 && len(call.Output) > 0 && len(call.Cost) > 0
+	}
+	if !linked {
+		t.Fatal("ai_calls.json missing the linked scoring attempt and its measurement fields")
+	}
+	callGroup := func(calls []exportedCall, user, activity, internalOperation uuid.UUID) uuid.UUID {
+		t.Helper()
+		var group uuid.UUID
+		var attempts int
+		for _, call := range calls {
+			if call.Activity != activity {
+				continue
+			}
+			if call.Operation == uuid.Nil || (group != uuid.Nil && call.Operation != group) {
+				t.Fatalf("ai_calls.json has inconsistent operation IDs for activity %s", activity)
+			}
+			group = call.Operation
+			attempts++
+		}
+		if attempts < 2 {
+			t.Fatalf("ai_calls.json needs multiple attempts for activity %s, got %d", activity, attempts)
+		}
+		count(`select count(*) from ai_calls where user_id=$1 and activity_id=$2 and operation_id=$3`, attempts, user, activity, internalOperation)
+		return group
+	}
+	var foreignCalls, repeatedCalls []exportedCall
+	t35Decode(t, t35Part(t, foreignArchive, "ai_calls"), &foreignCalls)
+	repeatedArchive := t35Download(t, router, a.AccessToken)
+	assertNoReplayIDs(repeatedArchive)
+	t35Decode(t, t35Part(t, repeatedArchive, "ai_calls"), &repeatedCalls)
+	group := callGroup(calls, a.UserId, v.Id, in.RequestId)
+	if group == callGroup(calls, a.UserId, linkedReview.Id, linkedReview.Submitted.RequestId) {
+		t.Fatal("ai_calls.json merged separate operations in one account")
+	}
+	if group == callGroup(foreignCalls, b.UserId, foreign.Id, foreignInput.RequestId) {
+		t.Fatal("ai_calls.json exposed the same operation group across accounts")
+	}
+	if group != callGroup(repeatedCalls, a.UserId, v.Id, in.RequestId) {
+		t.Fatal("ai_calls.json changed the operation group across downloads")
 	}
 	consent(a.AccessToken, false)
 	check(request("DELETE", path, a.AccessToken, nil), 200, nil)
@@ -314,7 +465,7 @@ func TestReviewLifecycle(t *testing.T) {
 	}
 	count(`select count(*) from growth_scores where score_id=$1`, 0, source)
 	count(`select count(*) from ai_calls where activity_id=$1`, 0, v.Id)
-	if strings.Contains(export(a.UserId, "reviews.json"), source.String()) {
+	if strings.Contains(export(a.AccessToken, "reviews"), source.String()) {
 		t.Fatal("deleted score exported")
 	}
 	// Use a fresh account so the tombstone replay check is not masked by exhausted
@@ -349,8 +500,18 @@ func TestReviewLifecycle(t *testing.T) {
 	getReference(1)
 	var canonicalAt time.Time
 	must(s.db.QueryRow(ctx, `select occurred_at from scores where id=$1 and activity_id=$2`, created.Score.ScoreId, created.Id).Scan(&canonicalAt))
-	if ex := export(c.UserId, "growth.json"); !strings.Contains(ex, created.Score.ScoreId.String()) || strings.Contains(ex, "合成引文") {
-		t.Fatal("growth export does not match numeric-only source")
+	growthData := []byte(export(c.AccessToken, "growth"))
+	t35Exclude(t, growthData, "合成引文", inC.Happened, foreign.Score.ScoreId.String(), `"reason":`, `"review_activity_id":`)
+	var projections []growth.ExportRecord
+	t35Decode(t, growthData, &projections)
+	projected := false
+	for _, row := range projections {
+		projected = projected || row.RecordType == "score" && row.SourceID == created.Score.ScoreId &&
+			row.Kind == "review" && row.OccurredAt.Equal(canonicalAt) && row.NVC.Total == 20 &&
+			row.Emotion.ReadOthers == 2 && row.Emotion.SelfManagement == 3 && row.Emotion.Relationship == 2
+	}
+	if !projected {
+		t.Fatal("growth.json missing the owner's numeric review projection")
 	}
 	pathC := "reviews/" + created.Id.String()
 	check(request("DELETE", pathC, c.AccessToken, nil), 200, nil)
@@ -358,7 +519,7 @@ func TestReviewLifecycle(t *testing.T) {
 		t.Fatal("deleted review was accepted by score bus")
 	}
 	getReference(0)
-	if strings.Contains(export(c.UserId, "growth.json"), created.Score.ScoreId.String()) {
+	if strings.Contains(export(c.AccessToken, "growth"), created.Score.ScoreId.String()) {
 		t.Fatal("growth export kept the erased score")
 	}
 
@@ -379,6 +540,16 @@ func TestReviewLifecycle(t *testing.T) {
 	f.mode.Store(5)
 	check(retryExpiry(), 503, nil)
 	count(`select count(*) from review_requests where user_id=$1 and request_id=$2 and generated_task='scoring' and generated_enc is not null`, 1, expiryUser.UserId, expiring.RequestId)
+	pendingData := []byte(export(expiryUser.AccessToken, "reviews"))
+	var pendingRows []struct {
+		Repair string `json:"approved_repair_draft"`
+	}
+	t35Decode(t, pendingData, &pendingRows)
+	if len(pendingRows) != 1 || pendingRows[0].Repair != v.RepairPhrase {
+		t.Fatal("reviews.json missing the approved repair while scoring awaits moderation")
+	}
+	t35Exclude(t, pendingData, `"result":`, `"generated_enc":`, `"generated_call_id":`, "合成引文",
+		`"request_id":`, expiring.RequestId.String())
 	expiryAnalyses, expiryScores := f.analyses.Load(), f.scores.Load()
 	f.mode.Store(6)
 	releaseOutput := sync.OnceFunc(func() { close(f.releaseOutput) })

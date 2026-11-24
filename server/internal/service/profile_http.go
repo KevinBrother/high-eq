@@ -84,7 +84,7 @@ func (a appAPI) InferProfile(c *gin.Context, id uuid.UUID) {
 	session := func(ctx context.Context, fn func(pgx.Tx) error) error {
 		return a.accounts.WithSession(ctx, p, false, fn)
 	}
-	v, e := a.profiles.Infer(c.Request.Context(), session, a.profiles.Data.DiscardProfileInference, p.User, id, in)
+	v, e := a.profiles.Infer(c.Request.Context(), session, a.profiles.Data.ReleaseProfileInference, p.User, id, in)
 	if errors.Is(e, profile.ErrInferencePending) {
 		c.JSON(202, gin.H{"request_id": in.RequestId, "status": "in_progress"})
 		return

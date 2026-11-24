@@ -36,6 +36,7 @@ void main() {
       final frames = JourneyFrames(tester);
       final growth = find.byType(GrowthPage);
       final home = find.byType(PracticeHomePage);
+      final signedInApp = find.byType(HealthForeground);
       final lobby = find.byType(PracticeLobby);
       final contacts = find.byType(ContactsWorkspace);
       final offline = find.descendant(
@@ -91,11 +92,16 @@ void main() {
 
       Finder reference(String score) => semantics('训练参考分 $score 分，满分 100 分');
 
+      GrowthRepository activeGrowthRepository() => ProviderScope.containerOf(
+        tester.element(signedInApp),
+        listen: false,
+      ).read(growthRepositoryProvider)!;
+
       Future<GrowthSnapshot?> cache() {
-        final repo = container.read(growthRepositoryProvider);
+        final repo = activeGrowthRepository();
         expect(repo, isA<ApiGrowthRepository>());
         return frames.real(
-          repo!.cached,
+          repo.cached,
           'encrypted cache of active growth provider',
         );
       }
@@ -408,7 +414,7 @@ void main() {
       });
 
       await frames.phase('account-isolation', () async {
-        final aRepo = container.read(growthRepositoryProvider)!;
+        final aRepo = activeGrowthRepository();
         final b = await frames.real(
           () => login(input('TICKET_B')),
           'synthetic login and activate account B',
@@ -429,6 +435,7 @@ void main() {
         expect(fenced, isTrue);
         // PracticeHomePage also reads growth. Check B's cache before entering
         // either route and keep both repositories offline until B's retry.
+        await frames.appeared(signedInApp, 'signed-in navigator for B');
         expect(await cache(), isNull);
         wire.historyUnavailable = true;
         final blockedMark = wire.mark();

@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 import '../../core/session.dart';
 import '../onboarding/surface.dart';
 import 'account_access.dart';
+import 'export_card.dart';
+import 'export_delivery.dart';
+import 'export_flow.dart';
 import 'store.dart';
 
 class PrivacyPage extends StatefulWidget {
@@ -37,17 +40,23 @@ class _PrivacyPageState extends State<PrivacyPage> {
   String? _issuedTo;
   String? _error;
   String? _message;
+  bool _showReadRetry = false;
   bool _busy = false;
   bool _ready = false;
+  bool _departed = false;
+  PrivacyExportPhase? _exportPhase;
+  late final PrivacyExportFlow _exportFlow;
 
   AccountAccess get _admission => widget.store.admission;
   bool get _current =>
       mounted &&
+      !_departed &&
       identical(widget.store.api.sessions.active, widget.store.scope);
 
   @override
   void initState() {
     super.initState();
+    _exportFlow = PrivacyExportFlow(widget.store.api, widget.store.scope);
     scheduleMicrotask(() {
       if (!_current) return;
       unawaited(_run(() => _read(refresh: widget.refreshOnEntry)));
@@ -56,6 +65,7 @@ class _PrivacyPageState extends State<PrivacyPage> {
 
   @override
   void dispose() {
+    _exportFlow.dispose();
     _timezone.dispose();
     _phone.dispose();
     _code.dispose();
@@ -68,6 +78,7 @@ class _PrivacyPageState extends State<PrivacyPage> {
       _busy = true;
       _error = null;
       _message = null;
+      _showReadRetry = false;
     });
     try {
       await action();
@@ -76,6 +87,7 @@ class _PrivacyPageState extends State<PrivacyPage> {
     } catch (error) {
       if (_current) {
         setState(() {
+          _showReadRetry = true;
           _error = error is PrivacyFailure
               ? error.message
               : friendlyError(error);
@@ -85,6 +97,29 @@ class _PrivacyPageState extends State<PrivacyPage> {
       if (_current) setState(() => _busy = false);
     }
   }
+
+  Future<void> _export() => _run(() async {
+    try {
+      await _exportFlow.run((phase) {
+        if (_current) setState(() => _exportPhase = phase);
+      });
+      if (_current) setState(() => _message = '系统已完成保存或分享。');
+    } on PrivacyExportDeliveryFailure catch (error) {
+      if (_current) {
+        setState(() {
+          if (error.deliveryCode == 'cancelled') {
+            _message = error.message;
+          } else {
+            _error = error.message;
+          }
+        });
+      }
+    } catch (error) {
+      if (_current) setState(() => _error = friendlyError(error));
+    } finally {
+      if (_current) setState(() => _exportPhase = null);
+    }
+  });
 
   Future<void> _read({bool refresh = true}) async {
     final recovering = _admission.frozenUntil != null;
@@ -201,64 +236,82 @@ class _PrivacyPageState extends State<PrivacyPage> {
     builder: (context, _) {
       final account = _admission.account;
       final deadline = _admission.frozenUntil;
-      return Scaffold(
-        appBar: AppBar(title: const Text('隐私与个人数据')),
-        body: SafeArea(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: Column(
-                children: [
-                  if (_busy) const LinearProgressIndicator(),
-                  if (_error != null || _message != null)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 10, 20, 4),
-                      child: Semantics(
-                        liveRegion: true,
-                        child: Text(
-                          (_error ?? _message)!,
-                          style: TextStyle(
-                            color: _error == null
-                                ? null
-                                : Theme.of(context).colorScheme.error,
+      return PopScope(
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) return;
+          _departed = true;
+          _exportFlow.dispose();
+        },
+        child: Scaffold(
+          appBar: AppBar(title: const Text('隐私与个人数据')),
+          body: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Column(
+                  children: [
+                    if (_busy) const LinearProgressIndicator(),
+                    if (_error != null || _message != null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 10, 20, 4),
+                        child: Semantics(
+                          liveRegion: true,
+                          child: Text(
+                            (_error ?? _message)!,
+                            style: TextStyle(
+                              color: _error == null
+                                  ? null
+                                  : Theme.of(context).colorScheme.error,
+                            ),
                           ),
                         ),
                       ),
+                    Expanded(
+                      child: ListView(
+                        padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+                        children: [
+                          if (deadline != null) ...[
+                            _ClosureCard(
+                              deadline: deadline,
+                              onCancel: _busy ? null : _cancelClosure,
+                            ),
+                            const SizedBox(height: 12),
+                            TextButton(
+                              onPressed: _busy ? null : widget.onExit,
+                              child: const Text('退出账号'),
+                            ),
+                          ] else if (_ready && account != null) ...[
+                            _AccountCard(
+                              account: account,
+                              timezone: _timezone,
+                              onSave: _canEdit ? _saveTimezone : null,
+                            ),
+                            const SizedBox(height: 24),
+                            PrivacyExportCard(
+                              phase: _exportPhase,
+                              onExport: _canEdit ? _export : null,
+                              onCancel: switch (_exportPhase) {
+                                PrivacyExportPhase.preparing ||
+                                PrivacyExportPhase.downloading =>
+                                  _exportFlow.cancel,
+                                _ => null,
+                              },
+                            ),
+                            const SizedBox(height: 24),
+                            _closureForm(context, account.bindings),
+                          ] else if (_error == null)
+                            const Text('正在确认账号状态…'),
+                          if (_showReadRetry && !_busy)
+                            TextButton(
+                              key: const Key('privacy-retry'),
+                              onPressed: () => _run(_read),
+                              child: const Text('重试读取账号状态'),
+                            ),
+                        ],
+                      ),
                     ),
-                  Expanded(
-                    child: ListView(
-                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
-                      children: [
-                        if (deadline != null) ...[
-                          _ClosureCard(
-                            deadline: deadline,
-                            onCancel: _busy ? null : _cancelClosure,
-                          ),
-                          const SizedBox(height: 12),
-                          TextButton(
-                            onPressed: _busy ? null : widget.onExit,
-                            child: const Text('退出账号'),
-                          ),
-                        ] else if (_ready && account != null) ...[
-                          _AccountCard(
-                            account: account,
-                            timezone: _timezone,
-                            onSave: _canEdit ? _saveTimezone : null,
-                          ),
-                          const SizedBox(height: 24),
-                          _closureForm(context, account.bindings),
-                        ] else if (_error == null)
-                          const Text('正在确认账号状态…'),
-                        if (_error != null && !_busy)
-                          TextButton(
-                            key: const Key('privacy-retry'),
-                            onPressed: () => _run(_read),
-                            child: const Text('重试读取账号状态'),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),

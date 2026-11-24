@@ -11,10 +11,12 @@ import copy
 import re
 import subprocess
 import unittest
+from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
 
 try:  # Supports both `python -m unittest` and direct script execution.
+    from .t33_owner_go import GoCall, GoSource
     from .t33_contract_support import (
         WorkflowJob,
         android_permission_callback_errors,
@@ -30,6 +32,7 @@ try:  # Supports both `python -m unittest` and direct script execution.
         workflow_trigger_paths,
     )
 except ImportError:  # pragma: no cover - exercised by the documented CLI form.
+    from t33_owner_go import GoCall, GoSource  # type: ignore[no-redef]
     from t33_contract_support import (  # type: ignore[no-redef]
         WorkflowJob,
         android_permission_callback_errors,
@@ -125,6 +128,10 @@ def git_show(path: str) -> str:
         capture_output=True,
         text=True,
     ).stdout
+
+
+def account_route_block(http: str) -> str:
+    return http.split("var accountRoutes = map[string]bool{", 1)[1].split("\n}", 1)[0]
 
 
 def compliance_corpus() -> str:
@@ -999,15 +1006,21 @@ class BaselineSourceFactsContract(unittest.TestCase):
         self.assertIn("limit 50", privacy)
         self.assertIn('json:"setup"', privacy)
         self.assertIn('json:"source_id"', privacy)
+        setup = privacy.split("type exportSetup struct {", 1)[1].split("\n}", 1)[0]
+        messages = privacy.split("type exportMessage struct {", 1)[1].split("\n}", 1)[0]
+        self.assertCountEqual(
+            re.findall(r'json:"([^",]+)', setup),
+            ("level_id", "contact_id", "scene", "scenario", "previous_id"),
+        )
+        self.assertCountEqual(
+            re.findall(r'json:"([^",]+)', messages), ("id", "role", "seq", "text")
+        )
 
         delivery = read("server/internal/training/delivery.go")
         self.assertIn("interval '95 seconds'", read("server/internal/training/work.go"))
         self.assertIn("interval '720 hours'", delivery)
 
-        http = read("server/internal/service/http.go")
-        routes = re.search(r"var accountRoutes = map\[string\]bool\{(.*?)\n\}", http, re.S)
-        self.assertIsNotNone(routes)
-        route_block = routes.group(1)
+        route_block = account_route_block(read("server/internal/service/http.go"))
         for route in (
             "GET /v1/levels",
             "GET /v1/sessions",
@@ -1018,9 +1031,6 @@ class BaselineSourceFactsContract(unittest.TestCase):
             "POST /v1/sessions/:session_id/finish",
         ):
             self.assertIn(route, route_block)
-        self.assertNotIn("GET /v1/me/export", route_block)
-        self.assertNotIn("DELETE /v1/me/data/:kind/:id", route_block)
-
         inventory = read("docs/compliance/data-inventory.md")
         d38 = re.search(r"^\| D38 \|.*$", inventory, re.M)
         self.assertIsNotNone(d38, "data-inventory.md must have a D38 practice_work row")
@@ -1118,13 +1128,12 @@ class BaselineSourceFactsContract(unittest.TestCase):
             self.assertRegex(text, r"候选[^\n]*(?:待对表|不等于|不证明)", path)
 
     def test_generic_export_and_delete_routes_return_not_implemented(self) -> None:
-        http = read("server/internal/service/http.go")
-        routes = re.search(r"var accountRoutes = map\[string\]bool\{(.*?)\n\}", http, re.S)
-        self.assertIsNotNone(routes)
-        route_block = routes.group(1)
+        http = git_show("server/internal/service/http.go")
+        route_block = account_route_block(http)
         self.assertNotIn("GET /v1/me/export", route_block)
         self.assertNotIn("DELETE /v1/me/data/:kind/:id", route_block)
         self.assertIn('problem(c, 501, "not_implemented"', http)
+        self.assertIn('if c.FullPath() != "/v1/health" && (!implemented || auth == nil)', http)
 
         for path in (
             "docs/compliance/README.md",
@@ -1185,6 +1194,51 @@ class BaselineSourceFactsContract(unittest.TestCase):
         ):
             self.assertIn(phrase, corpus)
         self.assertRegex(corpus, r"通用.*(?:导出|删除).*(?:未接线|未接通|501 not_implemented)")
+
+
+class T35ReleaseCandidateContract(unittest.TestCase):
+    def test_public_export_is_wired_and_selected_record_delete_stays_501(self) -> None:
+        http = read("server/internal/service/http.go")
+        routes = account_route_block(http)
+        self.assertRegex(routes, r'"GET /v1/me/export":\s*false,')
+        self.assertNotIn("DELETE /v1/me/data/:kind/:id", routes)
+        self.assertRegex(
+            http,
+            r'if c\.FullPath\(\) != "/v1/health" && \(!implemented \|\| auth == nil\) \{\s*'
+            r'problem\(c, 501, "not_implemented", "[^"\n]+", false\)',
+        )
+        self.assertIn("Middlewares: []app.MiddlewareFunc{gate(api.accounts)}", http)
+        self.assertIn("api.data = runtime.Data", http)
+
+        generated = read("server/internal/api/app/routes.gen.go")
+        self.assertIn('router.GET(options.BaseURL+"/v1/me/export", wrapper.ExportData)', generated)
+        self.assertIn('router.DELETE(options.BaseURL+"/v1/me/data/:kind/:id", wrapper.DeleteSource)', generated)
+        handler = read("server/internal/service/privacy_http.go")
+        self.assertIn('func (a appAPI) ExportData(c *gin.Context)', handler)
+        self.assertIn('c.Header("Content-Type", "application/zip")', handler)
+        self.assertIn('a.accounts.WithSession(c.Request.Context(), p, false', handler)
+        self.assertIn('a.data.ExportTx(c.Request.Context(), tx, privacy.ExportRequest{', handler)
+        self.assertRegex(handler, r'UserID:\s*p\.User,')
+
+    def test_production_composition_requires_all_thirteen_export_modules(self) -> None:
+        runtime = read("server/internal/service/runtime.go")
+        modules = re.search(r'privacy\.NewRegistry\(\s*\[\]string\{([^}]+)\}', runtime)
+        self.assertIsNotNone(modules)
+        self.assertCountEqual(
+            re.findall(r'"([a-z_]+)"', modules.group(1)),
+            (
+                "accounts", "ai_calls", "assessments", "chat_imports", "emotion", "growth",
+                "manual_marks", "membership", "payments", "profiles", "replies", "reviews", "training",
+            ),
+        )
+        self.assertIn("s.Data = privacy.NewCoordinator(db, s.ledger, hooks)", runtime)
+
+    def test_api_labels_selected_record_delete_as_deferred(self) -> None:
+        api = read("docs/api/app.yaml")
+        delete = api.split("\n  /v1/me/data/{kind}/{id}:\n", 1)[1].split("\n  /v1/entitlements:", 1)[0]
+        self.assertIn("当前候选未开放", delete)
+        self.assertIn("'501':", delete)
+        self.assertIn("code: not_implemented", delete)
 
 
 class DataLineageContract(unittest.TestCase):
@@ -1464,13 +1518,6 @@ class T26GrowthContract(unittest.TestCase):
         self.assertIn("Score:      score", export_drills)
         self.assertIn("Band:       band", export_drills)
 
-        http = read("server/internal/service/http.go")
-        routes = re.search(r"var accountRoutes = map\[string\]bool\{(.*?)\n\}", http, re.S)
-        self.assertIsNotNone(routes)
-        self.assertNotIn("GET /v1/me/export", routes.group(1))
-        self.assertNotIn("DELETE /v1/me/data/:kind/:id", routes.group(1))
-        self.assertIn('problem(c, 501, "not_implemented"', http)
-
         inventory = read("docs/compliance/data-inventory.md")
         for phrase in (
             "内部 `growth.json` 包含数值评分记录、计划和单项调度",
@@ -1672,6 +1719,369 @@ class ReviewInventoryContract(unittest.TestCase):
 class ProfileEvidenceContract(unittest.TestCase):
     PROMPT_ID = "b935fb60-5a85-4c12-82c0-401afd649325"
 
+    def test_go_owner_call_parser_preserves_arguments_and_enclosing_functions(self) -> None:
+        source = GoSource(
+            '''package profile
+// func decoy() { invalidateInference(false) }
+func (s *Service) Infer(
+    reserved inferenceReservation,
+) error {
+    _ = `} invalidateInference(false)`
+    return session(func() error {
+        return invalidateInference(
+            nested(1, 2),
+            []int{3, 4},
+            reserved /* owner selector */ .owner,
+        )
+    })
+}
+func checkInferenceAttempt(owner uuid.UUID) error {
+    /* invalidateInference(false) */
+    return invalidateInference(owner)
+}
+func invalidateInference(values ...any) error { return nil }
+'''
+        )
+        self.assertEqual(
+            tuple(source.calls("invalidateInference")),
+            (
+                GoCall("Infer", 8, (
+                    ("nested", "(", "1", ",", "2", ")"),
+                    ("[", "]", "int", "{", "3", ",", "4", "}"),
+                    ("reserved", ".", "owner"),
+                )),
+                GoCall("checkInferenceAttempt", 17, (("owner",),)),
+            ),
+        )
+        owner_scopes = GoSource(
+            """func claimInference() {
+    if owner := uuid.New(); owner == uuid.Nil { return }
+    owner := uuid.New(); _ = owner
+}"""
+        )
+        self.assertEqual(
+            [change.function_level for change in owner_scopes.binding_changes("claimInference", "owner")],
+            [False, True],
+        )
+
+    def test_profile_invalidation_rejects_rebound_current_record(self) -> None:
+        infer = GoSource(read("server/internal/profile/infer.go"))
+        request = read("server/internal/profile/inference_request.go")
+        infer_call = "if e = invalidateInference(ctx, tx, u, id, in.RequestId, stored.owner)"
+        request_call = "return invalidateInference(ctx, tx, u, contact, request, got.owner)"
+        self.assertIn(infer_call, infer.source)
+        self.assertIn(request_call, request)
+        for declaration in (
+            "owner := request", "var owner = request", "owner = request",
+            'owner, got.state = request, "processing"',
+            'got.state, owner = "processing", request',
+            "owner, got.digest[0] = request, 0",
+            "owner, got.digest[len([]byte{0, 1})-1] = request, 0",
+            "owner, []byte{0, 1}[0] = request, 0",
+            "(owner) = request",
+            "owner[0] = request[0]",
+            "owner[0] ^= request[0]",
+            "owner[0]++",
+            "var (\n\t\t\t\towner = request\n\t\t\t)",
+            "_ = func(owner uuid.UUID) { _ = owner }",
+        ):
+            with self.subTest(declaration=declaration):
+                changed = GoSource(request.replace(request_call, declaration + "\n\t\t\t" + request_call, 1))
+                with self.assertRaisesRegex(AssertionError, "owner must keep its enclosing binding"):
+                    self._assert_profile_invalidation_calls(infer, changed)
+        for declaration in (
+            "got = inferenceRecord{}",
+            "got, e = inferenceRecord{}, nil",
+            "got, _ = scanInferenceRecord(tx.QueryRow(ctx, `select 1`))",
+        ):
+            with self.subTest(declaration=declaration):
+                changed = GoSource(request.replace(request_call, declaration + "\n\t\t\t" + request_call, 1))
+                with self.assertRaisesRegex(AssertionError, "got must keep its current row binding"):
+                    self._assert_profile_invalidation_calls(infer, changed)
+        for declaration in (
+            "stored = inferenceRecord{}",
+            "stored, e = inferenceRecord{}, nil",
+        ):
+            with self.subTest(declaration=declaration):
+                changed = GoSource(infer.source.replace(infer_call, declaration + "\n\t\t\t" + infer_call, 1))
+                with self.assertRaisesRegex(AssertionError, "stored must keep its current row binding"):
+                    self._assert_profile_invalidation_calls(changed, GoSource(request))
+
+    def _assert_profile_invalidation_calls(
+        self, infer: GoSource, request: GoSource,
+    ) -> None:
+        configs = (
+            (
+                infer, "infer.go", "Infer", 5,
+                (("ctx",), ("tx",), ("u",), ("id",), ("in", ".", "RequestId"),
+                 ("stored", ".", "owner")),
+            ),
+            (
+                request, "inference_request.go", "checkInferenceAttempt", 4,
+                (("ctx",), ("tx",), ("u",), ("contact",), ("request",),
+                 ("got", ".", "owner")),
+            ),
+            (
+                request, "inference_request.go", "reserveInference", 1,
+                (("ctx",), ("tx",), ("u",), ("contact",), ("request",),
+                 ("gotRecord", ".", "owner")),
+            ),
+        )
+        for source, file in ((infer, "infer.go"), (request, "inference_request.go")):
+            source_configs = tuple(config for config in configs if config[0] is source)
+            expected_counts = Counter({config[2]: config[3] for config in source_configs})
+            calls = tuple(source.calls("invalidateInference", reject_indirect=False))
+            self.assertEqual(
+                Counter(call.function for call in calls), expected_counts,
+                f"{file}: invalidateInference calls must be exactly {dict(expected_counts)}",
+            )
+            arguments_by_scope = {config[2]: config[4] for config in source_configs}
+            for call in source.calls("invalidateInference"):
+                arguments = arguments_by_scope[call.function]
+                site = f"{file}:{call.line} in {call.function}"
+                expected = ", ".join("".join(argument) for argument in arguments)
+                actual = ", ".join("".join(argument) for argument in call.arguments)
+                self.assertEqual(
+                    call.arguments, arguments,
+                    f"{site}: invalidateInference arguments must be ({expected}), got ({actual})",
+                )
+
+        infer_calls = tuple(infer.calls("invalidateInference", function="Infer"))
+        self._assert_parameter_bindings(infer, "Infer", "ctx", "u", "id", "in")
+        changes = tuple(infer.binding_changes("Infer", "reserved"))
+        expected_changes = (
+            GoSource("var reserved inferenceReservation").tokens,
+            GoSource(
+                "reserved, e = reserveInference(ctx, tx, u, id, in.RequestId, "
+                "chatConsent, contactsConsent, digest)"
+            ).tokens,
+        )
+        self.assertEqual(
+            tuple(change.statement for change in changes), expected_changes,
+            "Infer: reserved must keep its reservation binding",
+        )
+        self.assertTrue(
+            changes[0].function_level and changes[1].position < infer_calls[0].position,
+            "Infer: reserved must be declared and initialized before invalidating",
+        )
+        self._assert_current_record_binding(
+            infer, "Infer", "stored",
+            (
+                "stored, e := scanInferenceRecord(tx.QueryRow(ctx, `select contact_id,"
+                "chat_consent_id,contacts_consent_id,input_digest,state,owner_id,\n"
+                " coalesce(lease_expires_at<=clock_timestamp(),true)\n"
+                " from profile_inference_requests where user_id=$1 and request_id=$2 "
+                "for update`, u, in.RequestId))"
+            ),
+            infer_calls,
+        )
+
+        attempt_calls = tuple(
+            request.calls("invalidateInference", function="checkInferenceAttempt")
+        )
+        self._assert_parameter_bindings(
+            request, "checkInferenceAttempt", "ctx", "u", "contact", "request", "owner",
+        )
+        self._assert_current_record_binding(
+            request, "checkInferenceAttempt", "got",
+            (
+                "got, e := scanInferenceRecord(tx.QueryRow(ctx, `select contact_id,"
+                "chat_consent_id,contacts_consent_id,input_digest,state,owner_id,\n"
+                " coalesce(lease_expires_at<=clock_timestamp(),true)\n"
+                " from profile_inference_requests where user_id=$1 and request_id=$2 "
+                "for update`, u, request))"
+            ),
+            attempt_calls,
+        )
+
+        reserve_calls = tuple(
+            request.calls("invalidateInference", function="reserveInference")
+        )
+        self._assert_parameter_bindings(
+            request, "reserveInference", "ctx", "u", "contact", "request",
+        )
+        changes = tuple(request.binding_changes("reserveInference", "gotRecord"))
+        query = (
+            "scanInferenceRecord(tx.QueryRow(ctx, `select contact_id,"
+            "chat_consent_id,contacts_consent_id,input_digest,state,owner_id,\n"
+            " coalesce(lease_expires_at<=clock_timestamp(),true)\n"
+            " from profile_inference_requests where user_id=$1 and request_id=$2 "
+            "for update`, u, request))"
+        )
+        self.assertEqual(
+            tuple(change.statement for change in changes),
+            (GoSource(f"gotRecord, e := {query}").tokens,
+             GoSource(f"gotRecord, e = {query}").tokens),
+            "reserveInference: gotRecord must keep its two current-row bindings",
+        )
+        self.assertEqual(
+            tuple(change.function_level for change in changes), (True, False),
+            "reserveInference: gotRecord query bindings moved out of their guarded scopes",
+        )
+        self.assertTrue(
+            changes[0].position < changes[1].position < reserve_calls[0].position,
+            "reserveInference: gotRecord must be read before invalidation",
+        )
+
+    def _assert_parameter_bindings(
+        self, source: GoSource, function: str, *names: str,
+    ) -> None:
+        parameters = source.parameter_names(function)
+        for name in names:
+            self.assertIn(
+                name, parameters, f"{function}: {name} must come from the enclosing function",
+            )
+            lines = sorted({change.line for change in source.binding_changes(function, name)})
+            self.assertFalse(
+                lines, f"{function}: {name} must keep its enclosing binding (lines {lines})",
+            )
+
+    def _assert_current_record_binding(
+        self,
+        source: GoSource,
+        function: str,
+        name: str,
+        statement: str,
+        calls: tuple[GoCall, ...],
+    ) -> None:
+        changes = tuple(source.binding_changes(function, name))
+        self.assertEqual(
+            len(changes), 1,
+            f"{function}: {name} must keep its current row binding",
+        )
+        self.assertFalse(
+            changes[0].function_level,
+            f"{function}: {name} must bind the current row inside the session callback",
+        )
+        self.assertEqual(
+            changes[0].statement, GoSource(statement).tokens,
+            f"{function}: {name} must bind the exact current-row query",
+        )
+        self.assertLess(
+            changes[0].position, calls[0].position,
+            f"{function}: {name} must be bound before invalidation",
+        )
+
+    def _assert_before_attempt(self, infer: GoSource) -> None:
+        calls = tuple(infer.calls("checkInferenceAttempt", function="Infer"))
+        self.assertEqual(len(calls), 1, "Infer must call checkInferenceAttempt directly once")
+        call = calls[0]
+        expected = tuple(GoSource(argument).tokens for argument in (
+            "attemptCtx", "session", "u", "id", "in.RequestId",
+            "reserved.chatConsent", "reserved.contactsConsent", "digest", "reserved.owner",
+            "func(tx pgx.Tx) error { return s.write(attemptCtx, tx, u, &id) }",
+        ))
+        self.assertEqual(
+            tuple(tuple(token for token in argument if token != ";") for argument in call.arguments),
+            expected,
+            "BeforeAttempt must pass reserved.owner, both exact consents and the authorization callback",
+        )
+        self.assertTrue(
+            infer.callback_returns_call(
+                "call.BeforeAttempt", "func(attemptCtx context.Context) error", call,
+            ),
+            "Infer must return the checkInferenceAttempt call from BeforeAttempt",
+        )
+
+    def _assert_claim_owner(self, source: GoSource, call: GoCall) -> None:
+        function = call.function
+        changes = tuple(source.binding_changes(function, "owner"))
+        initialization = GoSource("owner := uuid.New()").tokens
+        self.assertTrue(
+            changes
+            and changes[0].statement == initialization
+            and changes[0].function_level
+            and changes[0].position < call.position,
+            "claimInference: owner must be initialized by uuid.New() before tx.Exec",
+        )
+        self.assertEqual(
+            len(changes), 1,
+            "claimInference: owner must keep its uuid.New() binding",
+        )
+        for name in ("uuid", "inferenceLeaseSeconds"):
+            self.assertNotIn(name, source.parameter_names(function))
+            self.assertFalse(
+                tuple(source.binding_changes(function, name)),
+                f"claimInference: {name} must keep its package binding",
+            )
+
+    def _assert_profile_inference_updates(self, request: GoSource) -> None:
+        coordinator = GoSource(read("server/internal/privacy/coordinator.go"))
+        for source, name, bindings in (
+            (request, "invalidateInference", ("u", "request", "contact", "owner")),
+            (request, "completeInference", ("u", "request", "owner")),
+            (request, "claimInference",
+             ("u", "request", "chatConsent", "contactsConsent", "owner",
+              "inferenceLeaseSeconds", "fromState", "expectedOwner")),
+            (coordinator, "ReleaseProfileInference", ("user", "request", "contact", "owner")),
+        ):
+            with self.subTest(function=name):
+                calls = tuple(source.calls("tx", ".", "Exec", function=name))
+                self.assertEqual(len(calls), 1, f"{name} must issue one UPDATE through tx.Exec")
+                call = calls[0]
+                self.assertGreaterEqual(len(call.arguments), 2, f"{name} must pass ctx and SQL")
+                ctx, statement, *actual = call.arguments
+                if name == "claimInference":
+                    self._assert_claim_owner(source, call)
+                    parameters = tuple(
+                        argument for argument in bindings
+                        if argument not in ("owner", "inferenceLeaseSeconds")
+                    )
+                else:
+                    parameters = bindings
+                self._assert_parameter_bindings(source, name, "ctx", *parameters)
+                self.assertEqual(ctx, ("ctx",), f"{name} must pass ctx to tx.Exec")
+                self.assertEqual(len(statement), 1, f"{name} must pass a literal UPDATE")
+                self.assertTrue(statement[0].startswith("`"), f"{name} must pass a raw SQL literal")
+                sql = re.sub(
+                    r"""('(?:''|[^'])*'|"(?:""|[^"])*")|\s+""",
+                    lambda match: match[1] or " ",
+                    statement[0][1:-1],
+                ).strip()
+                self._assert_inference_update(name, sql)
+
+                placeholders = {int(index) for index in re.findall(r"\$(\d+)\b", sql)}
+                self.assertEqual(
+                    placeholders, set(range(1, len(bindings) + 1)),
+                    f"{name} must use exactly the expected SQL placeholders",
+                )
+                self.assertEqual(len(actual), len(bindings), f"{name}: wrong SQL binding arity")
+                for index, argument in enumerate(bindings, 1):
+                    self.assertEqual(
+                        actual[index - 1], (argument,),
+                        f"{name}: SQL ${index} must bind {argument} "
+                        f"(tx.Exec line {call.line}, got {''.join(actual[index - 1])})",
+                    )
+
+    def _assert_inference_update(self, name: str, sql: str) -> None:
+        expected = {
+            "invalidateInference": (
+                "update profile_inference_requests set state='invalidated',owner_id=null,"
+                "lease_expires_at=null,updated_at=clock_timestamp() where user_id=$1 and "
+                "request_id=$2 and contact_id=$3 and state='processing' and "
+                "owner_id is not distinct from $4::uuid"
+            ),
+            "completeInference": (
+                "update profile_inference_requests set state='complete',owner_id=null,"
+                "lease_expires_at=null,updated_at=clock_timestamp() where user_id=$1 and "
+                "request_id=$2 and state='processing' and owner_id=$3 and "
+                "lease_expires_at>clock_timestamp()"
+            ),
+            "claimInference": (
+                "update profile_inference_requests set state='processing',chat_consent_id=$3,"
+                "contacts_consent_id=$4,owner_id=$5, "
+                "lease_expires_at=clock_timestamp()+make_interval(secs => $6),updated_at=clock_timestamp() "
+                "where user_id=$1 and request_id=$2 and state=$7 and owner_id is not distinct from $8::uuid "
+                "and ($7<>'processing' or lease_expires_at is null or lease_expires_at<=clock_timestamp())"
+            ),
+            "ReleaseProfileInference": (
+                "update profile_inference_requests set state='retryable',owner_id=null,"
+                "lease_expires_at=null,updated_at=clock_timestamp() where user_id=$1 and "
+                "request_id=$2 and contact_id=$3 and owner_id=$4 and state='processing'"
+            ),
+        }
+        self.assertEqual(sql, expected[name], f"{name} UPDATE must fence the processing row by owner")
+
     def test_profile_evidence_schema_freezes_sources_and_binds_both_consents(self) -> None:
         migration = read("server/migrations/20261122010025_profile_evidence.up.sql")
         for needle in (
@@ -1699,6 +2109,16 @@ class ProfileEvidenceContract(unittest.TestCase):
         self.assertIn("七个整数", migration)
         self.assertIn("不复述原文", migration)
 
+        retryable = read("server/migrations/20261124000001_profile_inference_retryable.up.sql")
+        self.assertIn("ALTER TABLE profile_inference_requests ADD COLUMN owner_id uuid;", retryable)
+        self.assertIn("ALTER TABLE profile_inference_requests ADD COLUMN lease_expires_at timestamptz;", retryable)
+        self.assertIn(
+            "CHECK(state IN ('processing','retryable','complete','invalidated'))",
+            retryable,
+        )
+        self.assertIn("WHERE state='processing' AND updated_at='infinity'", retryable)
+        self.assertIn("lease_expires_at=clock_timestamp()+interval '70 seconds'", retryable)
+
         feedback = read("server/internal/profile/feedback.go")
         self.assertIn("Direction comes from the user's explicit judgment", feedback)
         self.assertIn("func (s *Service) bindActivityContext", feedback)
@@ -1722,12 +2142,9 @@ class ProfileEvidenceContract(unittest.TestCase):
             'activeConsent(ctx, tx, u, "chat_import")',
             'activeConsent(ctx, tx, u, "contacts")',
             "reserveInference(ctx, tx, u, id, in.RequestId, chatConsent, contactsConsent, digest)",
-            "call.BeforeAttempt = func(attemptCtx context.Context) error",
-            "checkInferenceAttempt(attemptCtx, session, u, id, in.RequestId, reserved.chatConsent, reserved.contactsConsent, digest",
             "chatConsent != reserved.chatConsent",
             "contactsConsent != reserved.contactsConsent",
             "stored.state != \"processing\"",
-            "invalidateInference(ctx, tx, u, in.RequestId)",
             "if reserved.state == \"complete\"",
             "len(x.Choices) != len(axes)",
             'i == 6 && sc != "partner"',
@@ -1736,12 +2153,122 @@ class ProfileEvidenceContract(unittest.TestCase):
         for needle in (
             "func inputDigest(text string) []byte",
             "sha256.Sum256([]byte(text))",
-            "case \"invalidated\":",
             "return inferenceReservation{}, membership.ErrConflict",
-            "a later regrant must not revive it",
             "set state='invalidated'",
         ):
             self.assertIn(needle, request)
+        parsed_infer = GoSource(infer)
+        parsed_request = GoSource(request)
+        self.assertNotIn("goto", parsed_request.body_tokens("reserveInference"))
+        self.assertEqual(
+            parsed_request.switch_case("reserveInference", "gotRecord.state", '"invalidated"'),
+            GoSource("return inferenceReservation{}, membership.ErrConflict").tokens,
+            "invalidated reservations must return a conflict",
+        )
+
+        infer_body = parsed_infer.body("Infer")
+
+        # The account/contact authorization runs before either consent leaf is
+        # resolved, and both exact consent records are bound into the reservation.
+        initial_write = infer_body.index("if e := s.write(ctx, tx, u, &id); e != nil {")
+        chat_consent = infer_body.index(
+            'chatConsent, e := activeConsent(ctx, tx, u, "chat_import")'
+        )
+        contacts_consent = infer_body.index(
+            'contactsConsent, e := activeConsent(ctx, tx, u, "contacts")'
+        )
+        reservation = infer_body.index(
+            "reserveInference(ctx, tx, u, id, in.RequestId, chatConsent, contactsConsent, digest)"
+        )
+        self.assertLess(initial_write, chat_consent)
+        self.assertLess(chat_consent, contacts_consent)
+        self.assertLess(contacts_consent, reservation)
+
+        self._assert_before_attempt(parsed_infer)
+
+        # The result path rechecks both exact consent records and the writable
+        # contact identity before it can store or complete the reservation.
+        active_chat = infer_body.index(
+            'activeChat, e := activeConsent(ctx, tx, u, "chat_import")'
+        )
+        active_contacts = infer_body.index(
+            'activeContacts, e := activeConsent(ctx, tx, u, "contacts")'
+        )
+        final_write = infer_body.index("if e = s.write(ctx, tx, u, &id); e != nil {")
+        stored = infer_body.index("if e = s.store(ctx, tx, u, id, d, false); e != nil {")
+        completed = infer_body.index(
+            "completeInference(ctx, tx, u, in.RequestId, reserved.owner)"
+        )
+        self.assertLess(active_chat, active_contacts)
+        self.assertLess(active_contacts, final_write)
+        self.assertLess(final_write, stored)
+        self.assertLess(stored, completed)
+        self.assertIn("activeChat != reserved.chatConsent", infer_body)
+        self.assertIn("activeContacts != reserved.contactsConsent", infer_body)
+
+        # A superseded or expired owner exits before either path can invalidate
+        # the replacement. Matching owners still need the exact row predicate.
+        self._assert_profile_invalidation_calls(parsed_infer, parsed_request)
+        for source, function, path, guard in (
+            (
+                parsed_infer, "Infer", "result",
+                "if !stored.owner.Valid || stored.owner.UUID != reserved.owner || stored.expired "
+                "{ stale = true\n return nil }",
+            ),
+            (
+                parsed_request, "checkInferenceAttempt", "attempt",
+                "if !got.owner.Valid || got.owner.UUID != owner || got.expired "
+                "{ changed = true\n return nil }",
+            ),
+        ):
+            self.assertNotIn("goto", source.body_tokens(function), f"{path} path must not use goto")
+            self.assertTrue(
+                source.guards_calls(
+                    function, guard,
+                    tuple(source.calls("invalidateInference", function=function)),
+                ),
+                f"{path} path must reject a superseded or expired owner directly after the error check",
+            )
+        self._assert_profile_inference_updates(parsed_request)
+        self.assertRegex(
+            infer,
+            r"type InferenceCleanup func\(ctx context\.Context, user, contact, request, owner uuid\.UUID\) error",
+        )
+
+        # Terminal/error replies settle before decoding any model result, so no
+        # choices can be stored; cleanup is detached from cancellation and keeps
+        # only the owner-fenced execution state.
+        settled_failure = re.search(
+            r"if reply\.Terminal != nil \|\| e != nil \{(.*?)\n\t\}",
+            infer_body,
+            re.S,
+        )
+        self.assertIsNotNone(settled_failure)
+        assert settled_failure is not None
+        self.assertIn(
+            "s.settleInferenceRun(ctx, cleanup, u, id, in.RequestId, reserved.owner, reply, e)",
+            settled_failure.group(1),
+        )
+        self.assertNotIn("decodeChoices", settled_failure.group(1))
+        self.assertNotIn("s.store", settled_failure.group(1))
+        self.assertLess(
+            settled_failure.start(),
+            infer_body.index("choices, e := decodeChoices(reply.Result.Object, before.Scene)"),
+        )
+        self.assertIn(
+            "return nil, s.failInference(ctx, cleanup, u, id, in.RequestId, reserved.owner, e)",
+            infer_body,
+        )
+        settle_body = parsed_infer.body("settleInferenceRun")
+        self.assertIn(
+            "context.WithTimeout(context.WithoutCancel(ctx), inferenceCleanupTimeout)",
+            settle_body,
+        )
+        self.assertIn(
+            "cleanupErr := cleanup(cleanupCtx, u, contact, request, owner)",
+            settle_body,
+        )
+        self.assertNotIn("reply.Result", settle_body)
 
         runtime = read("server/internal/service/training_runtime.go")
         self.assertIn("Summary: s.Profiles.ForModel", runtime)
@@ -1820,19 +2347,13 @@ class ProfileEvidenceContract(unittest.TestCase):
         self.assertIn("供应商", read("docs/compliance/privacy-policy-draft.md"))
         self.assertIn("T25", read("docs/compliance/qa.md"))
 
-    def test_profile_delete_is_internal_and_public_rights_stay_not_implemented(self) -> None:
+    def test_profile_delete_uses_the_internal_contacts_scope(self) -> None:
         profile_http = read("server/internal/service/profile_http.go")
         self.assertIn('Scope: "contacts"', profile_http)
         self.assertIn("a.profiles.Data.Delete", profile_http)
 
-        http = read("server/internal/service/http.go")
-        routes = re.search(r"var accountRoutes = map\[string\]bool\{(.*?)\n\}", http, re.S)
-        self.assertIsNotNone(routes)
-        route_block = routes.group(1)
+        route_block = account_route_block(read("server/internal/service/http.go"))
         self.assertIn('"DELETE /v1/contacts/:id": false', route_block)
-        self.assertNotIn("GET /v1/me/export", route_block)
-        self.assertNotIn("DELETE /v1/me/data/:kind/:id", route_block)
-        self.assertIn('problem(c, 501, "not_implemented"', http)
 
         inventory = read("docs/compliance/data-inventory.md")
         self.assertIn("D01–D45", inventory)

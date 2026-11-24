@@ -30,9 +30,16 @@ import WechatOpenSDK
     if let registrar = registrar(forPlugin: "HealthHistory") {
       FlutterMethodChannel(name: "cn.higheq/health-history", binaryMessenger: registrar.messenger()).setMethodCallHandler(healthHistory.handle)
     }
-    commerce.window = window
     if let registrar = registrar(forPlugin: "MobileCommerce") {
-      FlutterMethodChannel(name: "cn.higheq/mobile-commerce", binaryMessenger: registrar.messenger()).setMethodCallHandler(commerce.handle)
+      let channel = FlutterMethodChannel(name: "cn.higheq/mobile-commerce", binaryMessenger: registrar.messenger())
+      commerce.onExportPresented = { requestId in
+        channel.invokeMethod("shareExportPresented", arguments: requestId)
+      }
+      channel.setMethodCallHandler { [weak self] call, result in
+        guard let self else { result(FlutterMethodNotImplemented); return }
+        self.commerce.window = self.window
+        self.commerce.handle(call, result: result)
+      }
     }
     if let registrar = registrar(forPlugin: "VoiceCapture") {
       voiceCapture.install(messenger: registrar.messenger())

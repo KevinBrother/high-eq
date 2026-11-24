@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"high-eq/server/internal/marks"
 	"high-eq/server/internal/membership"
 	"high-eq/server/internal/payments"
+	"high-eq/server/internal/privacy"
 	"high-eq/server/internal/profile"
 	"high-eq/server/internal/replies"
 	"high-eq/server/internal/reviews"
@@ -43,6 +45,7 @@ type appAPI struct {
 	health      func(context.Context) error
 	accounts    *accounts.Service
 	membership  *membership.Service
+	data        *privacy.Coordinator
 }
 
 func (a appAPI) CheckHealth(c *gin.Context) {
@@ -72,6 +75,7 @@ var accountRoutes = map[string]bool{
 	"POST /v1/auth/sms": false, "POST /v1/auth/login": false, "POST /v1/auth/refresh": false,
 	"POST /v1/auth/logout": true, "POST /v1/auth/switch": false, "GET /v1/me": true, "PATCH /v1/me": false,
 	"POST /v1/me/bindings": false, "POST /v1/me/closure": false, "DELETE /v1/me/closure": true,
+	"GET /v1/me/export":        false,
 	"POST /v1/purchases/token": false, "POST /v1/purchases": false, "POST /v1/purchases/restore": false,
 	"POST /v1/payment-notifications/apple": false, "POST /v1/payment-notifications/wechat": false, "POST /v1/payment-notifications/alipay": false,
 	"GET /v1/contact-questions": false, "GET /v1/contacts": false, "POST /v1/contacts": false,
@@ -130,18 +134,7 @@ func newRouter(runtime *Runtime) *gin.Engine {
 func newRouterWithHealth(runtime *Runtime, health func(context.Context) error) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(func(c *gin.Context) {
-		start := time.Now()
-		id := uuid.NewString()
-		c.Header("X-Request-ID", id)
-		defer func() {
-			if recover() != nil {
-				problem(c, 500, "internal_error", "服务暂不可用，可重试", true)
-			}
-			slog.Info("request", "module", "http", "request_id", id, "result", c.Writer.Status(), "latency_ms", time.Since(start).Milliseconds())
-		}()
-		c.Next()
-	})
+	r.Use(requestMiddleware())
 	invalid := func(c *gin.Context, _ error, _ int) { problem(c, 400, "invalid_argument", "请求参数无效", false) }
 	api := appAPI{health: health}
 	if runtime != nil {
@@ -156,6 +149,7 @@ func newRouterWithHealth(runtime *Runtime, health func(context.Context) error) *
 		api.accounts = runtime.Accounts
 		api.membership = runtime.Membership
 		api.plans = runtime.Plans
+		api.data = runtime.Data
 	}
 	app.RegisterHandlersWithOptions(r, api, app.GinServerOptions{Middlewares: []app.MiddlewareFunc{gate(api.accounts)}, ErrorHandler: invalid})
 	if runtime != nil {
@@ -165,4 +159,25 @@ func newRouterWithHealth(runtime *Runtime, health func(context.Context) error) *
 	}
 	r.NoRoute(func(c *gin.Context) { problem(c, 404, "not_found", "未找到此接口", false) })
 	return r
+}
+
+func requestMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		id := uuid.NewString()
+		c.Header("X-Request-ID", id)
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				if recovered == http.ErrAbortHandler {
+					panic(recovered)
+				}
+				if c.FullPath() == "/v1/me/export" && c.Writer.Written() {
+					panic(http.ErrAbortHandler)
+				}
+				problem(c, 500, "internal_error", "服务暂不可用，可重试", true)
+			}
+			slog.Info("request", "module", "http", "request_id", id, "result", c.Writer.Status(), "latency_ms", time.Since(start).Milliseconds())
+		}()
+		c.Next()
+	}
 }

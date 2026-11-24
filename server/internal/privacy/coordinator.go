@@ -88,19 +88,22 @@ func (c *Coordinator) Access(ctx context.Context, user uuid.UUID, fn func(pgx.Tx
 	})
 }
 
-// DiscardProfileInference removes only this account's abandoned processing
-// reservation. It deliberately bypasses the freeze check (a frozen account
-// still needs failed inference cleanup) while retaining the deletion barrier,
-// account lock, and account-scoped predicate.
-func (c *Coordinator) DiscardProfileInference(ctx context.Context, user, request uuid.UUID) error {
-	if user == uuid.Nil || request == uuid.Nil {
+// ReleaseProfileInference frees a failed attempt while keeping the request's
+// material binding. It can run during a freeze and still honors the deletion
+// barrier and account lock. The owner token keeps a late executor from
+// releasing a replacement reservation, while contact scope still prevents a
+// request from crossing to another contact.
+func (c *Coordinator) ReleaseProfileInference(ctx context.Context, user, contact, request, owner uuid.UUID) error {
+	if user == uuid.Nil || contact == uuid.Nil || request == uuid.Nil || owner == uuid.Nil {
 		return errors.New("invalid inference cleanup")
 	}
 	return pgx.BeginFunc(ctx, c.db, func(tx pgx.Tx) error {
 		if err := c.GuardTx(ctx, tx, user); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `delete from profile_inference_requests where user_id=$1 and request_id=$2 and state='processing'`, user, request)
+		_, err := tx.Exec(ctx, `update profile_inference_requests
+			set state='retryable',owner_id=null,lease_expires_at=null,updated_at=clock_timestamp()
+			where user_id=$1 and request_id=$2 and contact_id=$3 and owner_id=$4 and state='processing'`, user, request, contact, owner)
 		return err
 	})
 }

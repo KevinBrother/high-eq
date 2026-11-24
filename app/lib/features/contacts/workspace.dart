@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import '../../core/api.dart';
 import '../../core/session.dart';
 import '../../core/theme.dart';
+import '../../core/transport.dart';
 import 'deletion.dart';
 import 'forms.dart';
+import 'inference.dart';
 import 'models.dart';
 import 'profile.dart';
 import 'purpose.dart';
@@ -12,6 +14,15 @@ import 'repository.dart';
 import 'scene.dart';
 
 enum _View { list, detail, add, edit, chat, remove, choose }
+
+enum _ConsentFence { current, changed, unconfirmed }
+
+typedef _InferenceOperation = ({
+  String contactId,
+  String requestId,
+  String text,
+  ContactInferenceGrant authorization,
+});
 
 const _growthRecovery = '联网打开成长档案，刷新后可恢复离线记录。';
 
@@ -42,6 +53,9 @@ class _WorkspaceState extends State<ContactsWorkspace>
   Timer? expiry;
   bool needsRefresh = false;
   List<GrowthDeletion> _pendingDeletions = [];
+  ContactInferenceGrant? _chatEntryGrant;
+  _InferenceOperation? _inference;
+  ProfileInferenceResult? _inferenceResult;
   final _verifiedPresent = <String, GrowthDeletion>{};
   bool _deletionRecordUnavailable = false;
   Contact? get current => book?.people.where((p) => p.id == id).firstOrNull;
@@ -86,6 +100,13 @@ class _WorkspaceState extends State<ContactsWorkspace>
     final next = await widget.repo.load();
     if (!mounted) return;
     book = next;
+    final inference = _inference;
+    if (inference != null) {
+      final contact = next.people
+          .where((person) => person.id == inference.contactId)
+          .firstOrNull;
+      if (contact == null || !next.usable(contact)) _clearInference();
+    }
     expiry?.cancel();
     final until = next.expires;
     if (next.member && until != null) {
@@ -108,20 +129,322 @@ class _WorkspaceState extends State<ContactsWorkspace>
 
   // The input itself is never captured by an authorization callback. A missing
   // grant replaces the form; accepting later opens a fresh form, not a replay.
-  Future<bool> _authorized(_View target) async {
-    final grants = await widget.repo.currentGrants();
-    if (!mounted) return false;
+  Future<ContactConsentSnapshot?> _authorized(_View target) async {
+    final consents = await widget.repo.currentConsents();
+    if (!mounted) return null;
     view = target;
     pending = [
       ContactPurpose.contacts,
       if (target == _View.chat) ContactPurpose.chatImport,
-    ].where((p) => !grants.contains(p)).firstOrNull;
-    return pending == null;
+    ].where((p) => !consents.allows(p)).firstOrNull;
+    return pending == null ? consents : null;
   }
 
   Future<void> _enter(_View target) async {
-    if (!await _authorized(target)) return;
+    final consents = await _authorized(target);
+    if (consents == null) return;
+    if (target == _View.chat) {
+      _chatEntryGrant = consents.inferenceGrant;
+    }
     if (target == _View.add) questions = await widget.repo.questions();
+  }
+
+  void _clearInference() {
+    _chatEntryGrant = null;
+    _inference = null;
+    _inferenceResult = null;
+  }
+
+  Future<_ConsentFence> _checkInferenceConsent(
+    ContactInferenceGrant authorization,
+  ) async {
+    try {
+      final current = await widget.repo.currentConsents();
+      return current.inferenceGrant == authorization
+          ? _ConsentFence.current
+          : _ConsentFence.changed;
+    } on SessionChanged {
+      rethrow;
+    } on ApiFailure catch (error) {
+      if (error.status == 401 || error.status == 403 || error.status == 404) {
+        rethrow;
+      }
+      return _ConsentFence.unconfirmed;
+    } on Object {
+      return _ConsentFence.unconfirmed;
+    }
+  }
+
+  void _applyInferenceProfile(String contactId, Json profile) {
+    final currentBook = book;
+    if (currentBook == null) return;
+    final people = [
+      for (final contact in currentBook.people)
+        if (contact.id == contactId)
+          Contact.fromJson({
+            'id': contact.id,
+            'nickname': contact.name,
+            'scene': contact.scene.name,
+            'editable': contact.editable,
+            'profile': profile,
+          })
+        else
+          contact,
+    ];
+    book = Book(people, currentBook.rights);
+  }
+
+  Future<void> _infer({
+    required String contactId,
+    String? text,
+    _InferenceOperation? retry,
+    ContactInferenceGrant? entryAuthorization,
+  }) async {
+    if (busy) return;
+    setState(() {
+      busy = true;
+      message = null;
+    });
+    try {
+      final consents = await _authorized(_View.chat);
+      if (consents == null) {
+        if (!mounted) return;
+        setState(_clearInference);
+        return;
+      }
+      if (!mounted) return;
+      final currentBook = book;
+      final contact = currentBook?.people
+          .where((person) => person.id == contactId)
+          .firstOrNull;
+      if (currentBook == null ||
+          contact == null ||
+          !currentBook.usable(contact)) {
+        setState(() {
+          _clearInference();
+          view = _View.list;
+          id = null;
+        });
+        _refresh();
+        return;
+      }
+      final authorization = consents.inferenceGrant!;
+      final expectedAuthorization = retry?.authorization ?? entryAuthorization;
+      if (expectedAuthorization == null ||
+          expectedAuthorization != authorization) {
+        setState(() {
+          _clearInference();
+          view = _View.detail;
+          pending = null;
+          message = '授权记录已变化，已清除旧片段，请重新导入。';
+        });
+        return;
+      }
+      final operation =
+          retry ??
+          (
+            contactId: contactId,
+            requestId: newRequestId(),
+            text: text!,
+            authorization: authorization,
+          );
+      setState(() {
+        _chatEntryGrant = null;
+        _inference = operation;
+        if (retry == null) _inferenceResult = null;
+      });
+      final result = await widget.repo.infer(
+        operation.contactId,
+        operation.requestId,
+        operation.text,
+        authorization: operation.authorization,
+      );
+      if (!mounted) return;
+      final fence = await _checkInferenceConsent(operation.authorization);
+      if (!mounted) return;
+      if (fence != _ConsentFence.current) {
+        setState(() {
+          _clearInference();
+          view = book == null ? _View.list : _View.detail;
+          message = fence == _ConsentFence.changed
+              ? '授权记录已变化，已清除旧片段，请重新导入。'
+              : '授权状态未能确认，未展示结果，旧片段已清除。';
+        });
+        return;
+      }
+      setState(() {
+        view = _View.detail;
+        switch (result) {
+          case ProfileInferenceProcessing():
+            _inferenceResult = result;
+          case ProfileInferenceCompleted(:final profile):
+            _clearInference();
+            _applyInferenceProfile(operation.contactId, profile);
+            message = '画像已更新，仅供参考。';
+          case ProfileInferenceSafety():
+            _clearInference();
+            message = profileInferenceSafetyMessage;
+          case ProfileInferenceTerminal(:final status):
+            _clearInference();
+            message = status == 200
+                ? '画像结果不完整，本次导入已结束。请刷新后核对。'
+                : '服务返回了无法确认的状态，本次导入已结束。';
+        }
+      });
+    } on ContactConsentChanged {
+      if (!mounted) return;
+      setState(() {
+        _clearInference();
+        view = book == null ? _View.list : _View.detail;
+        pending = null;
+        message = '授权记录已变化，已清除旧片段，请重新导入。';
+      });
+    } on ConsentUnconfirmed {
+      if (!mounted) return;
+      setState(() {
+        _clearInference();
+        view = book == null ? _View.list : _View.detail;
+        pending = null;
+        message = '授权状态未能确认，已清除旧片段，请重新导入。';
+      });
+    } on SessionChanged {
+      if (!mounted) return;
+      setState(() {
+        _clearInference();
+        pending = null;
+        book = null;
+        id = null;
+        view = _View.list;
+        message = '账号已切换，请重新打开关系人。';
+      });
+    } on ApiFailure catch (error) {
+      if (!mounted) return;
+      if (error.status == 403 || error.status == 404) {
+        setState(() {
+          _clearInference();
+          id = null;
+          view = _View.list;
+        });
+        try {
+          await _load();
+        } catch (_) {
+          book = null;
+        }
+        if (!mounted) return;
+        message = '权限或关系人已变更，请核对最新列表。';
+      } else if (error.status == 401) {
+        setState(() {
+          _clearInference();
+          pending = null;
+          book = null;
+          id = null;
+          view = _View.list;
+          message = '登录状态已变更，请重新登录。';
+        });
+      } else if (error.status == 400 || error.status == 409) {
+        setState(() {
+          _clearInference();
+          view = book == null ? _View.list : _View.detail;
+          message = error.status == 409
+              ? '这次请求已失效，不能继续重试。请重新导入片段。'
+              : '这次片段未能提交，不能继续重试。请重新导入片段。';
+        });
+      } else {
+        setState(() {
+          view = book == null ? _View.list : _View.detail;
+          _inferenceResult = null;
+          message = error.status == 503
+              ? '服务暂不可用，可重试。本次未展示新的画像。'
+              : '暂时无法确认结果，可用原请求重试。本次未展示新的画像。';
+        });
+      }
+    } on FormatException {
+      if (!mounted) return;
+      setState(() {
+        view = book == null ? _View.list : _View.detail;
+        _inferenceResult = null;
+        message = '画像结果未完整返回，可用原请求重试。';
+      });
+    } on Object {
+      if (!mounted) return;
+      setState(() {
+        view = book == null ? _View.list : _View.detail;
+        _inferenceResult = null;
+        message = '连接未完成，可用原请求重试。';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => busy = false);
+        if (needsRefresh) {
+          needsRefresh = false;
+          _refresh();
+        }
+      }
+    }
+  }
+
+  void _startInference(Contact contact, String text) {
+    if (_inference != null) {
+      setState(() => message = '还有一次导入结果待处理，请先完成原请求。');
+      return;
+    }
+    _infer(
+      contactId: contact.id,
+      text: text,
+      entryAuthorization: _chatEntryGrant,
+    );
+  }
+
+  void _retryInference() {
+    final operation = _inference;
+    if (operation == null) return;
+    final currentBook = book;
+    final contact = currentBook?.people
+        .where((person) => person.id == operation.contactId)
+        .firstOrNull;
+    if (currentBook == null ||
+        contact == null ||
+        !currentBook.usable(contact)) {
+      setState(() {
+        _clearInference();
+        view = _View.list;
+        id = null;
+      });
+      _refresh();
+      return;
+    }
+    _infer(contactId: operation.contactId, retry: operation);
+  }
+
+  Widget _inferencePanel(BuildContext context) {
+    final processing = _inferenceResult is ProfileInferenceProcessing;
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: scheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            processing ? '画像仍在处理中，不是已更新。' : '本次导入结果尚未确认。',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            processing ? '可以使用原请求继续获取结果；这不会提交一段新的材料。' : '请使用原请求重试，不会再次提交新的材料。',
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton(
+            onPressed: busy ? null : _retryInference,
+            child: const Text('重试获取结果'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -308,6 +631,7 @@ class _WorkspaceState extends State<ContactsWorkspace>
 
   void _show(_View v) {
     setState(() {
+      if (v != _View.chat) _chatEntryGrant = null;
       message = null;
       pending = null;
       view = v;
@@ -500,7 +824,7 @@ class _WorkspaceState extends State<ContactsWorkspace>
             return;
           }
           _run(() async {
-            if (!await _authorized(view)) return;
+            if (await _authorized(view) == null) return;
             await widget.repo.save(input, id: view == _View.add ? null : c!.id);
             if (!mounted) return;
             view = _View.list;
@@ -512,15 +836,19 @@ class _WorkspaceState extends State<ContactsWorkspace>
     else if (c != null) ...[
       if (view == _View.detail) ...[
         ProfileView(c),
+        if (_inference?.contactId == c.id) _inferencePanel(context),
         if (b.usable(c)) ...[
           OutlinedButton(
             onPressed: () => _run(() => _enter(_View.edit)),
             child: const Text('编辑资料'),
           ),
-          OutlinedButton(
-            onPressed: () => _run(() => _enter(_View.chat)),
-            child: const Text('导入聊天片段'),
-          ),
+          if (_inference == null)
+            OutlinedButton(
+              onPressed: () => _run(() => _enter(_View.chat)),
+              child: const Text('导入聊天片段'),
+            )
+          else if (_inference?.contactId != c.id)
+            const Text('还有一次导入结果待处理，请先回到对应关系人完成。'),
         ] else ...[
           const Text('只读 · 不能用于新练习、修改资料或接收反馈。'),
           if (b.canChoose(c))
@@ -543,7 +871,7 @@ class _WorkspaceState extends State<ContactsWorkspace>
           onPressed: !b.canChoose(c)
               ? null
               : () => _run(() async {
-                  if (!await _authorized(_View.choose)) return;
+                  if (await _authorized(_View.choose) == null) return;
                   await widget.repo.choose(c.id);
                   if (!mounted) return;
                   view = _View.detail;
@@ -568,22 +896,7 @@ class _WorkspaceState extends State<ContactsWorkspace>
               _refresh();
               return;
             }
-            _run(() async {
-              if (!await _authorized(_View.chat)) return;
-              final result = await widget.repo.infer(
-                c.id,
-                newRequestId(),
-                text,
-              );
-              if (!mounted) return;
-              view = _View.detail;
-              if (result['safety'] == true) {
-                message = result['message'] as String;
-                return;
-              }
-              await _load();
-              message = '画像已更新，仅供参考。';
-            });
+            _startInference(c, text);
           },
         ),
     ],

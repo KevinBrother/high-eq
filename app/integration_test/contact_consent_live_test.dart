@@ -87,14 +87,14 @@ void main() {
       ),
     );
     await t.pumpAndSettle();
-    expect(await repo.currentGrants(), isEmpty);
+    expect((await repo.currentConsents()).grants, isEmpty);
     await tap('添加关系人');
     await tap('暂不同意');
     expect(wire.count(AppOp.setConsent), 0);
     expect(wire.count(AppOp.createContact), 0);
     await tap('添加关系人');
     await tap('同意并继续');
-    expect(await repo.currentGrants(), {ContactPurpose.contacts});
+    expect((await repo.currentConsents()).grants, {ContactPurpose.contacts});
     final n = (await repo.questions()).length;
     Future<void> fillNameAndQuestions() async {
       await t.enterText(find.byType(TextField), '合成手记');
@@ -118,18 +118,21 @@ void main() {
     await tap('合成手记');
     await tap('导入聊天片段');
     await tap('暂不同意');
-    expect(await repo.currentGrants(), {ContactPurpose.contacts});
+    expect((await repo.currentConsents()).grants, {ContactPurpose.contacts});
     expect(wire.count(AppOp.inferProfile), 0);
     await tap('导入聊天片段');
     await tap('同意并继续');
-    expect(await repo.currentGrants(), ContactPurpose.values.toSet());
+    expect(
+      (await repo.currentConsents()).grants,
+      ContactPurpose.values.toSet(),
+    );
     await tap('我已了解，并有权分享这段内容');
     await t.enterText(find.byType(TextField), '合成的未发送片段');
     await revoke(ContactPurpose.chatImport);
     await tap('提交片段');
     expect(find.text('允许使用聊天片段推断画像？'), findsOneWidget);
     expect(wire.count(AppOp.inferProfile), 0);
-    expect(await repo.currentGrants(), {ContactPurpose.contacts});
+    expect((await repo.currentConsents()).grants, {ContactPurpose.contacts});
     await tap('同意并继续');
     expect(wire.count(AppOp.inferProfile), 0);
     await tap('我已了解，并有权分享这段内容');

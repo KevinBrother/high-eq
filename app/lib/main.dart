@@ -189,7 +189,7 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
     return '注销申请已提交。请在 $date $time 前重新登录并主动撤销，以恢复账号。$cleanup';
   }
 
-  MaterialApp _app({
+  Widget _app({
     AppApi? api,
     AccountScope? scope,
     Widget? status,
@@ -198,7 +198,7 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
     VoidCallback? close,
   }) {
     _selectNavigator(scope, status);
-    return MaterialApp(
+    final app = MaterialApp(
       navigatorKey: _navigatorKey,
       key: ValueKey((scope, status?.runtimeType, scope == null ? revision : 0)),
       title: '对话手记',
@@ -364,6 +364,14 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
 
         return MaterialPageRoute<void>(settings: settings, builder: screen);
       },
+    );
+    if (scope == null) return app;
+    // Replacing the login lease replaces the navigator and its repositories.
+    // Routes in this tree always resolve dependencies for the same lease.
+    return ProviderScope(
+      key: ObjectKey(scope),
+      overrides: [accountScopeProvider.overrideWithValue(scope)],
+      child: app,
     );
   }
 }

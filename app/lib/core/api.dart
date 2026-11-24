@@ -72,8 +72,9 @@ class AppApi {
     Map<String, String> path,
     Map<String, String> query,
     Json? body,
-    String? access,
-  ) {
+    String? access, {
+    Future<void>? abortTrigger,
+  }) {
     var route = op.path;
     final keys = RegExp(
       r'\{(\w+)\}',
@@ -94,12 +95,18 @@ class AppApi {
         Uri.encodeComponent(entry.value),
       );
     }
-    final request = http.Request(
-      op.method,
-      origin
-          .resolve(route)
-          .replace(queryParameters: query.isEmpty ? null : query),
-    )..followRedirects = false;
+    final url = origin
+        .resolve(route)
+        .replace(queryParameters: query.isEmpty ? null : query);
+    final request =
+        (abortTrigger == null
+              ? http.Request(op.method, url)
+              : http.AbortableRequest(
+                  op.method,
+                  url,
+                  abortTrigger: abortTrigger,
+                ))
+          ..followRedirects = false;
     request.headers['Accept'] = op.accept;
     if (access != null) request.headers['Authorization'] = 'Bearer $access';
     if (body != null) {
@@ -127,6 +134,10 @@ class AppApi {
         DateTime.tryParse(error['retry_at'] is String ? error['retry_at'] : ''),
         op,
       );
+    }
+    if (op == AppOp.exportData && response.statusCode != 200) {
+      await response.stream.listen(null).cancel();
+      throw const FormatException('导出响应状态异常');
     }
     if (response.headers['content-type']?.split(';').first.trim() !=
         op.accept) {
@@ -264,6 +275,7 @@ class AppApi {
     required Future<void> Function() beforeSend,
     void Function()? checkBeforeSend,
     bool preserveSessionOnUnconfirmedRefresh = false,
+    Future<void>? abortTrigger,
     AccountScope? scope,
     Map<String, String> path = const {},
     Map<String, String> query = const {},
@@ -278,6 +290,7 @@ class AppApi {
     onStatus: onStatus,
     beforeSend: beforeSend,
     checkBeforeSend: checkBeforeSend,
+    abortTrigger: abortTrigger,
     unauthorizedPolicy: preserveSessionOnUnconfirmedRefresh
         ? _UnauthorizedPolicy.preserveOnRefreshFailure
         : _UnauthorizedPolicy.standard,
@@ -292,6 +305,7 @@ class AppApi {
     void Function(int)? onStatus,
     Future<void> Function()? beforeSend,
     void Function()? checkBeforeSend,
+    Future<void>? abortTrigger,
     _UnauthorizedPolicy unauthorizedPolicy = _UnauthorizedPolicy.standard,
   }) async* {
     String? access;
@@ -309,7 +323,14 @@ class AppApi {
       access = sessions.require(scope!).access;
     }
     checkBeforeSend?.call();
-    var response = await _send(op, path, query, body, access);
+    var response = await _send(
+      op,
+      path,
+      query,
+      body,
+      access,
+      abortTrigger: abortTrigger,
+    );
     // Freeze reauthentication uses a one-time proof. A rejection belongs to
     // that proof and must never replay it or end an otherwise valid lease.
     if (op.secured && op != AppOp.freezeAccount && response.statusCode == 401) {
@@ -332,7 +353,14 @@ class AppApi {
       await beforeSend?.call();
       final replayAccess = sessions.require(scope).access;
       checkBeforeSend?.call();
-      response = await _send(op, path, query, body, replayAccess);
+      response = await _send(
+        op,
+        path,
+        query,
+        body,
+        replayAccess,
+        abortTrigger: abortTrigger,
+      );
       if (response.statusCode == 401 &&
           unauthorizedPolicy != _UnauthorizedPolicy.healthGate) {
         await response.stream.listen(null).cancel();
@@ -341,7 +369,10 @@ class AppApi {
     }
     await _success(response, op);
     onStatus?.call(response.statusCode);
-    if (scope != null) sessions.require(scope);
+    if (scope != null && !identical(sessions.active, scope)) {
+      await response.stream.listen(null).cancel();
+      throw SessionChanged();
+    }
     await for (final chunk in response.stream.timeout(_timeout)) {
       if (scope != null) sessions.require(scope);
       yield chunk;

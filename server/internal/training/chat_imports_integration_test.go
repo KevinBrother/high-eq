@@ -4,6 +4,8 @@ package training
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"high-eq/server/internal/privacy"
 	"high-eq/server/migrations"
 )
 
@@ -150,5 +153,86 @@ func TestChatImportsExpireAtBoundaryAndRetryAcrossPoolRestart(t *testing.T) {
 	}
 	if chatImportExists(t, ctx, livePool, restart) {
 		t.Fatal("fresh pool/service did not clean the expired row")
+	}
+}
+
+func TestChatImportsExportIsLiveOwnedMetadataOnly(t *testing.T) {
+	ctx := context.Background()
+	pool := openChatImportTestPool(t, ctx)
+	t.Cleanup(pool.Close)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	owner := createChatImportUser(t, ctx, pool)
+	other := createChatImportUser(t, ctx, pool)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `delete from users where id=any($1::uuid[])`, []uuid.UUID{owner, other})
+	})
+
+	old := createChatImport(t, ctx, pool, owner, now.Add(-24*time.Hour), "owner-expired-ciphertext")
+	freshAt := now.Add(-time.Hour)
+	fresh := createChatImport(t, ctx, pool, owner, freshAt, "owner-live-ciphertext")
+	foreign := createChatImport(t, ctx, pool, other, now.Add(-time.Hour), "other-live-ciphertext")
+
+	module := ChatImportHooks()
+	if module.Export == nil {
+		t.Fatal("chat import hook has no export")
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+
+	tests := []struct {
+		name   string
+		export func(privacy.Emit) error
+	}{
+		{"exact cutoff", func(emit privacy.Emit) error {
+			return exportChatImports(ctx, tx, owner, now, emit)
+		}},
+		{"registered hook", func(emit privacy.Emit) error {
+			return module.Export(ctx, tx, privacy.ExportRequest{OperationID: uuid.New(), UserID: owner}, emit)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var records []json.RawMessage
+			if err := test.export(func(v any) error {
+				raw, err := json.Marshal(v)
+				if err != nil {
+					return err
+				}
+				records = append(records, raw)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if len(records) != 1 {
+				t.Fatalf("export returned %d rows; want only owner's live row", len(records))
+			}
+			raw := records[0]
+			for _, forbidden := range []string{
+				old.String(), foreign.String(), "original_enc", "owner-live-ciphertext",
+				base64.StdEncoding.EncodeToString([]byte("owner-live-ciphertext")),
+			} {
+				if strings.Contains(string(raw), forbidden) {
+					t.Fatalf("export leaked %q: %s", forbidden, raw)
+				}
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if len(fields) != 3 || fields["activity_id"] == nil ||
+				fields["received_at"] == nil || fields["content_unavailable"] == nil {
+				t.Fatalf("unexpected export fields: %s", raw)
+			}
+			var record chatImportExport
+			if err := json.Unmarshal(raw, &record); err != nil {
+				t.Fatal(err)
+			}
+			if record.ActivityID != fresh || !record.ReceivedAt.Equal(freshAt) || !record.ContentUnavailable {
+				t.Fatalf("exported record = %+v; want only owner's live metadata", record)
+			}
+		})
 	}
 }

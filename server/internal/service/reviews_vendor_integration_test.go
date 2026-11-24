@@ -13,8 +13,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -108,12 +110,24 @@ func (f *reviewUpstream) handler(t *testing.T) http.Handler {
 // SSE adapter, T11 versions and ai_calls are used, without any real vendor route.
 func reviewRuntime(t *testing.T, f *reviewUpstream) *Runtime {
 	t.Helper()
+	return reviewRuntimeWithVendor(t, f.handler(t), nil)
+}
+
+func reviewRuntimeWithVendor(t *testing.T, handler http.Handler, extraPrompts map[admin.Task]uuid.UUID) *Runtime {
+	t.Helper()
+	s, _, _ := reviewRuntimeWithRestartableVendor(t, handler, extraPrompts)
+	return s
+}
+
+func reviewRuntimeWithRestartableVendor(t *testing.T, handler http.Handler, extraPrompts map[admin.Task]uuid.UUID) (*Runtime, func() *Runtime, func()) {
+	t.Helper()
 	ctx := t.Context()
-	vendor := httptest.NewTLSServer(f.handler(t))
+	vendor := httptest.NewTLSServer(handler)
 	t.Cleanup(vendor.Close)
 	roots := x509.NewCertPool()
 	roots.AddCert(vendor.Certificate())
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	t.Cleanup(transport.CloseIdleConnections)
 	transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 	transport.DialContext = func(c context.Context, n, a string) (net.Conn, error) {
 		if a != vendor.Listener.Addr().String() {
@@ -125,17 +139,22 @@ func reviewRuntime(t *testing.T, f *reviewUpstream) *Runtime {
 	if e != nil {
 		t.Fatal(e)
 	}
-	var s *Runtime
-	func() {
+	startRuntime := func() (*Runtime, func()) {
+		t.Helper()
 		old := http.DefaultTransport
 		http.DefaultTransport = transport
 		defer func() { http.DefaultTransport = old }()
-		s, e = Start(ctx, cfg)
-	}()
-	if e != nil {
-		t.Fatal(e)
+		startCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		s, err := Start(startCtx, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stop := sync.OnceFunc(s.Close)
+		t.Cleanup(stop)
+		return s, stop
 	}
-	t.Cleanup(s.Close)
+	s, stop := startRuntime()
 	// No upserts over a pre-existing gateway route, even in a test DB.
 	e = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		ids := [3]uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
@@ -160,7 +179,11 @@ func reviewRuntime(t *testing.T, f *reviewUpstream) *Runtime {
 		if e != nil {
 			return e
 		}
-		for task, prompt := range map[admin.Task]uuid.UUID{admin.TaskScoring: sv.Id, admin.TaskReviewAnalysis: uuid.MustParse("70df17a3-4acd-40ef-80e8-13f2b9579423")} {
+		versions := map[admin.Task]uuid.UUID{admin.TaskScoring: sv.Id, admin.TaskReviewAnalysis: uuid.MustParse("70df17a3-4acd-40ef-80e8-13f2b9579423")}
+		for task, prompt := range extraPrompts {
+			versions[task] = prompt
+		}
+		for task, prompt := range versions {
 			if _, e = tx.Exec(ctx, `insert into model_routes(task,primary_model,fallback_model,moderation_model) values($1,$2,$3,$4)`, task, ids[0], ids[1], ids[2]); e != nil {
 				return e
 			}
@@ -176,10 +199,23 @@ func reviewRuntime(t *testing.T, f *reviewUpstream) *Runtime {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() {
-		_, err := s.db.Exec(context.Background(), `delete from model_routes where primary_model in(select id from model_configs where provider='t23' and endpoint=$1)`, vendor.URL)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		conn, err := pgx.Connect(ctx, cfg.DatabaseURL)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close(ctx)
+		_, err = conn.Exec(ctx, `delete from model_routes where primary_model in(select id from model_configs where provider='t23' and endpoint=$1)`, vendor.URL)
 		if err != nil {
 			t.Error(err)
 		}
 	})
-	return s
+	start := func() *Runtime {
+		t.Helper()
+		runtime, _ := startRuntime()
+		return runtime
+	}
+	return s, start, stop
 }

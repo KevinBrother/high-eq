@@ -3,7 +3,6 @@
 package service
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -19,6 +18,7 @@ import (
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/assessment"
 	"high-eq/server/internal/events"
+	"high-eq/server/internal/growth"
 	"high-eq/server/internal/privacy"
 )
 
@@ -138,6 +138,8 @@ func TestAssessmentLifecycle(t *testing.T) {
 	if len(delivered) != 1 || delivered[0].AssessmentID != first.ID || delivered[0].UserID != a.UserId || !delivered[0].OccurredAt.Equal(first.CompletedAt) {
 		t.Fatal("did not replay original completion exactly once in sequential drains")
 	}
+	var today app.GetTodayPlanResult
+	check(request("GET", "plans/today", token, nil), 200, &today)
 	if _, e = s.db.Exec(ctx, `update assessments set completed_at=clock_timestamp()-interval '672 hours' where id=$1`, first.ID); e != nil {
 		t.Fatal(e)
 	}
@@ -173,36 +175,54 @@ func TestAssessmentLifecycle(t *testing.T) {
 		Version string `json:"version"`
 		Answers []int  `json:"answers"`
 	}
-	export := func(id uuid.UUID) []exported {
+	export := func(bearer string) []exported {
 		t.Helper()
-		var buf bytes.Buffer
-		if e := s.Data.Export(ctx, privacy.ExportRequest{OperationID: uuid.New(), UserID: id}, &buf); e != nil {
-			t.Fatal(e)
-		}
-		z, e := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-		if e != nil {
-			t.Fatal(e)
-		}
-		f, e := z.Open("assessments.json")
-		if e != nil {
-			t.Fatal(e)
-		}
-		defer f.Close()
+		body := t35Part(t, t35Download(t, router, bearer), "assessments")
+		t35Exclude(t, body, `"answers_enc":`, `"scores_enc":`, `"completion_pending":`)
 		var result []exported
-		if e = json.NewDecoder(f).Decode(&result); e != nil {
-			t.Fatal(e)
-		}
+		t35Decode(t, body, &result)
 		return result
 	}
-	all := export(a.UserId)
-	if len(all) != 2 || all[0].Version != bank.Version || !reflect.DeepEqual(all[0].Answers, answers) || !reflect.DeepEqual(all[0].Scores, first.Scores) || len(export(b.UserId)) != 0 {
+	check(request("PUT", "me/consents/assessment", b.AccessToken, map[string]any{"version": "v1", "granted": true}), 200, nil)
+	var foreign assessment.Result
+	check(request("POST", base, b.AccessToken, sheet), 200, &foreign)
+	all := export(a.AccessToken)
+	other := export(b.AccessToken)
+	if len(all) != 2 || all[0].ID != first.ID || all[1].ID != second.ID ||
+		all[0].Version != bank.Version || !reflect.DeepEqual(all[0].Answers, answers) ||
+		!reflect.DeepEqual(all[0].Scores, first.Scores) || !all[1].CompletedAt.Equal(second.CompletedAt) ||
+		len(other) != 1 || other[0].ID != foreign.ID {
 		t.Fatal("incomplete or cross-owner export")
+	}
+	body := t35Part(t, t35Download(t, router, token), "growth")
+	t35Exclude(t, body, foreign.ID.String(), `"review_activity_id":`, `"plan_enc":`)
+	var plans []growth.PlanExportRecord
+	t35Decode(t, body, &plans)
+	found := false
+	for _, plan := range plans {
+		if plan.RecordType == "plan" && plan.Day == today.Day.Time.Format(time.DateOnly) &&
+			plan.AssessmentID != nil && *plan.AssessmentID == first.ID {
+			if len(plan.Items) == 0 || len(plan.Items) != len(today.Items) || plan.Personalized != today.Personalized {
+				t.Fatal("growth.json contains an incomplete plan")
+			}
+			for i, item := range plan.Items {
+				want := today.Items[i]
+				if item.ID != want.Id || item.Kind != string(want.Kind) || item.ContentID != want.ContentId ||
+					item.Title != want.Title || item.Completed != want.Completed {
+					t.Fatalf("growth.json plan item %d differs from the public plan", i)
+				}
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("growth.json missing the owner's current daily plan")
 	}
 	del := privacy.Deletion{OperationID: uuid.New(), UserID: a.UserId, Scope: "assessments", SourceID: first.ID}
 	if e = s.Data.Delete(ctx, del); e != nil {
 		t.Fatal(e)
 	}
-	if x := export(a.UserId); len(x) != 1 || x[0].ID != second.ID {
+	if x := export(a.AccessToken); len(x) != 1 || x[0].ID != second.ID {
 		t.Fatal("source deletion")
 	}
 	if e = s.Bus.PublishAssessment(ctx, delivered[0]); e == nil {

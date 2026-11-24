@@ -15,3 +15,11 @@ func TestRequiredHooks(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistryReservesManifestName(t *testing.T) {
+	deleteHook := func(context.Context, pgx.Tx, Deletion) error { return nil }
+	exportHook := func(context.Context, pgx.Tx, ExportRequest, Emit) error { return nil }
+	if _, err := NewRegistry([]string{"manifest"}, Module{Name: "manifest", Delete: deleteHook, Export: exportHook}); err == nil {
+		t.Fatal("manifest collision accepted")
+	}
+}

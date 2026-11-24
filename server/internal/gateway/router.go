@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -55,6 +56,9 @@ type Call struct {
 	Variables map[string]string
 	Messages  []Message
 	Emit      func(context.Context, Event) error
+	// ProfileOwner binds profile-inference accounting to the reservation owner.
+	// It is metadata, never proof that the request was authorized or dispatched.
+	ProfileOwner uuid.UUID
 	// Guard rechecks authorization before any external review, after moderation,
 	// and before each model call or streamed fragment. It must never be sourced
 	// from client input.
@@ -84,6 +88,38 @@ type Call struct {
 type authorizedDispatchKey struct{}
 type authorizedScope struct{ tx pgx.Tx }
 
+type dispatchReceipt struct {
+	id         uuid.UUID
+	dispatched atomic.Bool
+}
+type dispatchReceiptKey struct{}
+
+func withDispatchReceipt(ctx context.Context, id uuid.UUID) (context.Context, *dispatchReceipt) {
+	receipt := &dispatchReceipt{id: id}
+	return context.WithValue(ctx, dispatchReceiptKey{}, receipt), receipt
+}
+
+func dispatchReceiptFrom(ctx context.Context) *dispatchReceipt {
+	receipt, _ := ctx.Value(dispatchReceiptKey{}).(*dispatchReceipt)
+	return receipt
+}
+
+// markProviderDispatch is called at the last internal boundary before the
+// provider adapter receives material. Route lookup and authorization failures
+// happen before this point and therefore cannot produce accounting.
+func markProviderDispatch(ctx context.Context) {
+	if receipt := dispatchReceiptFrom(ctx); receipt != nil {
+		receipt.dispatched.Store(true)
+	}
+}
+
+func inheritedDispatchReceipt(parent, child context.Context) context.Context {
+	if receipt := dispatchReceiptFrom(parent); receipt != nil {
+		return context.WithValue(child, dispatchReceiptKey{}, receipt)
+	}
+	return child
+}
+
 func authorizedTx(ctx context.Context) pgx.Tx {
 	if v, ok := ctx.Value(authorizedDispatchKey{}).(authorizedScope); ok {
 		return v.tx
@@ -104,6 +140,7 @@ func (r *Router) dispatchAuthorized(ctx context.Context, c Call, send func(conte
 	sent := false
 	err := c.Authorize(ctx, nil, func(sendCtx context.Context, tx pgx.Tx) error {
 		sent = true
+		sendCtx = inheritedDispatchReceipt(ctx, sendCtx)
 		return send(context.WithValue(sendCtx, authorizedDispatchKey{}, authorizedScope{tx}), tx)
 	})
 	if err == nil && !sent {
@@ -175,8 +212,20 @@ type Router struct {
 	load                 func(context.Context, Call) (plan, error)
 	dispatch             func(context.Context, uuid.UUID, endpoint, Kind, Request) (Result, error)
 	record               func(context.Context, Call, attemptStat) error
+	recordTx             func(context.Context, pgx.Tx, Call, attemptStat) error
 	stop                 Stop
 	first, total, review time.Duration
+	// routed is true only for the production closure that resolves an adapter
+	// before calling it. Test and direct dispatch fixtures are already at the
+	// external boundary, so invoking them is itself the dispatch proof.
+	routed bool
+}
+
+func (r *Router) dispatchOnce(ctx context.Context, rev uuid.UUID, e endpoint, k Kind, req Request) (Result, error) {
+	if !r.routed {
+		markProviderDispatch(ctx)
+	}
+	return r.dispatch(ctx, rev, e, k, req)
 }
 
 func (r *Router) beforeAttempt(ctx context.Context, c Call) error {
@@ -200,6 +249,16 @@ func rejected(err error) error {
 func (r *Router) Run(parent context.Context, c Call) (Reply, error) {
 	if !c.Task.valid() || c.User == uuid.Nil || c.Operation == uuid.Nil || c.PromptVersion != uuid.Nil {
 		return Reply{}, ErrRequest
+	}
+	if c.ProfileOwner != uuid.Nil && (c.Task != ProfileInference || c.Contact == uuid.Nil) {
+		return Reply{}, ErrRequest
+	}
+	// Once a caller claims profile-owner accounting, it must also provide the
+	// final authorization transaction. Legacy calls without the owner remain
+	// distinguishable, but an integrated profile path fails closed if it omits
+	// the dispatch fence.
+	if c.Task == ProfileInference && c.ProfileOwner != uuid.Nil && c.Authorize == nil {
+		return Reply{}, ErrConfig
 	}
 	if c.Generated != nil && (c.Generated.Task != c.Task || c.Generated.Raw == "" || c.Generated.CallID == uuid.Nil) {
 		return Reply{}, ErrRequest
@@ -275,19 +334,14 @@ func (r *Router) Run(parent context.Context, c Call) (Reply, error) {
 			}
 			return Reply{Result: result, CallID: c.Generated.CallID}, nil
 		}
-		start := time.Now()
 		id := uuid.New()
 		a := generation{review: &review, model: model}
 		result, err := a.run(ctx, id)
 		if rejection := rejected(err); rejection != nil {
 			return Reply{}, rejection
 		}
-		audit := r.log(parent, attempt, attemptStat{id, model, start, time.Since(start), result, outcome(err, a.terminal)})
 		if a.terminal != nil {
-			return r.finish(parent, c, *a.terminal, errors.Join(a.reviewErr, audit))
-		}
-		if audit != nil {
-			return Reply{}, audit
+			return r.finish(parent, c, *a.terminal, a.reviewErr)
 		}
 		if err == nil {
 			if ctx.Err() != nil {
@@ -319,12 +373,36 @@ func outcome(err error, t *Terminal) string {
 
 // Never pass generated content to a telemetry sink, even an in-memory one.
 func (r *Router) log(parent context.Context, c Call, s attemptStat) error {
+	return r.logTx(parent, nil, c, s)
+}
+
+// logTx records a dispatched attempt in the authorization transaction that
+// owns its provider call. The control context is deliberately detached from
+// caller cancellation so a real provider cost survives request timeout after
+// the adapter boundary was crossed.
+func (r *Router) logTx(parent context.Context, tx pgx.Tx, c Call, s attemptStat) error {
+	receipt := dispatchReceiptFrom(parent)
+	if receipt == nil || receipt.id != s.id || !receipt.dispatched.Load() {
+		return nil
+	}
 	// Project into explicitly allowed fields; future Call/Result fields stay private by default.
-	c = Call{Scope: c.Scope, Task: c.Task}
+	c = Call{Scope: c.Scope, Task: c.Task, ProfileOwner: c.ProfileOwner}
 	s.usage = Result{InputTokens: s.usage.InputTokens, OutputTokens: s.usage.OutputTokens, UsageKnown: s.usage.UsageKnown}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Second)
 	defer cancel()
-	if r.record(ctx, c, s) != nil {
+	var err error
+	if tx != nil {
+		if r.recordTx == nil {
+			return errAudit
+		}
+		err = r.recordTx(ctx, tx, c, s)
+	} else {
+		if r.record == nil {
+			return errAudit
+		}
+		err = r.record(ctx, c, s)
+	}
+	if err != nil {
 		return errAudit
 	}
 	return nil

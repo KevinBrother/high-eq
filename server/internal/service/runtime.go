@@ -124,9 +124,9 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	}
 	s.Profiles = &profile.Service{Fields: c.Fields, Rights: s.Membership}
 	hooks, e := privacy.NewRegistry(
-		[]string{"training", "profiles", "assessments", "payments", "membership", "accounts", "replies", "ai_calls", "emotion", "manual_marks", "reviews", "growth"},
+		[]string{"training", "chat_imports", "profiles", "assessments", "payments", "membership", "accounts", "replies", "ai_calls", "emotion", "manual_marks", "reviews", "growth"},
 		payments.Hooks(), s.Membership.Hooks(), assessment.Hooks(c.Fields), accounts.Hooks(c.Fields),
-		training.Hooks(c.Fields), s.Profiles.Hooks(), replies.Hooks(c.Fields), gateway.Hooks(), emotion.Hooks(c.Fields), marks.Hooks(c.Fields), reviews.Hooks(c.Fields), growth.Hooks(c.Fields),
+		training.Hooks(c.Fields), training.ChatImportHooks(), s.Profiles.Hooks(), replies.Hooks(c.Fields), gateway.Hooks(c.authMaster), emotion.Hooks(c.Fields), marks.Hooks(c.Fields), reviews.Hooks(c.Fields), growth.Hooks(c.Fields),
 	)
 	if e != nil {
 		return nil, e

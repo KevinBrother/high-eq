@@ -16,7 +16,7 @@ final demoPracticeProvider = Provider<DemoPractice>((ref) {
   }
   final space = ref.watch(contactSpaceProvider);
   return DemoPractice(contacts: space.repo);
-});
+}, dependencies: [contactSpaceProvider]);
 
 final practiceRepositoryProvider = Provider<PracticeRepository?>((ref) {
   final scope = ref.watch(accountScopeProvider);
@@ -26,4 +26,4 @@ final practiceRepositoryProvider = Provider<PracticeRepository?>((ref) {
     return ref.watch(demoPracticeProvider);
   }
   return ApiPractice(api, scope);
-});
+}, dependencies: [accountScopeProvider, demoPracticeProvider]);

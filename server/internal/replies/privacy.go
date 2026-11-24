@@ -4,30 +4,32 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
 	"high-eq/server/internal/fieldcrypt"
 	"high-eq/server/internal/privacy"
-	"time"
 )
 
 func Hooks(c *fieldcrypt.Cipher) privacy.Module {
 	return privacy.Module{Name: "replies", Delete: verifyErased, Export: func(ctx context.Context, tx pgx.Tx, q privacy.ExportRequest, emit privacy.Emit) error {
-		rows, e := tx.Query(ctx, `select a.id,r.request_id,a.contact_id,a.created_at,a.state,a.content_enc from activities a join reply_requests r on r.activity_id=a.id where a.user_id=$1 order by a.created_at,a.id`, q.UserID)
+		rows, e := tx.Query(ctx, `select a.id,a.contact_id,a.created_at,a.state,a.content_enc from activities a join reply_requests r on r.activity_id=a.id where a.user_id=$1 order by a.created_at,a.id`, q.UserID)
 		if e != nil {
 			return e
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var id, request uuid.UUID
+			var id uuid.UUID
 			var contact *uuid.UUID
 			var at time.Time
 			var state string
 			var enc []byte
-			if e = rows.Scan(&id, &request, &contact, &at, &state, &enc); e != nil {
+			if e = rows.Scan(&id, &contact, &at, &state, &enc); e != nil {
 				return e
 			}
-			row := map[string]any{"id": id, "request_id": request, "contact_id": contact, "created_at": at, "state": state}
+			row := map[string]any{"id": id, "contact_id": contact, "created_at": at, "state": state}
 			if len(enc) > 0 {
 				b, e := c.Open(enc, aad(q.UserID, id, "result"))
 				if e != nil {

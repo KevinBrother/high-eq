@@ -142,4 +142,4 @@ final growthCacheProvider = Provider<GrowthCache?>((ref) {
   final cache = GrowthCache(api.sessions, scope);
   ref.onDispose(cache.dispose);
   return cache;
-});
+}, dependencies: [accountScopeProvider]);

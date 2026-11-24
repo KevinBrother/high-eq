@@ -34,6 +34,13 @@ type profileRunner func(context.Context, gateway.Call) (gateway.Reply, error)
 func (fn profileRunner) Run(ctx context.Context, c gateway.Call) (gateway.Reply, error) {
 	return fn(ctx, c)
 }
+
+func authorizeProfileDispatch(ctx context.Context, call gateway.Call, dispatch func(context.Context, pgx.Tx) error) error {
+	if call.Authorize == nil {
+		return errors.New("inference dispatch has no authorization guard")
+	}
+	return call.Authorize(ctx, nil, dispatch)
+}
 func TestProfileLifecycle(t *testing.T) {
 	ctx := context.Background()
 	must := func(e error) {
@@ -248,22 +255,46 @@ func TestProfileLifecycle(t *testing.T) {
 	if projectionCount != 1 {
 		t.Fatalf("growth subscriber produced %d numeric copies", projectionCount)
 	}
+	call("PUT", "me/consents/contacts", b.AccessToken, map[string]any{"version": "v1", "granted": true}, 200, nil)
+	var foreign app.Contact
+	call("POST", "contacts", b.AccessToken, map[string]string{"nickname": "T35 合成外部关系人", "scene": "work"}, 200, &foreign)
 	export := func() []byte {
-		var buf bytes.Buffer
-		must(s.Data.Export(ctx, privacy.ExportRequest{UserID: u, OperationID: uuid.New()}, &buf))
-		z, e := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-		must(e)
-		f, e := z.Open("profiles.json")
-		must(e)
-		defer f.Close()
-		v, e := io.ReadAll(f)
-		must(e)
-		return v
+		t.Helper()
+		return t35Part(t, t35Download(t, router, tok), "profiles")
 	}
-	if x := export(); !bytes.Contains(x, []byte(src.String())) || bytes.Contains(x, []byte(raw)) {
-		t.Fatal("bad profile export")
+	profileData := export()
+	t35Exclude(t, profileData, raw, foreign.Id.String(), foreign.Nickname, material.RequestId.String(),
+		`"profile_enc":`, `"fact_enc":`, `"input_mac":`, `"request_id":`)
+	var rows []struct {
+		Contact   uuid.UUID       `json:"contact_id"`
+		Nickname  string          `json:"nickname"`
+		Scene     string          `json:"scene"`
+		Questions []int           `json:"question_choices"`
+		Materials []int           `json:"material_choices"`
+		Profile   *app.Profile    `json:"profile"`
+		Source    uuid.UUID       `json:"source_id"`
+		Subject   string          `json:"subject"`
+		Fact      json.RawMessage `json:"fact"`
+		At        time.Time       `json:"occurred_at"`
+	}
+	t35Decode(t, profileData, &rows)
+	var contact, observation bool
+	for _, row := range rows {
+		contact = contact || row.Contact == one.Id && row.Nickname == edit["nickname"] &&
+			row.Scene == edit["scene"] && row.Profile != nil && row.Profile.Summary != "" &&
+			len(row.Questions) == len(bank.Items) && row.Questions[5] != 0 &&
+			len(row.Materials) == len(bank.Items) && row.Materials[2] == 2
+		observation = observation || row.Source == src && row.Subject == "contact" &&
+			len(row.Fact) > 0 && string(row.Fact) != "null" && !row.At.IsZero()
+	}
+	if !contact || !observation {
+		t.Fatalf("profiles.json missing current profile or observation: %t/%t", contact, observation)
 	}
 	call("DELETE", p, tok, nil, 200, nil)
+	must(s.db.QueryRow(ctx, `select count(*) from profile_inference_requests where user_id=$1 and contact_id=$2`, u, one.Id).Scan(&projectionCount))
+	if projectionCount != 0 {
+		t.Fatalf("contact deletion left %d inference bindings", projectionCount)
+	}
 	if x := export(); bytes.Contains(x, []byte(one.Id.String())) || bytes.Contains(x, []byte(src.String())) || !bytes.Contains(x, []byte(two.Id.String())) {
 		t.Fatal("bad contact cascade")
 	}
@@ -382,13 +413,8 @@ func TestProfileInferenceReviewRegressions(t *testing.T) {
 			}
 			select {
 			case <-release:
-				if c.BeforeAttempt == nil {
-					return gateway.Reply{}, errors.New("inference dispatch has no authorization guard")
-				}
-				if e := c.BeforeAttempt(ctx); e != nil {
-					return gateway.Reply{}, e
-				}
-				return gateway.Reply{Result: gateway.Result{Object: json.RawMessage(`{"choices":[1,1,1,1,1,1,0]}`)}}, nil
+				err := authorizeProfileDispatch(ctx, c, func(context.Context, pgx.Tx) error { return nil })
+				return gateway.Reply{Result: gateway.Result{Object: json.RawMessage(`{"choices":[1,1,1,1,1,1,0]}`)}}, err
 			case <-ctx.Done():
 				return gateway.Reply{}, ctx.Err()
 			}
@@ -457,16 +483,11 @@ func TestProfileInferenceReviewRegressions(t *testing.T) {
 			}
 			select {
 			case <-release:
-				if call.BeforeAttempt == nil {
-					guardErr = errors.New("inference dispatch has no authorization guard")
-					return gateway.Reply{}, guardErr
-				}
-				guardErr = call.BeforeAttempt(ctx)
-				if guardErr != nil {
-					return gateway.Reply{}, guardErr
-				}
-				dispatched = true
-				return gateway.Reply{Result: gateway.Result{Object: json.RawMessage(`{"choices":[1,1,1,1,1,1,0]}`)}}, nil
+				guardErr = authorizeProfileDispatch(ctx, call, func(context.Context, pgx.Tx) error {
+					dispatched = true
+					return nil
+				})
+				return gateway.Reply{Result: gateway.Result{Object: json.RawMessage(`{"choices":[1,1,1,1,1,1,0]}`)}}, guardErr
 			case <-ctx.Done():
 				return gateway.Reply{}, ctx.Err()
 			}
@@ -569,18 +590,30 @@ func TestProfileInferenceReviewRegressions(t *testing.T) {
 		c := create(a.AccessToken)
 		p := "contacts/" + c.Id.String()
 		started := make(chan struct{})
-		var startedOnce sync.Once
+		retryStarted, resumeRetry := make(chan struct{}), make(chan struct{})
 		var calls atomic.Int32
+		var blockRetry atomic.Bool
 		s.Profiles.AI = profileRunner(func(ctx context.Context, call gateway.Call) (gateway.Reply, error) {
-			if calls.Add(1) == 1 {
-				startedOnce.Do(func() { close(started) })
+			switch calls.Add(1) {
+			case 1:
+				close(started)
 				<-ctx.Done()
 				return gateway.Reply{}, ctx.Err()
+			case 2:
+				if blockRetry.Load() {
+					close(retryStarted)
+					select {
+					case <-resumeRetry:
+					case <-ctx.Done():
+						return gateway.Reply{}, ctx.Err()
+					}
+				}
 			}
 			return gateway.Reply{Result: gateway.Result{Object: json.RawMessage(`{"choices":[1,1,1,1,1,1,0]}`)}}, nil
 		})
 		in := app.InferProfileInput{RequestId: uuid.New(), ChatText: "只用于内存的断连重试材料"}
 		reqCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		type result struct {
 			code int
 			body []byte
@@ -599,17 +632,45 @@ func TestProfileInferenceReviewRegressions(t *testing.T) {
 		if e := s.db.QueryRow(ctx, `select state from profile_inference_requests where user_id=$1 and request_id=$2`, a.UserId, in.RequestId).Scan(&state); e != nil || state != "processing" {
 			t.Fatalf("pre-disconnect state: %q %v", state, e)
 		}
+		changed := in
+		changed.ChatText += "，更换材料"
+		mustCall("POST", p+"/infer", a.AccessToken, in, 202, nil)
+		mustCall("POST", p+"/infer", a.AccessToken, changed, 409, nil)
 		cancel()
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):
 			t.Fatal("canceled inference did not return")
 		}
-		var count int
-		if e := s.db.QueryRow(ctx, `select count(*) from profile_inference_requests where user_id=$1 and request_id=$2`, a.UserId, in.RequestId).Scan(&count); e != nil || count != 0 {
-			t.Fatalf("canceled reservation survived: count=%d err=%v", count, e)
+		if e := s.db.QueryRow(ctx, `select state from profile_inference_requests where user_id=$1 and request_id=$2`, a.UserId, in.RequestId).Scan(&state); e != nil || state != "retryable" {
+			t.Fatalf("canceled reservation did not release its execution slot: state=%q err=%v", state, e)
 		}
-		mustCall("POST", p+"/infer", a.AccessToken, in, 200, nil)
+		mustCall("POST", p+"/infer", a.AccessToken, changed, 409, nil)
+		retryCtx, cancelRetry := context.WithCancel(context.Background())
+		defer cancelRetry()
+		blockRetry.Store(true)
+		go func() {
+			code, body := requestWithContext(retryCtx, "POST", p+"/infer", a.AccessToken, in)
+			done <- result{code, body}
+		}()
+		select {
+		case <-retryStarted:
+		case got := <-done:
+			t.Fatalf("retry did not enter inference: %d: %s", got.code, got.body)
+		case <-time.After(10 * time.Second):
+			t.Fatal("retry did not start")
+		}
+		mustCall("POST", p+"/infer", a.AccessToken, in, 202, nil)
+		mustCall("POST", p+"/infer", a.AccessToken, changed, 409, nil)
+		close(resumeRetry)
+		select {
+		case got := <-done:
+			if got.code != 200 {
+				t.Fatalf("retry: %d want 200: %s", got.code, got.body)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("retry did not finish")
+		}
 		if calls.Load() != 2 {
 			t.Fatalf("retry calls=%d want 2", calls.Load())
 		}
@@ -639,13 +700,8 @@ func TestProfileInferenceReviewRegressions(t *testing.T) {
 					return gateway.Reply{}, ctx.Err()
 				}
 			}
-			if call.BeforeAttempt == nil {
-				return gateway.Reply{}, errors.New("inference dispatch has no authorization guard")
-			}
-			if e := call.BeforeAttempt(ctx); e != nil {
-				return gateway.Reply{}, e
-			}
-			return gateway.Reply{Result: gateway.Result{Object: json.RawMessage(`{"choices":[1,1,1,1,1,1,0]}`)}}, nil
+			err := authorizeProfileDispatch(ctx, call, func(context.Context, pgx.Tx) error { return nil })
+			return gateway.Reply{Result: gateway.Result{Object: json.RawMessage(`{"choices":[1,1,1,1,1,1,0]}`)}}, err
 		})
 		in := app.InferProfileInput{RequestId: uuid.New(), ChatText: "只用于内存的刷新重试材料"}
 		type result struct {
@@ -673,15 +729,14 @@ func TestProfileInferenceReviewRegressions(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Fatal("inference did not finish")
 		}
-		var count int
-		if e := s.db.QueryRow(ctx, `select count(*) from profile_inference_requests where user_id=$1 and request_id=$2`, a.UserId, in.RequestId).Scan(&count); e != nil || count != 0 {
-			t.Fatalf("expired-session reservation survived: count=%d err=%v", count, e)
+		var state string
+		if e := s.db.QueryRow(ctx, `select state from profile_inference_requests where user_id=$1 and request_id=$2`, a.UserId, in.RequestId).Scan(&state); e != nil || state != "retryable" {
+			t.Fatalf("expired-session reservation did not release its execution slot: state=%q err=%v", state, e)
 		}
 		mustCall("POST", p+"/infer", rotated.AccessToken, in, 200, nil)
 		if calls.Load() != 2 {
 			t.Fatalf("retry calls=%d want 2", calls.Load())
 		}
-		var state string
 		if e := s.db.QueryRow(ctx, `select state from profile_inference_requests where user_id=$1 and request_id=$2`, a.UserId, in.RequestId).Scan(&state); e != nil || state != "complete" {
 			t.Fatalf("refresh retry state: %q %v", state, e)
 		}
@@ -710,13 +765,8 @@ func TestProfileInferenceReviewRegressions(t *testing.T) {
 					return gateway.Reply{}, ctx.Err()
 				}
 			}
-			if call.BeforeAttempt == nil {
-				return gateway.Reply{}, errors.New("inference dispatch has no authorization guard")
-			}
-			if e := call.BeforeAttempt(ctx); e != nil {
-				return gateway.Reply{}, e
-			}
-			return gateway.Reply{Result: gateway.Result{Object: json.RawMessage(`{"choices":[1,1,1,1,1,1,0]}`)}}, nil
+			err := authorizeProfileDispatch(ctx, call, func(context.Context, pgx.Tx) error { return nil })
+			return gateway.Reply{Result: gateway.Result{Object: json.RawMessage(`{"choices":[1,1,1,1,1,1,0]}`)}}, err
 		})
 		in := app.InferProfileInput{RequestId: uuid.New(), ChatText: "只用于内存的注销冻结重试材料"}
 		type result struct {
@@ -750,15 +800,17 @@ func TestProfileInferenceReviewRegressions(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Fatal("frozen inference did not finish")
 		}
-		var count int
-		if e := s.db.QueryRow(ctx, `select count(*) from profile_inference_requests where user_id=$1 and request_id=$2`, a.UserId, in.RequestId).Scan(&count); e != nil || count != 0 {
-			t.Fatalf("closure cleanup left reservation: count=%d err=%v", count, e)
+		if e := s.db.QueryRow(ctx, `select state from profile_inference_requests where user_id=$1 and request_id=$2`, a.UserId, in.RequestId).Scan(&state); e != nil || state != "retryable" {
+			t.Fatalf("closure cleanup did not release the execution slot: state=%q err=%v", state, e)
 		}
 
 		// A recovery login is allowed during the cancellation window, then the
 		// original request key can be retried after closure is cancelled.
 		recovery := loginSubject(subject, false)
 		mustCall("DELETE", "me/closure", recovery.AccessToken, nil, 200, nil)
+		changed := in
+		changed.ChatText += "，更换材料"
+		mustCall("POST", p+"/infer", recovery.AccessToken, changed, 409, nil)
 		mustCall("POST", p+"/infer", recovery.AccessToken, in, 200, nil)
 		if calls.Load() != 2 {
 			t.Fatalf("post-unfreeze retry calls=%d want 2", calls.Load())
@@ -840,9 +892,9 @@ func TestProfileInferenceReviewRegressions(t *testing.T) {
 				if !reflect.DeepEqual(before, after) {
 					t.Fatalf("terminal reply saved profile: before=%+v after=%+v", before, after)
 				}
-				var count int
-				if e := s.db.QueryRow(ctx, `select count(*) from profile_inference_requests where user_id=$1 and request_id=$2`, a.UserId, in.RequestId).Scan(&count); e != nil || count != 0 {
-					t.Fatalf("terminal reservation survived: count=%d err=%v", count, e)
+				var state string
+				if e := s.db.QueryRow(ctx, `select state from profile_inference_requests where user_id=$1 and request_id=$2`, a.UserId, in.RequestId).Scan(&state); e != nil || state != "retryable" {
+					t.Fatalf("terminal attempt did not release the execution slot: state=%q err=%v", state, e)
 				}
 			})
 		}

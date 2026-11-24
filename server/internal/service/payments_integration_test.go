@@ -177,6 +177,18 @@ func TestPaymentLifecycle(t *testing.T) {
 	}
 	wg.Wait()
 	rights(a, now.Add(30*day))
+	membershipData := t35Part(t, t35Download(t, router, a.AccessToken), "membership")
+	var entitlements []struct {
+		Kind   string    `json:"kind"`
+		Starts time.Time `json:"starts_at"`
+		Ends   time.Time `json:"ends_at"`
+	}
+	t35Decode(t, membershipData, &entitlements)
+	if len(entitlements) != 1 || entitlements[0].Kind != "entitlement" ||
+		!entitlements[0].Starts.Equal(now) || !entitlements[0].Ends.Equal(now.Add(30*day)) ||
+		string(t35Part(t, t35Download(t, router, b.AccessToken), "membership")) != "[]" {
+		t.Fatal("membership.json missing the owner's paid entitlement or exposing it to another account")
+	}
 	retry, _ := json.Marshal(map[string]any{"platform": "wechat", "product": "monthly", "request_id": req})
 	if body := call("POST", "purchases", a.AccessToken, "application/json", retry, nil, 409); !bytes.Contains(body, []byte("已支付")) {
 		t.Fatalf("paid retry was not actionable: %s", body)
@@ -184,6 +196,8 @@ func TestPaymentLifecycle(t *testing.T) {
 	if calls != 2 {
 		t.Fatal("paid retry crossed the provider boundary")
 	}
+	// New orders use the normal offline prepay stub after the retry checks.
+	ch.Prepay = original
 	rights(b, time.Time{})
 	chain := uuid.NewString()
 	purchase := testkit.TransactionSignedAt(at, uuid.NewString(), chain, now.Add(-day), now, now.Add(day))
@@ -248,23 +262,38 @@ func TestPaymentLifecycle(t *testing.T) {
 	f.Set("notify_id", uuid.NewString())
 	aliNotice(200)
 	rights(a, time.Time{})
-	var buf bytes.Buffer
-	e = s.Data.Export(ctx, privacy.ExportRequest{OperationID: uuid.New(), UserID: a.UserId}, &buf)
-	if e != nil {
-		t.Fatal(e)
+	if other := t35Part(t, t35Download(t, router, b.AccessToken), "payments"); string(other) != "[]" {
+		t.Fatal("payments.json exposed orders to the account without a purchase")
 	}
-	z, e := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-	if e != nil {
-		t.Fatal(e)
+	var foreign payments.Order
+	post("purchases", b.AccessToken, map[string]any{"platform": "wechat", "product": "monthly", "request_id": uuid.New()}, 200, &foreign)
+	foreignPaymentData := t35Part(t, t35Download(t, router, b.AccessToken), "payments")
+	if foreign.ID == uuid.Nil || !bytes.Contains(foreignPaymentData, []byte(foreign.ID.String())) {
+		t.Fatal("payments.json missing the other account's order in its own export")
 	}
-	part, e := z.Open("payments.json")
-	if e != nil {
-		t.Fatal(e)
+	t35Exclude(t, foreignPaymentData, wx.ID.String(), ali.ID.String())
+	paymentData := t35Part(t, t35Download(t, router, a.AccessToken), "payments")
+	t35Exclude(t, paymentData, foreign.ID.String(), at, tx, req.String(), f.Get("trade_no"),
+		`"transaction_hmac":`, `"provider_hmac":`, `"notice_hmac":`, `"request_id":`, `"signed_transaction":`)
+	var orders []struct {
+		ID        uuid.UUID  `json:"id"`
+		Platform  string     `json:"platform"`
+		Product   string     `json:"product_code"`
+		Amount    int        `json:"amount_fen"`
+		State     string     `json:"state"`
+		CreatedAt time.Time  `json:"created_at"`
+		PaidAt    *time.Time `json:"paid_at"`
+		Refunded  *time.Time `json:"refunded_at"`
 	}
-	export, e := io.ReadAll(part)
-	part.Close()
-	if e != nil || !bytes.Contains(export, []byte(wx.ID.String())) || bytes.Contains(export, []byte(at)) || bytes.Contains(export, []byte(tx)) {
-		t.Fatal("invalid payment export")
+	t35Decode(t, paymentData, &orders)
+	found := false
+	for _, order := range orders {
+		found = found || order.ID == ali.ID && order.Platform == "alipay" && order.Product == "yearly" &&
+			order.Amount == 8800 && order.State == "refunded" && !order.CreatedAt.IsZero() &&
+			order.PaidAt != nil && order.PaidAt.Equal(now) && order.Refunded != nil && order.Refunded.Equal(now)
+	}
+	if !found || !bytes.Contains(paymentData, []byte(wx.ID.String())) {
+		t.Fatal("payments.json missing an owned order or the completed refund details")
 	}
 	e = s.Data.Delete(ctx, privacy.Deletion{OperationID: uuid.New(), UserID: a.UserId, Scope: "account"})
 	if e != nil {

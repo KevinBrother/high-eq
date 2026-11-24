@@ -243,12 +243,19 @@ func (s *Service) generate(ctx context.Context, p accounts.Principal, in app.Cre
 	r, e := runner.Run(ctx, gateway.Call{
 		Scope: scope, Task: gateway.ReplySuggestion, Mode: gateway.JSONObject,
 		Messages: []gateway.Message{{Role: "user", Content: string(msg)}},
-		Authorize: func(checkCtx context.Context, _ pgx.Tx, send func(context.Context, pgx.Tx) error) error {
-			return s.accounts.WithSession(checkCtx, p, false, func(tx pgx.Tx) error {
-				if e := s.allow(checkCtx, tx, p.User, in.ContactId, binding); e != nil {
+		Authorize: func(attemptCtx context.Context, _ pgx.Tx, send func(context.Context, pgx.Tx) error) error {
+			if err := attemptCtx.Err(); err != nil {
+				return err
+			}
+			// The adapter remains cancelable. The same guarded transaction must
+			// have time to commit the receipt for an attempt that reached it.
+			controlCtx, cancel := context.WithTimeout(context.WithoutCancel(attemptCtx), gateway.ExecutionLimit+15*time.Second)
+			defer cancel()
+			return s.accounts.WithSession(controlCtx, p, false, func(tx pgx.Tx) error {
+				if e := s.allow(controlCtx, tx, p.User, in.ContactId, binding); e != nil {
 					return e
 				}
-				return send(checkCtx, tx)
+				return send(attemptCtx, tx)
 			})
 		},
 	})

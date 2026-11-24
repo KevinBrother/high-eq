@@ -251,7 +251,7 @@ def run_ledger_only(args, state, logs, env):
         verify_ledger(port, password)
 
 
-def run_services(args, state, logs, env):
+def run_services(args, state, logs, env, *, run_journey=None):
     pg, initdb, redis, go, dart, snapshot = setup(args, env)
     with prerequisite(Stage.SERVICE_CLEANUP), ExitStack() as owned:
         with prerequisite(Stage.LOOPBACK):
@@ -312,7 +312,7 @@ def run_services(args, state, logs, env):
             T27_HISTORY_FLUTTER_SNAPSHOT=str(snapshot),
         )
         with prerequisite(Stage.GO_STARTUP):
-            run_test(go, env, logs / "journey.log")
+            (run_journey or run_test)(go, env, logs / "journey.log")
 
 
 def run_test(go, env, log):
@@ -357,6 +357,21 @@ def run_test(go, env, log):
     print("RESULT: PASS", flush=True)
 
 
+def isolated_environment(state):
+    allowed = {"PATH", "HOME", "PUB_CACHE", "GOMODCACHE", "GOPATH"}
+    env = {key: os.environ[key] for key in allowed if key in os.environ}
+    env.setdefault("GOMODCACHE", str(Path.home() / "go/pkg/mod"))
+    env.setdefault("PUB_CACHE", str(Path.home() / ".pub-cache"))
+    env.update(
+        GOCACHE=str(state / "go-cache"), TMPDIR=str(state),
+        XDG_CONFIG_HOME=str(state / "config"),
+        XDG_CACHE_HOME=str(state / "cache"), LANG="C", LC_ALL="C", CI="true",
+        GOPROXY="off", GOSUMDB="off", GOTOOLCHAIN="local", GOENV="off", GOWORK="off",
+        FLUTTER_SUPPRESS_ANALYTICS="true", DART_SUPPRESS_ANALYTICS="true",
+    )
+    return env
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pg-bin", type=Path)
@@ -377,17 +392,7 @@ def main():
         directory = workspace.enter_context(tempfile.TemporaryDirectory(prefix="t27-state-", dir=logs))
         print(f"T27 logs: {logs}", flush=True)
         state = Path(directory)
-        allowed = {"PATH", "HOME", "PUB_CACHE", "GOMODCACHE", "GOPATH"}
-        env = {key: os.environ[key] for key in allowed if key in os.environ}
-        env.setdefault("GOMODCACHE", str(Path.home() / "go/pkg/mod"))
-        env.setdefault("PUB_CACHE", str(Path.home() / ".pub-cache"))
-        env.update(
-            GOCACHE=str(state / "go-cache"), TMPDIR=str(state),
-            XDG_CONFIG_HOME=str(state / "config"),
-            XDG_CACHE_HOME=str(state / "cache"), LANG="C", LC_ALL="C", CI="true",
-            GOPROXY="off", GOSUMDB="off", GOTOOLCHAIN="local", GOENV="off", GOWORK="off",
-            FLUTTER_SUPPRESS_ANALYTICS="true", DART_SUPPRESS_ANALYTICS="true",
-        )
+        env = isolated_environment(state)
         if args.ledger_only:
             run_ledger_only(args, state, logs, env)
         else:

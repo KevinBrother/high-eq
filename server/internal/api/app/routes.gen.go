@@ -2136,7 +2136,7 @@ type ServerInterface interface {
 	// 按用途授权或立即撤回
 	// (PUT /v1/me/consents/{purpose})
 	SetConsent(c *gin.Context, purpose SetConsentParamsPurpose)
-	// 删除源及副本，重算成长分
+	// 计划中的单条记录删除（当前候选未开放）
 	// (DELETE /v1/me/data/{kind}/{id})
 	DeleteSource(c *gin.Context, kind DeleteSourceParamsKind, id openapi_types.UUID)
 	// 流式生成当前账号 JSON 压缩包，不落盘

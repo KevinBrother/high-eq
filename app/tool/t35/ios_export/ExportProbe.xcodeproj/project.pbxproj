@@ -1,0 +1,143 @@
+// !$*UTF8*$!
+{
+  archiveVersion = 1;
+  classes = {};
+  objectVersion = 56;
+  objects = {
+    B35000000000000000000001 = {
+      isa = PBXProject;
+      attributes = {
+        TargetAttributes = { B35000000000000000000004 = { TestTargetID = B35000000000000000000003; }; };
+      };
+      buildConfigurationList = B35000000000000000000011;
+      compatibilityVersion = "Xcode 14.0";
+      developmentRegion = en;
+      knownRegions = (en, Base);
+      mainGroup = B35000000000000000000002;
+      productRefGroup = B35000000000000000000005;
+      projectDirPath = "";
+      projectRoot = "";
+      targets = (B35000000000000000000003, B35000000000000000000004);
+    };
+    B35000000000000000000002 = {
+      isa = PBXGroup;
+      children = (
+        B35000000000000000000006 /* ProbeApp.swift */,
+        B35000000000000000000007 /* ExportFixture.swift */,
+        B35000000000000000000008 /* PrivacyExportFiles.swift */,
+        B3500000000000000000001B /* PrivacyExportShare.swift */,
+        B35000000000000000000009 /* ExportUITests.swift */,
+        B3500000000000000000001F /* RunnerExportUITests.swift */,
+        B3500000000000000000001D /* LocalFilesProbe.swift */,
+        B3500000000000000000000A /* ExportProbe-Info.plist */,
+        B35000000000000000000005 /* Products */,
+      );
+      sourceTree = "<group>";
+    };
+    B35000000000000000000003 = {
+      isa = PBXNativeTarget;
+      buildConfigurationList = B35000000000000000000012;
+      buildPhases = (B3500000000000000000000D);
+      buildRules = ();
+      dependencies = ();
+      name = ExportProbe;
+      productName = ExportProbe;
+      productReference = B3500000000000000000000B;
+      productType = "com.apple.product-type.application";
+    };
+    B35000000000000000000004 = {
+      isa = PBXNativeTarget;
+      buildConfigurationList = B35000000000000000000013;
+      buildPhases = (B3500000000000000000000E);
+      buildRules = ();
+      dependencies = (B3500000000000000000000F);
+      name = ExportUITests;
+      productName = ExportUITests;
+      productReference = B3500000000000000000000C;
+      productType = "com.apple.product-type.bundle.ui-testing";
+    };
+    B35000000000000000000005 = {
+      isa = PBXGroup;
+      children = (B3500000000000000000000B, B3500000000000000000000C);
+      name = Products;
+      sourceTree = "<group>";
+    };
+    B35000000000000000000006 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbeApp.swift; sourceTree = "<group>"; };
+    B35000000000000000000007 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportFixture.swift; sourceTree = "<group>"; };
+    B35000000000000000000008 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PrivacyExportFiles.swift; path = ../../../ios/Runner/PrivacyExportFiles.swift; sourceTree = "<group>"; };
+    B35000000000000000000009 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportUITests.swift; sourceTree = "<group>"; };
+    B3500000000000000000000A = { isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "ExportProbe-Info.plist"; sourceTree = "<group>"; };
+    B3500000000000000000000B = { isa = PBXFileReference; explicitFileType = wrapper.application; path = ExportProbe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+    B3500000000000000000000C = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = ExportUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+    B3500000000000000000000D = {
+      isa = PBXSourcesBuildPhase;
+      buildActionMask = 2147483647;
+      files = (B35000000000000000000017, B35000000000000000000018, B35000000000000000000019, B3500000000000000000001C, B3500000000000000000001E);
+      runOnlyForDeploymentPostprocessing = 0;
+    };
+    B3500000000000000000000E = {
+      isa = PBXSourcesBuildPhase;
+      buildActionMask = 2147483647;
+      files = (B3500000000000000000001A, B35000000000000000000020);
+      runOnlyForDeploymentPostprocessing = 0;
+    };
+    B3500000000000000000000F = {
+      isa = PBXTargetDependency;
+      target = B35000000000000000000003;
+      targetProxy = B35000000000000000000010;
+    };
+    B35000000000000000000010 = {
+      isa = PBXContainerItemProxy;
+      containerPortal = B35000000000000000000001;
+      proxyType = 1;
+      remoteGlobalIDString = B35000000000000000000003;
+      remoteInfo = ExportProbe;
+    };
+    B35000000000000000000011 = { isa = XCConfigurationList; buildConfigurations = (B35000000000000000000014); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+    B35000000000000000000012 = { isa = XCConfigurationList; buildConfigurations = (B35000000000000000000015); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+    B35000000000000000000013 = { isa = XCConfigurationList; buildConfigurations = (B35000000000000000000016); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+    B35000000000000000000014 = {
+      isa = XCBuildConfiguration;
+      buildSettings = {
+        IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+        SDKROOT = iphonesimulator;
+        SUPPORTED_PLATFORMS = iphonesimulator;
+        SWIFT_VERSION = 5.0;
+        TARGETED_DEVICE_FAMILY = 1;
+      };
+      name = Debug;
+    };
+    B35000000000000000000015 = {
+      isa = XCBuildConfiguration;
+      buildSettings = {
+        GENERATE_INFOPLIST_FILE = YES;
+        INFOPLIST_FILE = "ExportProbe-Info.plist";
+        PRODUCT_BUNDLE_IDENTIFIER = cn.higheq.t35.ExportProbe;
+        PRODUCT_NAME = "$(TARGET_NAME)";
+      };
+      name = Debug;
+    };
+    B35000000000000000000016 = {
+      isa = XCBuildConfiguration;
+      buildSettings = {
+        ENABLE_TESTING_SEARCH_PATHS = YES;
+        GENERATE_INFOPLIST_FILE = YES;
+        PRODUCT_BUNDLE_IDENTIFIER = cn.higheq.t35.ExportUITests;
+        PRODUCT_NAME = "$(TARGET_NAME)";
+        TEST_TARGET_NAME = ExportProbe;
+      };
+      name = Debug;
+    };
+    B35000000000000000000017 = { isa = PBXBuildFile; fileRef = B35000000000000000000006; };
+    B35000000000000000000018 = { isa = PBXBuildFile; fileRef = B35000000000000000000007; };
+    B35000000000000000000019 = { isa = PBXBuildFile; fileRef = B35000000000000000000008; };
+    B3500000000000000000001A = { isa = PBXBuildFile; fileRef = B35000000000000000000009; };
+    B3500000000000000000001B = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PrivacyExportShare.swift; path = ../../../ios/Runner/PrivacyExportShare.swift; sourceTree = "<group>"; };
+    B3500000000000000000001C = { isa = PBXBuildFile; fileRef = B3500000000000000000001B; };
+    B3500000000000000000001D = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalFilesProbe.swift; sourceTree = "<group>"; };
+    B3500000000000000000001E = { isa = PBXBuildFile; fileRef = B3500000000000000000001D; };
+    B3500000000000000000001F = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerExportUITests.swift; sourceTree = "<group>"; };
+    B35000000000000000000020 = { isa = PBXBuildFile; fileRef = B3500000000000000000001F; };
+  };
+  rootObject = B35000000000000000000001;
+}

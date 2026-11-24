@@ -1,0 +1,709 @@
+T33 owner compliance, reviewed candidate tree 5be62b834265ba333c6a141b1c4e32157b8c7d9d
+Old contract: unmodified candidate 4 tests, exit 0. Mutations 1–4 each also ran 4 tests, exit 0.
+Red before the Go parser: mutation 4, server/internal/profile/inference_request.go:211, expected exit 1, actual 1.
+The UPDATE predicate was unchanged and the Go argument for $4 changed from owner to request.
+test_profile_delete_uses_the_internal_contacts_scope (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_delete_uses_the_internal_contacts_scope) ... ok
+test_profile_evidence_schema_freezes_sources_and_binds_both_consents (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_evidence_schema_freezes_sources_and_binds_both_consents) ... ok
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+test_profile_inference_update_bindings (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_update_bindings) ... FAIL
+test_profile_inventory_docs_distinguish_feedback_from_model_material (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inventory_docs_distinguish_feedback_from_model_material) ... ok
+
+======================================================================
+FAIL: test_profile_inference_update_bindings (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_update_bindings)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Volumes/doc/workspace/project/high-eq/build/t35/repair-profile-owner-compliance.kFv3u6/src/docs/compliance/test_t33_contract.py", line 1745, in test_profile_inference_update_bindings
+    self.assertEqual(bound[3], "owner", "invalidateInference: SQL $4 must bind owner")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'request' != 'owner'
+- request
++ owner
+ : invalidateInference: SQL $4 must bind owner
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.009s
+
+FAILED (failures=1)
+Source restored before implementing the parser.
+
+Final replay: python3 -B docs/compliance/replay_t33_owner_mutations.py
+Candidate, expected exit 0, actual 0
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.006s
+
+OK
+
+1. server/internal/profile/infer.go:112 — Infer, stored reservation mismatch path: omit reserved.owner
+   Expected exit 1, actual 1. Source restored.
+   AssertionError: invalidateInference arguments must be (ctx, tx, u, id, in.RequestId, reserved.owner), got (ctx, tx, u, id, in.RequestId)
+2. server/internal/profile/infer.go:112 — Infer, stored reservation mismatch path: pass in.RequestId as owner
+   Expected exit 1, actual 1. Source restored.
+   AssertionError: invalidateInference arguments must be (ctx, tx, u, id, in.RequestId, reserved.owner), got (ctx, tx, u, id, in.RequestId, in.RequestId)
+3. server/internal/profile/inference_request.go:172 — checkInferenceAttempt, stored reservation mismatch path: pass request as owner
+   Expected exit 1, actual 1. Source restored.
+   AssertionError: invalidateInference arguments must be (ctx, tx, u, contact, request, owner), got (ctx, tx, u, contact, request, request)
+4. server/internal/profile/inference_request.go:211 — invalidateInference: bind owner_id=$4 to request
+   Expected exit 1, actual 1. Source restored.
+   AssertionError: invalidateInference: SQL $4 must bind owner (tx.Exec line 209, got request)
+5. server/internal/profile/inference_request.go:211 — invalidateInference: remove the owner predicate and its binding
+   Expected exit 1, actual 1. Source restored.
+   AssertionError: invalidateInference UPDATE must fence the processing row by owner
+6. server/internal/profile/inference_request.go:211 — invalidateInference: invert owner equality
+   Expected exit 1, actual 1. Source restored.
+   AssertionError: invalidateInference UPDATE must fence the processing row by owner
+7. server/internal/profile/infer.go:107 — Infer: remove the result owner mismatch comparison
+   Expected exit 1, actual 1. Source restored.
+   AssertionError: result path must reject a superseded or expired owner
+8. server/internal/profile/inference_request.go:143 — reserveInference: return invalidated rows as successful reuses
+   Expected exit 1, actual 1. Source restored.
+   AssertionError: invalidated reservations must return a conflict
+Restored candidate, expected exit 0, actual 0
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.006s
+
+OK
+
+Mutations rejected by their expected assertions: 8/8
+Replay script exit: 0
+
+Parsed invalidation call sites in the restored candidate
+server/internal/profile/infer.go: 5 calls (Infer:112, Infer:120, Infer:131, Infer:144, Infer:155)
+server/internal/profile/inference_request.go: 4 calls (checkInferenceAttempt:172, checkInferenceAttempt:177, checkInferenceAttempt:185, checkInferenceAttempt:195)
+
+python3 -B -m unittest -v docs.compliance.test_t33_contract.ProfileEvidenceContract
+----------------------------------------------------------------------
+Ran 6 tests in 0.019s
+
+OK
+Exit: 0
+
+python3 -B -m unittest discover -s docs/compliance -v
+----------------------------------------------------------------------
+Ran 84 tests in 1.137s
+
+OK
+Exit: 0
+
+Follow-up review reproduction, before changing the contract
+python3 -B docs/compliance/replay_t33_owner_mutations.py --review
+Candidate, expected exit 0, actual 0
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.006s
+
+OK
+
+1. server/internal/profile/infer.go:112 — Infer: overwrite reserved.owner before invalidating
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: reserved must keep its reservation binding
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.005s
+
+OK
+
+2. server/internal/profile/inference_request.go:172 — checkInferenceAttempt: overwrite owner before a later selector target
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: owner must keep its enclosing binding
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.005s
+
+OK
+
+3. server/internal/profile/inference_request.go:209 — invalidateInference: overwrite the request parameter before tx.Exec
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: request must keep its enclosing binding
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.005s
+
+OK
+
+4. server/internal/profile/inference_request.go:62 — claimInference: initialize the owner from request instead of uuid.New
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: owner must be initialized by uuid.New()
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.005s
+
+OK
+
+5. server/internal/profile/inference_request.go:63 — claimInference: overwrite the freshly generated owner before tx.Exec
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: owner must keep its uuid.New() binding
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.005s
+
+OK
+
+6. server/internal/profile/infer.go:112 — Infer: delete one invalidation call and its error branch
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: Infer must have 5 direct invalidateInference calls
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.005s
+
+OK
+
+7. server/internal/profile/inference_request.go:172 — checkInferenceAttempt: return without invalidating one branch
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: checkInferenceAttempt must have 4 direct invalidateInference calls
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.006s
+
+OK
+
+8. server/internal/profile/infer.go:107 — Infer: turn the result owner guard into a block comment
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: result path must reject a superseded or expired owner
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.005s
+
+OK
+
+9. server/internal/profile/inference_request.go:166 — checkInferenceAttempt: turn the attempt owner guard into a block comment
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: attempt path must reject a superseded or expired owner
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.006s
+
+OK
+
+10. server/internal/profile/inference_request.go:211 — invalidateInference: compare against the uppercase SQL state literal
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: invalidateInference UPDATE must fence the processing row by owner
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.005s
+
+OK
+
+11. server/internal/profile/infer.go:112 — Infer: use a package-scope alias for one direct call
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: Infer must have 5 direct invalidateInference calls
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.005s
+
+OK
+
+Candidate after replay, expected exit 0, actual 0
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.005s
+
+OK
+
+Mutations rejected by their expected assertions: 0/11
+Replay script exit: 1
+
+Follow-up final verification, all mutations via in-memory source overlays
+python3 -B -m unittest -v docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.011s
+
+OK
+Exit: 0
+
+python3 -B -m unittest -v docs.compliance.test_t33_contract.ProfileEvidenceContract
+test_go_owner_call_parser_preserves_arguments_and_enclosing_functions (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_go_owner_call_parser_preserves_arguments_and_enclosing_functions) ... ok
+test_profile_delete_uses_the_internal_contacts_scope (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_delete_uses_the_internal_contacts_scope) ... ok
+test_profile_evidence_schema_freezes_sources_and_binds_both_consents (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_evidence_schema_freezes_sources_and_binds_both_consents) ... ok
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+test_profile_invalidation_rejects_rebound_attempt_owner (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_invalidation_rejects_rebound_attempt_owner) ... ok
+test_profile_inventory_docs_distinguish_feedback_from_model_material (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inventory_docs_distinguish_feedback_from_model_material) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.062s
+
+OK
+Exit: 0
+
+python3 -B -m unittest discover -s docs/compliance -v
+test_live_probe_accepts_name_filter_that_selects_live_dart (test_t29_live_execution.T29LiveExecutionContract.test_live_probe_accepts_name_filter_that_selects_live_dart) ... ok
+test_live_probe_rejects_an_entry_exit_zero_mutation (test_t29_live_execution.T29LiveExecutionContract.test_live_probe_rejects_an_entry_exit_zero_mutation) ... ok
+test_live_probe_rejects_name_filter_that_deselects_live_dart (test_t29_live_execution.T29LiveExecutionContract.test_live_probe_rejects_name_filter_that_deselects_live_dart) ... ok
+test_live_script_propagates_the_live_dart_failure (test_t29_live_execution.T29LiveExecutionContract.test_live_script_propagates_the_live_dart_failure) ... ok
+test_live_script_reaches_the_live_dart_test (test_t29_live_execution.T29LiveExecutionContract.test_live_script_reaches_the_live_dart_test) ... ok
+test_cross_card_changes_are_appended_not_denied (test_t33_contract.BaselineAndScopeContract.test_cross_card_changes_are_appended_not_denied) ... ok
+test_fixed_baseline_and_candidate_evidence_are_separate (test_t33_contract.BaselineAndScopeContract.test_fixed_baseline_and_candidate_evidence_are_separate) ... ok
+test_t33_does_not_freeze_static_contract_count (test_t33_contract.BaselineAndScopeContract.test_t33_does_not_freeze_static_contract_count) ... ok
+test_android_and_ios_permissions_are_not_inflated (test_t33_contract.BaselineSourceFactsContract.test_android_and_ios_permissions_are_not_inflated) ... ok
+test_candidate_evidence_uses_archive_hash_not_working_tree (test_t33_contract.BaselineSourceFactsContract.test_candidate_evidence_uses_archive_hash_not_working_tree) ... ok
+test_drafts_do_not_claim_unmerged_rights_or_permissions (test_t33_contract.BaselineSourceFactsContract.test_drafts_do_not_claim_unmerged_rights_or_permissions) ... ok
+test_generic_export_and_delete_routes_return_not_implemented (test_t33_contract.BaselineSourceFactsContract.test_generic_export_and_delete_routes_return_not_implemented) ... ok
+test_incremental_modules_are_not_counted_as_baseline (test_t33_contract.BaselineSourceFactsContract.test_incremental_modules_are_not_counted_as_baseline) ... ok
+test_practice_consent_precedes_creation_and_rechecks_after_grant (test_t33_contract.BaselineSourceFactsContract.test_practice_consent_precedes_creation_and_rechecks_after_grant) ... ok
+test_practice_consent_recheck_requires_executable_throw (test_t33_contract.BaselineSourceFactsContract.test_practice_consent_recheck_requires_executable_throw) ... ok
+test_practice_setup_is_authorized_detail_only_and_contact_deletion_is_scoped (test_t33_contract.BaselineSourceFactsContract.test_practice_setup_is_authorized_detail_only_and_contact_deletion_is_scoped) ... ok
+test_security_and_deletion_boundaries_remain_explicit (test_t33_contract.BaselineSourceFactsContract.test_security_and_deletion_boundaries_remain_explicit) ... ok
+test_t19_practice_contract_is_substantive (test_t33_contract.BaselineSourceFactsContract.test_t19_practice_contract_is_substantive) ... ok
+test_c05_is_an_actionable_microphone_prompt_draft (test_t33_contract.ConsentAndSourceRegisterContract.test_c05_is_an_actionable_microphone_prompt_draft) ... ok
+test_official_source_register_contains_verified_primary_evidence (test_t33_contract.ConsentAndSourceRegisterContract.test_official_source_register_contains_verified_primary_evidence) ... ok
+test_daily_plans_and_drill_progress_have_distinct_delete_scopes (test_t33_contract.DataLineageContract.test_daily_plans_and_drill_progress_have_distinct_delete_scopes) ... ok
+test_one_day_provider_admission_is_not_proof_of_actual_retention (test_t33_contract.DataLineageContract.test_one_day_provider_admission_is_not_proof_of_actual_retention) ... ok
+test_source_score_growth_and_call_chain_is_complete (test_t33_contract.DataLineageContract.test_source_score_growth_and_call_chain_is_complete) ... ok
+test_pg17_gap_objects_are_explicitly_inventoried (test_t33_contract.Pg17InventoryCoverageContract.test_pg17_gap_objects_are_explicitly_inventoried) ... ok
+test_go_owner_call_parser_preserves_arguments_and_enclosing_functions (test_t33_contract.ProfileEvidenceContract.test_go_owner_call_parser_preserves_arguments_and_enclosing_functions) ... ok
+test_profile_delete_uses_the_internal_contacts_scope (test_t33_contract.ProfileEvidenceContract.test_profile_delete_uses_the_internal_contacts_scope) ... ok
+test_profile_evidence_schema_freezes_sources_and_binds_both_consents (test_t33_contract.ProfileEvidenceContract.test_profile_evidence_schema_freezes_sources_and_binds_both_consents) ... ok
+test_profile_inference_revalidates_exact_consents_and_fails_closed (test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+test_profile_invalidation_rejects_rebound_attempt_owner (test_t33_contract.ProfileEvidenceContract.test_profile_invalidation_rejects_rebound_attempt_owner) ... ok
+test_profile_inventory_docs_distinguish_feedback_from_model_material (test_t33_contract.ProfileEvidenceContract.test_profile_inventory_docs_distinguish_feedback_from_model_material) ... ok
+test_recovery_and_tombstone_have_separate_lifetimes (test_t33_contract.ReviewInventoryContract.test_recovery_and_tombstone_have_separate_lifetimes) ... ok
+test_share_claim_does_not_imply_permission_to_show_text (test_t33_contract.SharingHandoffContract.test_share_claim_does_not_imply_permission_to_show_text) ... ok
+test_t22_share_handoff_platform_storage_is_not_flattened (test_t33_contract.SharingHandoffContract.test_t22_share_handoff_platform_storage_is_not_flattened) ... ok
+test_t26_compliance_evidence_and_nonclaims_are_registered (test_t33_contract.T26GrowthContract.test_t26_compliance_evidence_and_nonclaims_are_registered) ... ok
+test_t26_exports_are_numeric_and_hide_internal_review_links (test_t33_contract.T26GrowthContract.test_t26_exports_are_numeric_and_hide_internal_review_links) ... ok
+test_t26_growth_projection_and_drill_schedule_boundaries (test_t33_contract.T26GrowthContract.test_t26_growth_projection_and_drill_schedule_boundaries) ... ok
+test_t26_reference_and_plan_scene_recompute_from_authorized_sources (test_t33_contract.T26GrowthContract.test_t26_reference_and_plan_scene_recompute_from_authorized_sources) ... ok
+test_d45_withdrawal_and_evidence_boundaries_are_explicit (test_t33_contract.T28HealthStaticContract.test_d45_withdrawal_and_evidence_boundaries_are_explicit) ... ok
+test_huawei_is_restricted_and_windows_are_bounded (test_t33_contract.T28HealthStaticContract.test_huawei_is_restricted_and_windows_are_bounded) ... ok
+test_permissions_are_read_only_and_sources_are_history_only (test_t33_contract.T28HealthStaticContract.test_permissions_are_read_only_and_sources_are_history_only) ... ok
+test_d18_inventory_records_server_voice_aggregation (test_t33_contract.T29VoiceEvidenceContract.test_d18_inventory_records_server_voice_aggregation) ... ok
+test_historical_attribution_uses_a_structured_evidence_record (test_t33_contract.T29VoiceEvidenceContract.test_historical_attribution_uses_a_structured_evidence_record) ... ok
+test_hosted_verify_requires_executable_commands_and_clean_inputs (test_t33_contract.T29VoiceEvidenceContract.test_hosted_verify_requires_executable_commands_and_clean_inputs) ... ok
+test_t29_live_evidence_uses_structured_record_without_inflating_scope (test_t33_contract.T29VoiceEvidenceContract.test_t29_live_evidence_uses_structured_record_without_inflating_scope) ... ok
+test_t29_wire_workflow_covers_native_and_compliance_inputs (test_t33_contract.T29VoiceEvidenceContract.test_t29_wire_workflow_covers_native_and_compliance_inputs) ... ok
+test_t33_historical_claims_cannot_escape_the_recorded_scope (test_t33_contract.T29VoiceEvidenceContract.test_t33_historical_claims_cannot_escape_the_recorded_scope) ... ok
+test_verify_cannot_read_or_escape_into_ignored_build_evidence (test_t33_contract.T29VoiceEvidenceContract.test_verify_cannot_read_or_escape_into_ignored_build_evidence) ... ok
+test_verify_rejects_both_github_path_filter_styles (test_t33_contract.T29VoiceEvidenceContract.test_verify_rejects_both_github_path_filter_styles) ... ok
+test_verify_required_work_cannot_be_skipped_or_tolerate_failure (test_t33_contract.T29VoiceEvidenceContract.test_verify_required_work_cannot_be_skipped_or_tolerate_failure) ... ok
+test_voice_and_retention_revocation_docs_are_separate (test_t33_contract.T29VoiceEvidenceContract.test_voice_and_retention_revocation_docs_are_separate) ... ok
+test_voice_behavior_runs_in_regular_hosted_ci (test_t33_contract.T29VoiceEvidenceContract.test_voice_behavior_runs_in_regular_hosted_ci) ... ok
+test_voice_capture_static_contract_and_inventory_are_explicit (test_t33_contract.T29VoiceEvidenceContract.test_voice_capture_static_contract_and_inventory_are_explicit) ... ok
+test_voice_evidence_rejects_synthetic_gate_removals (test_t33_contract.T29VoiceEvidenceContract.test_voice_evidence_rejects_synthetic_gate_removals) ... ok
+test_voice_static_gate_rejects_non_executable_permission_and_sources (test_t33_contract.T29VoiceEvidenceContract.test_voice_static_gate_rejects_non_executable_permission_and_sources) ... ok
+test_wire_covers_direct_go_packages_routes_and_entry_for_both_events (test_t33_contract.T29VoiceEvidenceContract.test_wire_covers_direct_go_packages_routes_and_entry_for_both_events) ... ok
+test_wire_events_and_required_steps_fail_closed (test_t33_contract.T29VoiceEvidenceContract.test_wire_events_and_required_steps_fail_closed) ... ok
+test_wire_path_negation_and_document_only_rules_are_effective (test_t33_contract.T29VoiceEvidenceContract.test_wire_path_negation_and_document_only_rules_are_effective) ... ok
+test_wire_rejects_missing_actual_live_dependencies (test_t33_contract.T29VoiceEvidenceContract.test_wire_rejects_missing_actual_live_dependencies) ... ok
+test_wire_workflow_tracks_direct_inputs_without_duplicate_unit_loops (test_t33_contract.T29VoiceEvidenceContract.test_wire_workflow_tracks_direct_inputs_without_duplicate_unit_loops) ... ok
+test_api_labels_selected_record_delete_as_deferred (test_t33_contract.T35ReleaseCandidateContract.test_api_labels_selected_record_delete_as_deferred) ... ok
+test_production_composition_requires_all_thirteen_export_modules (test_t33_contract.T35ReleaseCandidateContract.test_production_composition_requires_all_thirteen_export_modules) ... ok
+test_public_export_is_wired_and_selected_record_delete_stays_501 (test_t33_contract.T35ReleaseCandidateContract.test_public_export_is_wired_and_selected_record_delete_stays_501) ... ok
+test_android_gate_rejects_control_channel_name_drift (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_android_gate_rejects_control_channel_name_drift) ... ok
+test_android_gate_rejects_early_return_for_matching_request_code (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_android_gate_rejects_early_return_for_matching_request_code) ... ok
+test_android_gate_rejects_hidden_platform_permission_request (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_android_gate_rejects_hidden_platform_permission_request) ... ok
+test_android_gate_rejects_late_wrong_code_guard (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_android_gate_rejects_late_wrong_code_guard) ... ok
+test_android_gate_rejects_missing_control_channel_handler (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_android_gate_rejects_missing_control_channel_handler) ... ok
+test_android_gate_rejects_missing_pending_flutter_result (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_android_gate_rejects_missing_pending_flutter_result) ... ok
+test_android_gate_rejects_missing_request_method_dispatch (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_android_gate_rejects_missing_request_method_dispatch) ... ok
+test_android_gate_rejects_pending_result_saved_before_first_decision (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_android_gate_rejects_pending_result_saved_before_first_decision) ... ok
+test_android_gate_rejects_reversed_pending_condition (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_android_gate_rejects_reversed_pending_condition) ... ok
+test_android_gate_rejects_unreachable_pending_flutter_result (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_android_gate_rejects_unreachable_pending_flutter_result) ... ok
+test_android_gate_rejects_unreachable_permission_delegation (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_android_gate_rejects_unreachable_permission_delegation) ... ok
+test_android_synthetic_callbacks_cover_denial_reprompt_and_wrong_code (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_android_synthetic_callbacks_cover_denial_reprompt_and_wrong_code) ... ok
+test_ios_gate_rejects_appdelegate_missing_from_runner_sources (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_ios_gate_rejects_appdelegate_missing_from_runner_sources) ... ok
+test_ios_gate_rejects_commented_channel_installation (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_ios_gate_rejects_commented_channel_installation) ... ok
+test_ios_gate_rejects_control_channel_name_drift (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_ios_gate_rejects_control_channel_name_drift) ... ok
+test_ios_gate_rejects_hidden_platform_permission_request (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_ios_gate_rejects_hidden_platform_permission_request) ... ok
+test_ios_gate_rejects_missing_granted_flutter_result (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_ios_gate_rejects_missing_granted_flutter_result) ... ok
+test_ios_gate_rejects_pending_result_saved_before_first_decision (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_ios_gate_rejects_pending_result_saved_before_first_decision) ... ok
+test_ios_gate_rejects_reversed_pending_condition (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_ios_gate_rejects_reversed_pending_condition) ... ok
+test_ios_gate_rejects_unreachable_channel_installation (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_ios_gate_rejects_unreachable_channel_installation) ... ok
+test_ios_gate_rejects_unreachable_granted_flutter_result (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_ios_gate_rejects_unreachable_granted_flutter_result) ... ok
+test_ios_synthetic_callbacks_cover_denial_reprompt_and_grant (test_t33_native_permission_gate.NativePermissionBehaviorGateContract.test_ios_synthetic_callbacks_cover_denial_reprompt_and_grant) ... ok
+
+----------------------------------------------------------------------
+Ran 84 tests in 1.073s
+
+OK
+Exit: 0
+
+python3 -B docs/compliance/replay_t33_owner_mutations.py
+Candidate, expected exit 0, actual 0
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.008s
+
+OK
+
+1. server/internal/profile/infer.go:112 — Infer, stored reservation mismatch path: omit reserved.owner
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidateInference arguments must be (ctx, tx, u, id, in.RequestId, reserved.owner), got (ctx, tx, u, id, in.RequestId)
+2. server/internal/profile/infer.go:112 — Infer, stored reservation mismatch path: pass in.RequestId as owner
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidateInference arguments must be (ctx, tx, u, id, in.RequestId, reserved.owner), got (ctx, tx, u, id, in.RequestId, in.RequestId)
+3. server/internal/profile/inference_request.go:172 — checkInferenceAttempt, stored reservation mismatch path: pass request as owner
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidateInference arguments must be (ctx, tx, u, contact, request, owner), got (ctx, tx, u, contact, request, request)
+4. server/internal/profile/inference_request.go:211 — invalidateInference: bind owner_id=$4 to request
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidateInference: SQL $4 must bind owner (tx.Exec line 209, got request)
+5. server/internal/profile/inference_request.go:211 — invalidateInference: remove the owner predicate and its binding
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidateInference UPDATE must fence the processing row by owner
+6. server/internal/profile/inference_request.go:211 — invalidateInference: invert owner equality
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidateInference UPDATE must fence the processing row by owner
+7. server/internal/profile/infer.go:107 — Infer: remove the result owner mismatch comparison
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: result path must reject a superseded or expired owner
+8. server/internal/profile/inference_request.go:143 — reserveInference: return invalidated rows as successful reuses
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidated reservations must return a conflict
+Candidate after replay, expected exit 0, actual 0
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.008s
+
+OK
+
+Mutations rejected by their expected assertions: 8/8
+Exit: 0
+
+python3 -B docs/compliance/replay_t33_owner_mutations.py --review
+Candidate, expected exit 0, actual 0
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.008s
+
+OK
+
+1. server/internal/profile/infer.go:112 — Infer: overwrite reserved.owner before invalidating
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: reserved must keep its reservation binding
+2. server/internal/profile/inference_request.go:172 — checkInferenceAttempt: overwrite owner before a later selector target
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: owner must keep its enclosing binding (lines [172])
+3. server/internal/profile/inference_request.go:209 — invalidateInference: overwrite the request parameter before tx.Exec
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: request must keep its enclosing binding (lines [209])
+4. server/internal/profile/inference_request.go:62 — claimInference: initialize the owner from request instead of uuid.New
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: owner must be initialized by uuid.New() before tx.Exec
+5. server/internal/profile/inference_request.go:63 — claimInference: overwrite the freshly generated owner before tx.Exec
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: owner must keep its uuid.New() binding
+6. server/internal/profile/infer.go:112 — Infer: delete one invalidation call and its error branch
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: Infer must have 5 direct invalidateInference calls
+7. server/internal/profile/inference_request.go:172 — checkInferenceAttempt: return without invalidating one branch
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: checkInferenceAttempt must have 4 direct invalidateInference calls
+8. server/internal/profile/infer.go:107 — Infer: turn the result owner guard into a block comment
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: result path must reject a superseded or expired owner
+9. server/internal/profile/inference_request.go:166 — checkInferenceAttempt: turn the attempt owner guard into a block comment
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: attempt path must reject a superseded or expired owner
+10. server/internal/profile/inference_request.go:211 — invalidateInference: compare against the uppercase SQL state literal
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidateInference UPDATE must fence the processing row by owner
+11. server/internal/profile/infer.go:112 — Infer: use a package-scope alias for one direct call
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: Infer must have 5 direct invalidateInference calls
+Candidate after replay, expected exit 0, actual 0
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.008s
+
+OK
+
+Mutations rejected by their expected assertions: 11/11
+Exit: 0
+
+Additional local-alias probe, server/internal/profile/infer.go:112. Expected exit 1, actual 1.
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... FAIL
+
+======================================================================
+FAIL: test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Volumes/doc/workspace/project/high-eq/build/t35/repair-profile-owner-compliance.kFv3u6/src/docs/compliance/test_t33_contract.py", line 2083, in test_profile_inference_revalidates_exact_consents_and_fails_closed
+    self._assert_profile_invalidation_calls(parsed_infer, parsed_request)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Volumes/doc/workspace/project/high-eq/build/t35/repair-profile-owner-compliance.kFv3u6/src/docs/compliance/test_t33_contract.py", line 1806, in _assert_profile_invalidation_calls
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        Counter(call.function for call in calls), {required_scope: count},
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        f"{file}: {required_scope} must have {count} direct invalidateInference calls",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Counter({'Infer': 4}) != {'Infer': 5} : infer.go: Infer must have 5 direct invalidateInference calls
+
+----------------------------------------------------------------------
+Ran 1 test in 0.003s
+
+FAILED (failures=1)
+
+Follow-up scope verification: git diff --check passed, the index equals 5be62b834265ba333c6a141b1c4e32157b8c7d9d, and server/ has no diff. Tracked and new paths:
+docs/compliance/replay_t33_owner_mutations.py
+docs/compliance/t33_owner_go.py
+docs/compliance/t33_owner_mutation_results.txt
+docs/compliance/test_t33_contract.py
+
+Second review reproduction before the fixes
+python3 -B docs/compliance/replay_t33_owner_mutations.py --review2
+Candidate, expected exit 0, actual 0
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.009s
+
+OK
+
+1. server/internal/profile/inference_request.go:142 — reserveInference: comment out the conflict case and actively reuse invalidated rows
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: invalidated reservations must return a conflict
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.008s
+
+OK
+
+2. server/internal/profile/infer.go:78 — BeforeAttempt: leave the correct call in a comment and pass in.RequestId as owner
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: BeforeAttempt must pass reserved.owner
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.008s
+
+OK
+
+3. server/internal/profile/infer.go:107 — result transaction: hide the owner guard behind else if
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: result path must reject a superseded or expired owner
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.008s
+
+OK
+
+4. server/internal/profile/infer.go:107 — result transaction: jump over the owner guard using goto
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: result path must not use goto
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.008s
+
+OK
+
+5. server/internal/profile/inference_request.go:166 — attempt transaction: hide the owner guard behind else if
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: attempt path must reject a superseded or expired owner
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.008s
+
+OK
+
+6. server/internal/profile/inference_request.go:166 — attempt transaction: jump over the owner guard using goto
+   Expected exit 1, actual 0. Disk source intact.
+   Expected assertion: attempt path must not use goto
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.008s
+
+OK
+
+Candidate after replay, expected exit 0, actual 0
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.008s
+
+OK
+
+Mutations rejected by their expected assertions: 0/6
+Replay script exit: 1
+
+Second review final verification, all mutations via in-memory source overlays
+python3 -B -m unittest -v docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed
+----------------------------------------------------------------------
+Ran 1 test in 0.010s
+
+OK
+Exit: 0
+
+python3 -B -m unittest -v docs.compliance.test_t33_contract.ProfileEvidenceContract
+----------------------------------------------------------------------
+Ran 6 tests in 0.061s
+
+OK
+Exit: 0
+
+python3 -B -m unittest discover -s docs/compliance -v
+----------------------------------------------------------------------
+Ran 84 tests in 1.212s
+
+OK
+Exit: 0
+
+python3 -B docs/compliance/replay_t33_owner_mutations.py
+Candidate, expected exit 0, actual 0
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.011s
+
+OK
+
+1. server/internal/profile/infer.go:112 — Infer, stored reservation mismatch path: omit reserved.owner
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidateInference arguments must be (ctx, tx, u, id, in.RequestId, reserved.owner), got (ctx, tx, u, id, in.RequestId)
+2. server/internal/profile/infer.go:112 — Infer, stored reservation mismatch path: pass in.RequestId as owner
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidateInference arguments must be (ctx, tx, u, id, in.RequestId, reserved.owner), got (ctx, tx, u, id, in.RequestId, in.RequestId)
+3. server/internal/profile/inference_request.go:172 — checkInferenceAttempt, stored reservation mismatch path: pass request as owner
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidateInference arguments must be (ctx, tx, u, contact, request, owner), got (ctx, tx, u, contact, request, request)
+4. server/internal/profile/inference_request.go:211 — invalidateInference: bind owner_id=$4 to request
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidateInference: SQL $4 must bind owner (tx.Exec line 209, got request)
+5. server/internal/profile/inference_request.go:211 — invalidateInference: remove the owner predicate and its binding
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidateInference UPDATE must fence the processing row by owner
+6. server/internal/profile/inference_request.go:211 — invalidateInference: invert owner equality
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidateInference UPDATE must fence the processing row by owner
+7. server/internal/profile/infer.go:107 — Infer: remove the result owner mismatch comparison
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: result path must reject a superseded or expired owner directly after the error check
+8. server/internal/profile/inference_request.go:143 — reserveInference: return invalidated rows as successful reuses
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidated reservations must return a conflict
+Candidate after replay, expected exit 0, actual 0
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.017s
+
+OK
+
+Mutations rejected by their expected assertions: 8/8
+Exit: 0
+
+python3 -B docs/compliance/replay_t33_owner_mutations.py --review
+Candidate, expected exit 0, actual 0
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.020s
+
+OK
+
+1. server/internal/profile/infer.go:112 — Infer: overwrite reserved.owner before invalidating
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: reserved must keep its reservation binding
+2. server/internal/profile/inference_request.go:172 — checkInferenceAttempt: overwrite owner before a later selector target
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: owner must keep its enclosing binding (lines [172])
+3. server/internal/profile/inference_request.go:209 — invalidateInference: overwrite the request parameter before tx.Exec
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: request must keep its enclosing binding (lines [209])
+4. server/internal/profile/inference_request.go:62 — claimInference: initialize the owner from request instead of uuid.New
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: owner must be initialized by uuid.New() before tx.Exec
+5. server/internal/profile/inference_request.go:63 — claimInference: overwrite the freshly generated owner before tx.Exec
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: owner must keep its uuid.New() binding
+6. server/internal/profile/infer.go:112 — Infer: delete one invalidation call and its error branch
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: Infer must have 5 direct invalidateInference calls
+7. server/internal/profile/inference_request.go:172 — checkInferenceAttempt: return without invalidating one branch
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: checkInferenceAttempt must have 4 direct invalidateInference calls
+8. server/internal/profile/infer.go:107 — Infer: turn the result owner guard into a block comment
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: result path must reject a superseded or expired owner directly after the error check
+9. server/internal/profile/inference_request.go:166 — checkInferenceAttempt: turn the attempt owner guard into a block comment
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: attempt path must reject a superseded or expired owner directly after the error check
+10. server/internal/profile/inference_request.go:211 — invalidateInference: compare against the uppercase SQL state literal
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidateInference UPDATE must fence the processing row by owner
+11. server/internal/profile/infer.go:112 — Infer: use a package-scope alias for one direct call
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: Infer must have 5 direct invalidateInference calls
+Candidate after replay, expected exit 0, actual 0
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.010s
+
+OK
+
+Mutations rejected by their expected assertions: 11/11
+Exit: 0
+
+python3 -B docs/compliance/replay_t33_owner_mutations.py --review2
+Candidate, expected exit 0, actual 0
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.011s
+
+OK
+
+1. server/internal/profile/inference_request.go:142 — reserveInference: comment out the conflict case and actively reuse invalidated rows
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: invalidated reservations must return a conflict
+2. server/internal/profile/infer.go:78 — BeforeAttempt: leave the correct call in a comment and pass in.RequestId as owner
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: BeforeAttempt must pass reserved.owner, both exact consents and the authorization callback
+3. server/internal/profile/infer.go:107 — result transaction: hide the owner guard behind else if
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: result path must reject a superseded or expired owner directly after the error check
+4. server/internal/profile/infer.go:107 — result transaction: jump over the owner guard using goto
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: result path must not use goto
+5. server/internal/profile/inference_request.go:166 — attempt transaction: hide the owner guard behind else if
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: attempt path must reject a superseded or expired owner directly after the error check
+6. server/internal/profile/inference_request.go:166 — attempt transaction: jump over the owner guard using goto
+   Expected exit 1, actual 1. Disk source intact.
+   AssertionError: attempt path must not use goto
+Candidate after replay, expected exit 0, actual 0
+test_profile_inference_revalidates_exact_consents_and_fails_closed (docs.compliance.test_t33_contract.ProfileEvidenceContract.test_profile_inference_revalidates_exact_consents_and_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.009s
+
+OK
+
+Mutations rejected by their expected assertions: 6/6
+Exit: 0
+
+Second review scope verification: git diff --check passed, server/ has no diff, index contents equal the reviewed candidate tree.
+docs/compliance/replay_t33_owner_mutations.py
+docs/compliance/t33_owner_go.py
+docs/compliance/t33_owner_mutation_results.txt
+docs/compliance/test_t33_contract.py

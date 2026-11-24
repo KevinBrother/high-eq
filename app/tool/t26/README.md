@@ -46,6 +46,13 @@ Go 按 `login → assessment → plan → chat → score` 识别完整的固定�
 
 宿主以 Go 1.26 实跑了离线入口。首次运行因误用了不存在的测试名而退出 1；改为实际声明的 `TestT26FlutterChatPhaseReceiptWithExistingConsent` 后，7 个精确顶层测试和服务包均通过。另有 9 项 CI 编排与声明一致性检查（`python3 -B app/tool/t26/test_ci.py`）及 11 项 Go 结果解析检查通过。托管环境的完整旅程仍须按发布提交 SHA 验证。
 
+### T35 导出契约变更后的持久化读回复验
+
+- **宿主复现**：正式 Flutter 旅程到达 `stage=score, phase=verified`，SQL 回执为 `sessions=1 saved_turns=1 scores=1`，随后 Go 读回报 `expected one persisted practice session`。旧断言要求 training 导出返回固定的 Go 类型。当前导出省略 `request_id` 和 `client_message_id`，已审合装树中没有对应的旅程修复。
+- **本轮变更**：T26 用导出的 JSON 字段读回账号、测评、对练和成长记录。对练在同一只读事务里按账号、会话、消息 ID 与顺序核对存储的轮次配对，继续检查评分来源和单次扣费。成长按 `record_type` 核对同一测评的已完成计划项与同一对练来源的分数。正式 App 旅程及导出门禁保持原样。
+- **当前归档已验**：Go 1.26 下 `TestT26PracticeExportReadback` 修复前复现同一断言，修复后与 7 项既有 T26 离线用例一同通过。T26 CI 编排检查 9 项和 T35 导出回执检查 2 项通过。Go 全量测试在 `TestCompatibleChat/text` 因沙箱禁止监听回环端口失败。
+- **待宿主补验**：按本文开头用全新独占 PG17、普通 Redis 和 AOF Redis 运行 `TestT26NewUserPlanFlutter`，要求非跳过 `PASS`、`stage=score, phase=verified` 和完整 Go 持久化读回。正式 T35 导出旅程仍需按 [T35 导出交接](../../../docs/tasks/T35-export-ios-handoff.md) 复跑。当前归档仅完成离线核验。
+
 ### Redis 诊断交接
 
 正式 Go 入口在独立子进程中运行夹具。该进程关闭 go-redis 的内部日志。普通 Redis 不可连接时，夹具输出固定阶段回执 `T26 fixture: stage=start_runtime error=connection` 并判为失败。外层测试保留原测试名和诊断来源位置。

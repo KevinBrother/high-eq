@@ -9,6 +9,7 @@ import 'package:high_eq/core/providers.dart';
 import 'package:high_eq/core/endpoints.g.dart';
 import 'package:high_eq/core/session.dart';
 import 'package:high_eq/features/contacts/deletion.dart';
+import 'package:high_eq/features/contacts/inference.dart';
 import 'package:high_eq/features/contacts/models.dart';
 import 'package:high_eq/features/contacts/purpose.dart';
 import 'package:high_eq/features/contacts/repository.dart';
@@ -59,6 +60,25 @@ void main() {
               : {'items': [], 'next_cursor': null},
         );
       }
+      if (op == AppOp.listConsents) {
+        return response({
+          'items': [
+            {
+              'purpose': 'contacts',
+              'version': contactNoticeVersion,
+              'granted': true,
+              'updated_at': '2026-11-24T10:00:00Z',
+            },
+            {
+              'purpose': 'chat_import',
+              'version': contactNoticeVersion,
+              'granted': true,
+              'updated_at': '2026-11-24T10:00:01Z',
+            },
+          ],
+          'next_cursor': null,
+        });
+      }
       if (op == AppOp.inferProfile) {
         expect(req.method, 'POST');
         expect(jsonDecode(req.body)['chat_text'], '合成片段');
@@ -85,7 +105,14 @@ void main() {
     });
     await repo.save({'nickname': '同事', 'scene': 'work'}, id: c.id);
     await repo.choose(c.id);
-    await repo.infer(c.id, newRequestId(), '合成片段');
+    final authorization = (await repo.currentConsents()).inferenceGrant!;
+    final inference = await repo.infer(
+      c.id,
+      newRequestId(),
+      '合成片段',
+      authorization: authorization,
+    );
+    expect(inference, isA<ProfileInferenceCompleted>());
     await expectLater(repo.remove(c.id), throwsFormatException);
     expect(calls, [
       AppOp.listContacts,
@@ -95,13 +122,59 @@ void main() {
       AppOp.createContact,
       AppOp.editContact,
       AppOp.chooseContact,
+      AppOp.listConsents,
+      AppOp.listConsents,
       AppOp.inferProfile,
       AppOp.deleteContact,
     ]);
     await sessions.activate(tokens('B'));
     await expectLater(repo.questions(), throwsA(isA<SessionChanged>()));
-    expect(calls.length, 9);
+    expect(calls.length, 11);
   });
+  test('202 保留为处理中，并原样发送 request_id 与 chat_text', () async {
+    const requestId = '5d41419b-1b4e-4e50-8855-63a9a3db36d9';
+    const text = '合成推断片段';
+    late Map<String, dynamic> sent;
+    final repo = ApiContacts(MobileEndpoints(api), a);
+    wire.handle = (op, request) async {
+      if (op == AppOp.listConsents) {
+        return response({
+          'items': [
+            {
+              'purpose': 'contacts',
+              'version': contactNoticeVersion,
+              'granted': true,
+              'updated_at': '2026-11-24T10:00:00Z',
+            },
+            {
+              'purpose': 'chat_import',
+              'version': contactNoticeVersion,
+              'granted': true,
+              'updated_at': '2026-11-24T10:00:01Z',
+            },
+          ],
+          'next_cursor': null,
+        });
+      }
+      expect(op, AppOp.inferProfile);
+      sent = jsonDecode(request.body) as Map<String, dynamic>;
+      expect(request.method, 'POST');
+      expect(request.url.path, endsWith('/infer'));
+      return response({'request_id': requestId, 'status': 'in_progress'}, 202);
+    };
+
+    final authorization = (await repo.currentConsents()).inferenceGrant!;
+    final result = await repo.infer(
+      'contact-1',
+      requestId,
+      text,
+      authorization: authorization,
+    );
+
+    expect(result, isA<ProfileInferenceProcessing>());
+    expect(sent, {'request_id': requestId, 'chat_text': text});
+  });
+
   test('用途按分页和版本读取；拒绝错误回执，不把另一用途当成同意', () async {
     final repo = ApiContacts(MobileEndpoints(api), a);
     wire.handle = (op, req) async {
@@ -115,6 +188,7 @@ void main() {
           'purpose': 'contacts',
           'version': contactNoticeVersion,
           'granted': true,
+          'updated_at': '2026-11-24T10:00:02Z',
         });
       }
       expect(op, AppOp.listConsents);
@@ -132,12 +206,13 @@ void main() {
             'purpose': 'chat_import',
             'version': contactNoticeVersion,
             'granted': true,
+            'updated_at': '2026-11-24T10:00:01Z',
           },
         ],
         'next_cursor': null,
       });
     };
-    expect(await repo.currentGrants(), {ContactPurpose.chatImport});
+    expect((await repo.currentConsents()).grants, {ContactPurpose.chatImport});
     await expectLater(
       repo.grant(ContactPurpose.chatImport),
       throwsA(isA<ConsentUnconfirmed>()),

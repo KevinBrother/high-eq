@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/services.dart';
 import '../../core/transport.dart';
+import 'inference.dart';
 import 'models.dart';
 import 'purpose.dart';
 import 'repository.dart';
@@ -8,11 +9,16 @@ import 'repository.dart';
 /// Volatile examples, not an inference service. Never retain chat or answers.
 class DemoContacts implements ContactsRepository {
   final _grants = <ContactPurpose>{};
+  int _revision = 0;
   @override
-  Future<Set<ContactPurpose>> currentGrants() async =>
-      Set.unmodifiable(_grants);
+  Future<ContactConsentSnapshot> currentConsents() async =>
+      ContactConsentSnapshot('demo', {
+        for (final purpose in _grants)
+          purpose: 'demo-${purpose.wire}-$_revision',
+      });
   @override
   Future<void> grant(ContactPurpose purpose) async {
+    _revision++;
     _grants.add(purpose);
   }
 
@@ -76,6 +82,14 @@ class DemoContacts implements ContactsRepository {
   }
 
   @override
-  Future<Json> infer(String id, String requestId, String text) async =>
-      (await _examples)['inferProfile'] as Json;
+  Future<ProfileInferenceResult> infer(
+    String id,
+    String requestId,
+    String text, {
+    required ContactInferenceGrant authorization,
+  }) async => decodeProfileInferenceResult(
+    200,
+    (await _examples)['inferProfile'] as Json,
+    requestId,
+  );
 }

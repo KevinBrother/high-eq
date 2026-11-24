@@ -22,7 +22,7 @@ final contactSpaceProvider = Provider((ref) {
       ? null
       : ApiContacts(MobileEndpoints(api), scope);
   return (scene: SceneMemory(), repo: repo, demo: demo);
-});
+}, dependencies: [accountScopeProvider]);
 
 class ContactRoute extends ConsumerWidget {
   const ContactRoute({required this.sceneOnly, super.key});

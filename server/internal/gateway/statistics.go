@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"time"
 
 	"github.com/google/uuid"
@@ -67,19 +69,55 @@ func MetricPage(ctx context.Context, db interface {
 	return rows.Err()
 }
 
-func Hooks() privacy.Module {
+func Hooks(masterKey []byte) privacy.Module {
+	key := hmac.New(sha256.New, masterKey)
+	key.Write([]byte("high-eq/ai_calls/export-operation/v2"))
+	exportKey := key.Sum(nil)
 	return privacy.Module{Name: "ai_calls", Delete: func(context.Context, pgx.Tx, privacy.Deletion) error {
 		return nil /* source, score, contact and user FKs cascade in the coordinator transaction */
 	}, Export: func(ctx context.Context, tx pgx.Tx, q privacy.ExportRequest, emit privacy.Emit) error {
-		rows, err := tx.Query(ctx, `select jsonb_build_object('id',id,'operation_id',operation_id,'activity_id',activity_id,'contact_id',contact_id,'score_id',score_id,'model_id',model_id,'prompt_version_id',prompt_version_id,'task',task,'started_at',started_at,'outcome',outcome,'latency_ms',latency_ms,'input_tokens',input_tokens,'output_tokens',output_tokens,'cost_cny',cost_cny) from ai_calls where user_id=$1 or (user_id is null and activity_id in (select id from activities where user_id=$1)) order by started_at,id`, q.UserID)
+		rows, err := tx.Query(ctx, `select jsonb_build_object(
+ 'id',id,'activity_id',activity_id,'contact_id',contact_id,'score_id',score_id,
+ 'model_id',model_id,'prompt_version_id',prompt_version_id,'task',task,'started_at',started_at,
+ 'outcome',outcome,'latency_ms',latency_ms,'input_tokens',input_tokens,'output_tokens',output_tokens,'cost_cny',cost_cny
+ ), operation_id, task, activity_id, contact_id,
+ task='scoring' and exists(select from activities a where a.id=ai_calls.activity_id and a.kind='review')
+ from ai_calls
+ where user_id=$1 or (user_id is null and activity_id in (select id from activities where user_id=$1))
+ order by started_at,id`, q.UserID)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
+		groupMAC := hmac.New(sha256.New, exportKey)
 		for rows.Next() {
 			var row map[string]any
-			if err := rows.Scan(&row); err != nil {
+			var operation, activity, contact *uuid.UUID
+			var task Task
+			var reviewScore bool
+			if err := rows.Scan(&row, &operation, &task, &activity, &contact, &reviewScore); err != nil {
 				return err
+			}
+			row["operation_id"] = nil
+			if operation != nil {
+				// A review shares one activity and request across analysis and scoring.
+				// Other tasks have their own request namespaces, including practice
+				// turns and scoring within a single activity.
+				if reviewScore {
+					task = ReviewAnalysis
+				}
+				group := append([]byte(string(task)+"/"), operation[:]...)
+				switch {
+				case activity != nil:
+					group = append(group, 'a')
+					group = append(group, activity[:]...)
+				case contact != nil:
+					group = append(group, 'c')
+					group = append(group, contact[:]...)
+				}
+				// Historical rows with identical stored scope and request cannot
+				// distinguish separate operations. Keep that group deterministic.
+				row["operation_id"] = uuid.NewHash(groupMAC, q.UserID, group, 8)
 			}
 			if err := emit(row); err != nil {
 				return err

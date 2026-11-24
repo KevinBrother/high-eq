@@ -5,47 +5,110 @@ import 'package:high_eq/core/session.dart';
 import 'package:high_eq/core/transport.dart';
 import 'package:high_eq/features/contacts/deletion.dart';
 import 'package:high_eq/features/contacts/demo.dart';
+import 'package:high_eq/features/contacts/inference.dart';
 import 'package:high_eq/features/contacts/models.dart';
+import 'package:high_eq/features/contacts/purpose.dart';
 import 'package:high_eq/features/contacts/scene.dart';
 import 'package:high_eq/features/contacts/workspace.dart';
+
+const _fixtureProfile = <String, dynamic>{
+  'summary': '更倾向先听完再回应',
+  'big_five': [
+    {'label': '沟通练习', 'confidence': 0.5},
+  ],
+  'conflict_style': {'label': '沟通练习', 'confidence': 0.5},
+  'attachment': null,
+};
+
+const _fixtureQuestions = <Question>[
+  (id: 'q1', prompt: '意见不同时通常怎么回应？'),
+  (id: 'q2', prompt: '喜欢当面谈还是稍后再谈？'),
+  (id: 'q3', prompt: '会主动说出需要吗？'),
+  (id: 'q4', prompt: '压力大时常有什么表现？'),
+  (id: 'q5', prompt: '怎样提建议更容易接受？'),
+];
 
 class Fixture extends DemoContacts {
   Json? saved;
   bool offline = false, member = false, forbidden = false, safety = false;
   Object? removeError;
   final events = <String>[];
+  final rows = <Contact>[
+    Contact.fromJson({
+      'id': 'contact-a',
+      'nickname': '同事 A',
+      'scene': 'work',
+      'editable': true,
+      'profile': _fixtureProfile,
+    }),
+    Contact.fromJson({
+      'id': 'contact-b',
+      'nickname': '老朋友',
+      'scene': 'friends',
+      'editable': false,
+      'profile': _fixtureProfile,
+    }),
+  ];
+  int _nextId = 1;
+
+  Json get _rights => member
+      ? {
+          'tier': 'member',
+          'max_active_contacts': null,
+          'expires_at': DateTime.now()
+              .add(const Duration(hours: 1))
+              .toUtc()
+              .toIso8601String(),
+        }
+      : {'tier': 'free', 'max_active_contacts': 1, 'expires_at': null};
+
+  Contact _copy(Contact c, {bool? editable}) => Contact.fromJson({
+    'id': c.id,
+    'nickname': c.name,
+    'scene': c.scene.name,
+    'editable': editable ?? c.editable,
+    'profile': c.profile,
+  });
+
   @override
   Future<Book> load() async {
     if (offline) throw StateError('sensitive response');
-    final b = await super.load();
-    if (!member) return b;
-    return Book(
-      [
-        for (final c in b.people)
-          Contact.fromJson({
-            'id': c.id,
-            'nickname': c.name,
-            'scene': c.scene.name,
-            'editable': true,
-            'profile': c.profile,
-          }),
-      ],
-      {
-        'tier': 'member',
-        'max_active_contacts': null,
-        'expires_at': DateTime.now()
-            .add(const Duration(hours: 1))
-            .toUtc()
-            .toIso8601String(),
-      },
-    );
+    return Book([
+      for (final c in rows) _copy(c, editable: member ? true : c.editable),
+    ], _rights);
   }
+
+  @override
+  Future<List<Question>> questions() async => List.of(_fixtureQuestions);
 
   @override
   Future<void> save(Json input, {String? id}) async {
     if (forbidden) throw const ApiFailure(403, 'forbidden', '私密响应', false);
     saved = input;
-    await super.save(input, id: id);
+    if (id == null) {
+      final book = await load();
+      if (!book.canAdd) throw StateError('名额已用');
+      rows.add(
+        Contact.fromJson({
+          'id': 'fixture-${_nextId++}',
+          'nickname': input['nickname'],
+          'scene': input['scene'],
+          'editable': true,
+          'profile': _fixtureProfile,
+        }),
+      );
+      return;
+    }
+    final index = rows.indexWhere((c) => c.id == id && c.editable);
+    if (index < 0) throw StateError('关系人不可编辑');
+    final current = rows[index];
+    rows[index] = Contact.fromJson({
+      'id': current.id,
+      'nickname': input['nickname'],
+      'scene': input['scene'],
+      'editable': true,
+      'profile': current.profile,
+    });
   }
 
   @override
@@ -53,13 +116,28 @@ class Fixture extends DemoContacts {
     events.add('remove');
     final error = removeError;
     if (error != null) throw error;
-    await super.remove(id);
+    rows.removeWhere((c) => c.id == id);
+    if (!member && rows.isNotEmpty && !rows.any((c) => c.editable)) {
+      rows[0] = _copy(rows[0], editable: true);
+    }
   }
 
   @override
-  Future<Json> infer(String id, String requestId, String text) async => safety
-      ? {'safety': true, 'message': '先暂停这次练习。'}
-      : super.infer(id, requestId, text);
+  Future<void> choose(String id) async {
+    for (var i = 0; i < rows.length; i++) {
+      rows[i] = _copy(rows[i], editable: rows[i].id == id);
+    }
+  }
+
+  @override
+  Future<ProfileInferenceResult> infer(
+    String id,
+    String requestId,
+    String text, {
+    required ContactInferenceGrant authorization,
+  }) async => safety
+      ? const ProfileInferenceSafety()
+      : const ProfileInferenceCompleted(_fixtureProfile);
 }
 
 class FlowDeletion implements ContactDeletion {
@@ -281,7 +359,7 @@ void main() {
     await t.enterText(find.byType(TextField), '仅供测试的内容');
     f.safety = true;
     await tap(t, '提交片段');
-    expect(find.text('先暂停这次练习。'), findsOneWidget);
+    expect(find.text(profileInferenceSafetyMessage), findsOneWidget);
     expect(find.textContaining('仅供测试'), findsNothing);
     await tap(t, '删除关系人');
     expect(find.textContaining('关联互动记录和评分副本'), findsOneWidget);

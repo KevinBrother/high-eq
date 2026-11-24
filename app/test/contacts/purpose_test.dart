@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:high_eq/core/transport.dart';
+import 'package:high_eq/features/contacts/inference.dart';
 import 'package:high_eq/features/contacts/purpose.dart';
 import 'flows_test.dart' show Fixture, open, tap;
 
@@ -9,7 +9,10 @@ class _Grants extends Fixture {
   final writes = <ContactPurpose>[];
   int sends = 0;
   @override
-  Future<Set<ContactPurpose>> currentGrants() async => Set.of(grants);
+  Future<ContactConsentSnapshot> currentConsents() async =>
+      ContactConsentSnapshot('fixture', {
+        for (final purpose in grants) purpose: 'fixture-${purpose.wire}',
+      });
   @override
   Future<void> grant(ContactPurpose p) async {
     writes.add(p);
@@ -17,9 +20,14 @@ class _Grants extends Fixture {
   }
 
   @override
-  Future<Json> infer(String id, String requestId, String text) async {
+  Future<ProfileInferenceResult> infer(
+    String id,
+    String requestId,
+    String text, {
+    required ContactInferenceGrant authorization,
+  }) async {
     sends++;
-    return super.infer(id, requestId, text);
+    return super.infer(id, requestId, text, authorization: authorization);
   }
 }
 

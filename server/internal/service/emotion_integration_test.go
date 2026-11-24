@@ -319,7 +319,51 @@ func TestEmotionFeedbackIsExplicit(t *testing.T) {
 	if len(page.Items) != 1 || page.Items[0].Id != rh.Id || page.Next != nil {
 		t.Fatal(page)
 	}
-	if bytes.Contains(f.export(u), []byte("feedback_pending")) {
-		t.Fatal("internal fields exported")
+	foreign := f.user()
+	f.member(foreign)
+	f.consents(foreign.UserId)
+	foreignAt := at.Add(-30 * time.Second)
+	f.call("POST", "signal-windows", foreign.AccessToken, synthetic(foreignAt, "health", true), 200, nil)
+	var purgeID uuid.UUID
+	f.must(f.s.db.QueryRow(f.ctx, "select purge_id from signal_windows where user_id=$1 and starts_at=$2 and channel='voice'", u, at).Scan(&purgeID))
+	router := f.s.Router()
+	body := t35Part(t, t35Download(t, router, a.AccessToken), "emotion")
+	t35Exclude(t, body, purgeID.String(), `"purge_id":`, `"feedback_pending":`, `"stats_enc":`,
+		`"raw_samples":`, `"pcm":`, `"transcript":`)
+	var rows []struct {
+		Window   *emotion.Window    `json:"window"`
+		Event    *app.SignalEvent   `json:"event"`
+		Baseline *emotion.Baselines `json:"baselines"`
 	}
+	t35Decode(t, body, &rows)
+	var health, voice, rhythm, confirmed, baseline bool
+	for _, row := range rows {
+		if w := row.Window; w != nil {
+			if w.At.Equal(foreignAt) {
+				t.Fatal("emotion.json contains a foreign window")
+			}
+			health = health || w.At.Equal(at) && w.Channel == "health" && w.Duration == 30 &&
+				w.Heart != nil && w.Heart.Mean != nil && *w.Heart.Mean == 80
+			voice = voice || w.At.Equal(at) && w.Channel == "voice" && w.Duration == 30 &&
+				w.Speech != nil && w.Speech.Mean != nil && *w.Speech.Mean == 6 &&
+				w.SpeechRateUnit == emotion.SpeechRateUnitCharactersPerSecond
+		}
+		if event := row.Event; event != nil {
+			rhythm = rhythm || event.Id == rh.Id && event.StartsAt.Equal(at) &&
+				string(event.Kind) == emotion.Rhythm && event.Scene != nil && *event.Scene == "work"
+			confirmed = confirmed || event.Id == self.Id && event.StartsAt.Equal(selfAt) &&
+				string(event.Kind) == emotion.Self && event.Confirmation == "no"
+		}
+		if b := row.Baseline; b != nil {
+			baseline = !b.Heart.Ready && b.Heart.Days == after.Heart.Days &&
+				b.Speech.Ready && b.Speech.Days == after.Speech.Days && b.Speech.Threshold != nil &&
+				after.Speech.Threshold != nil && *b.Speech.Threshold == *after.Speech.Threshold
+		}
+	}
+	if !health || !voice || !rhythm || !confirmed || !baseline {
+		t.Fatalf("emotion.json missing health/voice/rhythm/confirmation/baselines: %t/%t/%t/%t/%t",
+			health, voice, rhythm, confirmed, baseline)
+	}
+	foreignData := t35Part(t, t35Download(t, router, foreign.AccessToken), "emotion")
+	t35Exclude(t, foreignData, rh.Id.String(), self.Id.String())
 }

@@ -571,10 +571,9 @@ void main() {
     await pumpUntil(tester, within(privacy, notice));
     expect(sessions.active, same(scope));
     expect(readback, [AppOp.freezeAccount, AppOp.getMe]);
-    await tapVisible(
-      tester,
-      within(privacy, find.byKey(const Key('privacy-retry'))),
-    );
+    final retry = within(privacy, find.byKey(const Key('privacy-retry')));
+    await reveal(tester, privacy, retry);
+    await tapVisible(tester, retry);
     await pumpUntil(tester, currentPage<LoginPage>('/'));
     await pumpUntil(tester, notice);
     expect(tester.widget<Text>(notice).data, contains('请重新登录核对'));
@@ -757,5 +756,8 @@ void main() {
     final privacy = currentPage<PrivacyPage>('/privacy');
     await pumpUntil(tester, within(privacy, find.text('隐私与个人数据')));
     await pumpUntil(tester, within(privacy, find.text('账号 synthetic-A')));
+    final export = within(privacy, find.byKey(const Key('privacy-export')));
+    await reveal(tester, privacy, export);
+    expect(export.hitTestable(), findsOneWidget);
   });
 }

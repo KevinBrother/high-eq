@@ -3,13 +3,12 @@
 package service
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -260,26 +259,6 @@ func TestReplyLifecycle(t *testing.T) {
 	failedRequestID := in.RequestId
 	check(post(), 500, nil)
 	used(2)
-	export := func(u uuid.UUID) string {
-		var buf bytes.Buffer
-		if e := s.Data.Export(ctx, privacy.ExportRequest{OperationID: uuid.New(), UserID: u}, &buf); e != nil {
-			t.Fatal(e)
-		}
-		z, e := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-		if e != nil {
-			t.Fatal(e)
-		}
-		f, e := z.Open("replies.json")
-		if e != nil {
-			t.Fatal(e)
-		}
-		defer f.Close()
-		data, e := io.ReadAll(f)
-		if e != nil {
-			t.Fatal(e)
-		}
-		return string(data)
-	}
 	feedback := "replies/" + answer.Id.String() + "/feedback"
 	rate := func(tok string, idx int, note string) res {
 		return request(ctx, "POST", feedback, tok, map[string]any{"index": idx, "outcome": note})
@@ -406,9 +385,63 @@ func TestReplyLifecycle(t *testing.T) {
 	if e = s.db.QueryRow(ctx, `select count(*) from reply_outcome_receipts where feedback_id=$1`, selfID).Scan(&receiptCount); e != nil || receiptCount != 1 {
 		t.Fatal("self report outcome receipt", receiptCount, e)
 	}
-	out := export(a.UserId)
-	if !strings.Contains(out, "选择有效") || !strings.Contains(out, answer.Id.String()) || strings.Contains(out, raw) || strings.Contains(out, "input_mac") || export(b.UserId) != "[]" {
+	ownerZIP := t35Download(t, router, a.AccessToken)
+	foreignZIP := t35Download(t, router, b.AccessToken)
+	replyData := t35Part(t, ownerZIP, "replies")
+	out := string(replyData)
+	if !strings.Contains(out, "选择有效") || !strings.Contains(out, answer.Id.String()) || string(t35Part(t, foreignZIP, "replies")) != "[]" {
 		t.Fatal("export boundary")
+	}
+	t35Exclude(t, replyData, raw, "input_mac", `"outcome_pending":`, `"source_kind":`, `"reply_outcome_receipts":`,
+		`"request_id":`, firstRequestID.String(), failedRequestID.String())
+	type replyExportRow struct {
+		ID         uuid.UUID               `json:"id"`
+		ContactID  *uuid.UUID              `json:"contact_id"`
+		Result     *app.Reply              `json:"result"`
+		FeedbackID uuid.UUID               `json:"feedback_id"`
+		ReplyID    uuid.UUID               `json:"reply_id"`
+		Feedback   *replies.OutcomeDetails `json:"feedback"`
+	}
+	var replyRows []replyExportRow
+	t35Decode(t, replyData, &replyRows)
+	var result, rated bool
+	for _, row := range replyRows {
+		result = result || row.ID == answer.Id && row.Result != nil &&
+			reflect.DeepEqual(*row.Result, answer)
+		rated = rated || row.FeedbackID == ordinaryID && row.ReplyID == answer.Id &&
+			row.Feedback != nil && row.Feedback.Index == 1 && row.Feedback.Outcome == "对方好像不高兴"
+	}
+	if !result || !rated {
+		t.Fatalf("replies.json missing result or linked feedback: %t/%t", result, rated)
+	}
+	membershipData := t35Part(t, ownerZIP, "membership")
+	var quotaToken uuid.UUID
+	if e = s.db.QueryRow(ctx, "select token from quota_attempts where activity_id=$1", answer.Id).Scan(&quotaToken); e != nil {
+		t.Fatal(e)
+	}
+	t35Exclude(t, membershipData, quotaToken.String(), `"token":`, `"valid_until":`)
+	var quotaRows []struct {
+		Kind       string    `json:"kind"`
+		ActivityID uuid.UUID `json:"activity_id"`
+		Feature    string    `json:"feature"`
+		Day        string    `json:"charged_day"`
+		ChargedAt  time.Time `json:"charged_at"`
+		Used       int       `json:"used"`
+		State      string    `json:"state"`
+	}
+	t35Decode(t, membershipData, &quotaRows)
+	var charge, settlement bool
+	var daily int
+	for _, row := range quotaRows {
+		charge = charge || row.Kind == "charge" && row.ActivityID == answer.Id &&
+			row.Feature == "reply" && row.Day != "" && !row.ChargedAt.IsZero()
+		settlement = settlement || row.Kind == "settlement" && row.ActivityID == answer.Id && row.State == "complete"
+		if row.Kind == "daily_usage" && row.Feature == "reply" && row.Day != "" {
+			daily += row.Used
+		}
+	}
+	if !charge || !settlement || daily != 2 || string(t35Part(t, foreignZIP, "membership")) != "[]" {
+		t.Fatalf("membership.json charge=%t settlement=%t daily usage=%d", charge, settlement, daily)
 	}
 	if _, e = s.db.Exec(ctx, `insert into chat_imports(activity_id,original_enc) values($1,$2)`, answer.Id, []byte("synthetic blocked import")); e == nil {
 		t.Fatal("reply raw import unexpectedly persisted")
@@ -433,7 +466,7 @@ func TestReplyLifecycle(t *testing.T) {
 	if e = s.Data.Delete(ctx, privacy.Deletion{OperationID: uuid.New(), UserID: a.UserId, SourceID: selfSource, Scope: "replies"}); e != nil {
 		t.Fatal(e)
 	}
-	out = export(a.UserId)
+	out = string(t35Part(t, t35Download(t, router, a.AccessToken), "replies"))
 	if strings.Contains(out, answer.Id.String()) || strings.Contains(out, "选择有效") || strings.Contains(out, "对方好像不高兴") {
 		t.Fatal("erasure incomplete")
 	}
@@ -497,6 +530,18 @@ func TestReplyLifecycle(t *testing.T) {
 	check(post(), 200, &last)
 	if profiles.calls.Load() != priorProfiles+1 || calls.Load() != priorCalls+1 {
 		t.Fatal("completed reply reread profile", profiles.calls.Load(), calls.Load())
+	}
+	contactReplyData := t35Part(t, t35Download(t, router, a.AccessToken), "replies")
+	t35Exclude(t, contactReplyData, `"request_id":`, lastRequest.RequestId.String())
+	var contactReplyRows []replyExportRow
+	t35Decode(t, contactReplyData, &contactReplyRows)
+	var linkedReply bool
+	for _, row := range contactReplyRows {
+		linkedReply = linkedReply || row.ID == last.Id && row.ContactID != nil && *row.ContactID == live.Id &&
+			row.Result != nil && reflect.DeepEqual(*row.Result, last)
+	}
+	if !linkedReply {
+		t.Fatal("replies.json missing the reply result linked to its contact")
 	}
 	in = lastRequest
 	feedback = "replies/" + last.Id.String() + "/feedback"

@@ -387,27 +387,48 @@ paths:
       tags:
       - me
       summary: 流式生成当前账号 JSON 压缩包，不落盘
+      description: >-
+        仅导出当前会话所属账号。未登录、会话失效或账号冻结时返回 401，删除屏障生效时返回可重试的 503。
+        服务端在事务成功提交后写入 ZIP 中央目录。若开始传输后出错，响应可能已为 200，服务端会中断 HTTP/1.1
+        响应或重置 HTTP/2 流。下载成功要求读完响应并校验 ZIP 完整性。
       responses:
         '200':
-          description: ZIP：manifest.json 及按模块分组的 JSON；不含录音、密钥或其他账号。
+          description: ZIP 包含列出模块和文件的 manifest.json，以及 13 个 JSON 数组。不含会话凭据、防重放键、录音、密钥或其他账号的数据。
+          headers:
+            Content-Disposition:
+              schema: {type: string}
+              example: 'attachment; filename="high-eq-export.zip"'
           content:
             application/zip:
               schema: {type: string, format: binary}
               x-example-files:
                 manifest.json:
-                  modules:
-                  - manual_marks
+                  modules: [payments, membership, assessments, accounts, training, chat_imports, profiles, replies, ai_calls, emotion, manual_marks, reviews, growth]
+                  files: [manifest.json, payments.json, membership.json, assessments.json, accounts.json, training.json, chat_imports.json, profiles.json, replies.json, ai_calls.json, emotion.json, manual_marks.json, reviews.json, growth.json]
+                payments.json: []
+                membership.json: []
+                assessments.json: []
+                accounts.json: []
+                training.json: []
+                chat_imports.json: []
+                profiles.json: []
+                replies.json: []
+                ai_calls.json: []
+                emotion.json: []
                 manual_marks.json: []
+                reviews.json: []
+                growth.json: []
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       x-example-request: GET /v1/me/export
   /v1/me/data/{kind}/{id}:
     delete:
       operationId: deleteSource
       tags:
       - me
-      summary: 删除源及副本，重算成长分
+      summary: 计划中的单条记录删除（当前候选未开放）
       parameters:
       - in: path
         name: kind
@@ -430,7 +451,7 @@ paths:
         example: 85b72033-9f07-4bbc-8567-fc31f26508ab
       responses:
         '200':
-          description: 成功
+          description: 未来接线后的成功回执
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Ack'}
@@ -440,7 +461,19 @@ paths:
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
         '404': {$ref: '#/components/responses/E404'}
-      description: id 是该类别的外部资源 ID：会话/复盘/回复为活动 ID，不是评分 ID；服务端验证归属并解析独立清理用的 source_id。窗口按 starts_at + channel 删除。
+        '501':
+          description: 当前候选对有效会话和格式正确的请求返回未实现
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+              example:
+                code: not_implemented
+                message: 此功能尚未开放
+                retryable: false
+      description: >-
+        当前候选未开放此操作。以下是未来接线的设计：删除源及副本并重算成长分；id 为该类别的外部资源 ID，
+        会话、复盘和回复使用活动 ID。服务端验证归属并解析独立清理用的 source_id。
+        窗口继续按 starts_at 和 channel 走专用删除入口。
       x-example-request: DELETE /v1/me/data/assessments/85b72033-9f07-4bbc-8567-fc31f26508ab
   /v1/entitlements:
     get:
@@ -1232,7 +1265,7 @@ paths:
         '404': {$ref: '#/components/responses/E404'}
         '409': {$ref: '#/components/responses/E409'}
         '503': {$ref: '#/components/responses/E503'}
-      description: 同一 request_id 和相同材料只调用一次模型并返回当前画像；处理中返回 202；执行时检测到用途授权记录变化会使在途请求失效。完成后仍须具备当前权限，重放只读当前画像、不再外发；已失效或同键不同材料或关系人返回 409。
+      description: 同一 request_id 和相同材料在处理中返回 202，可重试失败后可对同一关系人提交原材料。执行时检测到用途授权记录变化会使在途请求失效。完成后仍须具备当前权限，重放只读当前画像、不再外发。已失效、同键不同材料或关系人，以及无法核对材料的历史请求均返回 409。
       x-example-request: POST /v1/contacts/85b72033-9f07-4bbc-8567-fc31f26508ab/infer
   /v1/marks:
     get:

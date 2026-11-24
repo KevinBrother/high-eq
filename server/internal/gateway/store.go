@@ -10,13 +10,17 @@ import (
 	"high-eq/server/internal/privacy"
 )
 
+// ExecutionLimit is the outer deadline for one routed model operation,
+// including approval, generation, fallback and finish work.
+const ExecutionLimit = 60 * time.Second
+
 // NewRouter binds the privileged catalog to an account-guarded, task-only business port.
 func (c *Catalog) NewRouter(data *privacy.Coordinator, stop Stop) (*Router, error) {
 	if data == nil || stop == nil {
 		return nil, ErrConfig
 	}
 	s := routingStore{data.Access}
-	return &Router{resolvePrompt: databasePrompts(c.db), load: s.load, record: s.record, stop: stop, first: 10 * time.Second, total: 60 * time.Second, review: 10 * time.Second, dispatch: routedDispatch(c.lookupAt)}, nil
+	return &Router{resolvePrompt: databasePrompts(c.db), load: s.load, record: s.record, recordTx: s.recordTx, stop: stop, first: 10 * time.Second, total: ExecutionLimit, review: 10 * time.Second, dispatch: routedDispatch(c.lookupAt), routed: true}, nil
 }
 
 // routedDispatch is the production provider-dispatch closure. Keeping the
@@ -28,7 +32,13 @@ func routedDispatch(lookup func(context.Context, pgx.Tx, uuid.UUID, Kind, uuid.U
 		if err != nil {
 			return Result{}, err
 		}
+		// A guarded catalog lookup can outlive cancellation while waiting for
+		// its transaction. Only a live attempt may cross the adapter boundary.
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
 		r.includeUsage = e.includeUsage
+		markProviderDispatch(ctx)
 		return a.chat(ctx, t, r)
 	}
 }
@@ -127,16 +137,24 @@ func (s routingStore) load(ctx context.Context, c Call) (p plan, err error) {
 }
 func (s routingStore) record(ctx context.Context, c Call, a attemptStat) error {
 	return s.access(ctx, c.User, func(tx pgx.Tx) error {
-		var in, out any
-		if a.usage.UsageKnown {
-			in, out = a.usage.InputTokens, a.usage.OutputTokens
-		}
-		_, err := tx.Exec(ctx, `insert into ai_calls(id,operation_id,user_id,activity_id,contact_id,task,model_id,prompt_version_id,
+		return s.recordTx(ctx, tx, c, a)
+	})
+}
+
+// recordTx appends one dispatched attempt to the caller-owned authorization
+// transaction. It must not start a guarded session: the account row is already
+// locked by the caller, so borrowing a second connection would self-lock.
+func (s routingStore) recordTx(ctx context.Context, tx pgx.Tx, c Call, a attemptStat) error {
+	var in, out any
+	if a.usage.UsageKnown {
+		in, out = a.usage.InputTokens, a.usage.OutputTokens
+	}
+	_, err := tx.Exec(ctx, `insert into ai_calls(id,operation_id,user_id,activity_id,contact_id,task,model_id,prompt_version_id,
    started_at,outcome,latency_ms,input_tokens,output_tokens,cost_cny)
  values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-   ($12::integer*$14::text::numeric+$13::integer*$15::text::numeric)/1000000)`, a.id, c.Operation, c.User, optional(c.Activity), optional(c.Contact), c.Task, a.model.id, optional(c.PromptVersion), a.start, a.outcome, a.elapsed.Milliseconds(), in, out, a.model.inputPrice, a.model.outputPrice)
-		return err
-	})
+   ($12::integer*$14::text::numeric+$13::integer*$15::text::numeric)/1000000)
+ on conflict (id) do nothing`, a.id, c.Operation, c.User, optional(c.Activity), optional(c.Contact), c.Task, a.model.id, optional(c.PromptVersion), a.start, a.outcome, a.elapsed.Milliseconds(), in, out, a.model.inputPrice, a.model.outputPrice)
+	return err
 }
 
 // LinkScoreTx runs inside the scorer's guarded score-insert transaction. No reason or value is copied.

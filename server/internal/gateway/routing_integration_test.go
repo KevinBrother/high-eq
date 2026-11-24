@@ -142,11 +142,17 @@ func TestRoutingStore(t *testing.T) {
 		t.Fatal(groups)
 	}
 	exported := 0
-	must(Hooks().Export(ctx, tx, privacy.ExportRequest{UserID: c.User}, func(v any) error {
+	var operationGroup uuid.UUID
+	must(Hooks([]byte("synthetic export key")).Export(ctx, tx, privacy.ExportRequest{UserID: c.User}, func(v any) error {
 		b, err := json.Marshal(v)
-		if strings.Contains(string(b), "fixture") {
+		if strings.Contains(string(b), "fixture") || strings.Contains(string(b), c.Operation.String()) {
 			t.Fatal("private content exported")
 		}
+		group, ok := v.(map[string]any)["operation_id"].(uuid.UUID)
+		if !ok || group.Version() != 8 || (exported > 0 && group != operationGroup) {
+			t.Fatalf("inconsistent group for stored primary and fallback attempts: %v", group)
+		}
+		operationGroup = group
 		exported++
 		return err
 	}))

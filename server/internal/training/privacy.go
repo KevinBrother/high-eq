@@ -11,6 +11,21 @@ import (
 	"high-eq/server/internal/privacy"
 )
 
+type exportSetup struct {
+	Level    *uuid.UUID `json:"level_id,omitempty"`
+	Contact  *uuid.UUID `json:"contact_id,omitempty"`
+	Scene    *string    `json:"scene,omitempty"`
+	Scenario *string    `json:"scenario,omitempty"`
+	Previous *uuid.UUID `json:"previous_id,omitempty"`
+}
+
+type exportMessage struct {
+	ID   uuid.UUID `json:"id"`
+	Role string    `json:"role"`
+	Seq  int       `json:"seq"`
+	Text string    `json:"text"`
+}
+
 func Hooks(f *fieldcrypt.Cipher) privacy.Module {
 	s := Service{Fields: f}
 	return privacy.Module{Name: "training", Delete: func(ctx context.Context, tx pgx.Tx, d privacy.Deletion) error {
@@ -41,11 +56,22 @@ func Hooks(f *fieldcrypt.Cipher) privacy.Module {
 				if e != nil {
 					return e
 				}
+				messages := make([]exportMessage, 0, len(r.Messages))
+				for _, m := range r.Messages {
+					messages = append(messages, exportMessage{ID: m.Id, Role: string(m.Role), Seq: m.Seq, Text: m.Text})
+				}
 				if e = emit(struct {
-					Session
-					Input  Input     `json:"setup"`
-					Source uuid.UUID `json:"source_id"`
-				}{r.Session, r.input, r.source}); e != nil {
+					SessionSummary
+					Setup    exportSetup     `json:"setup"`
+					Messages []exportMessage `json:"messages"`
+					Source   uuid.UUID       `json:"source_id"`
+				}{
+					SessionSummary: r.summary(),
+					Setup: exportSetup{Level: r.input.Level, Contact: r.input.Contact, Scene: r.input.Scene,
+						Scenario: r.input.Scenario, Previous: r.input.Previous},
+					Messages: messages,
+					Source:   r.source,
+				}); e != nil {
 					return e
 				}
 				after = id

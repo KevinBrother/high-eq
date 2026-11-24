@@ -37,6 +37,7 @@ func TestPrivacyAccountRouteContract(t *testing.T) {
 		frozen       bool
 	}{
 		{"GET", "/v1/me", true},
+		{"GET", "/v1/me/export", false},
 		{"PATCH", "/v1/me", false},
 		{"POST", "/v1/me/closure", false},
 		{"DELETE", "/v1/me/closure", true},

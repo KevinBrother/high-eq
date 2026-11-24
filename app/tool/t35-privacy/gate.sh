@@ -7,8 +7,8 @@ umask 077
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 mode=${1:-all}
 case "$#:$mode" in
-  0:all|1:all|1:client|1:service|1:legacy) ;;
-  *) echo 'usage: gate.sh [all|client|service|legacy]' >&2; exit 2 ;;
+  0:all|1:all|1:client|1:service|1:legacy|1:export-ownership) ;;
+  *) echo 'usage: gate.sh [all|client|service|legacy|export-ownership]' >&2; exit 2 ;;
 esac
 
 scratch=$(mktemp -d)
@@ -75,7 +75,8 @@ client() {
   python3 -B app/tool/t35-privacy/client_receipt.py "$scratch/flutter.jsonl" "$status"
   if (cd app && flutter test --no-pub test/client_test.dart test/onboarding/journey_test.dart \
     test/practice/pending_plan_gesture_test.dart test/replies/entry_test.dart \
-    test/health/page_test.dart test/voice/page_test.dart) >"$scratch/flutter-companions.log" 2>&1; then
+    test/health/page_test.dart test/voice/page_test.dart test/privacy/export_journey_test.dart) \
+    >"$scratch/flutter-companions.log" 2>&1; then
     echo 'PASS: Flutter companion regressions'
   else
     status=$?
@@ -88,7 +89,15 @@ service() {
   go_receipts contract TestPrivacyAccountRouteContract TestPrivacyAccountBarrierResponse
   go_receipts integration TestPrivacyPhoneOnlyClosureHTTP TestAccountLifecycle \
     TestGrowthRoutesRejectFrozenAccountWithoutGeneratingPlan \
-    TestPrivacyExpiredAccountMaintenanceIsolatesFailure
+    TestPrivacyExpiredAccountMaintenanceIsolatesFailure \
+    TestAIExportGroupsAcrossBusinessRequests \
+    TestProfileInferenceRecoversInterruptedExecution \
+    TestProfileInferenceSurvivesPopulatedRollback \
+    TestExportCommitFailureDoesNotRevealArchive \
+    TestExportStreamsLargeIncompressibleEntryBeforeCommit \
+    TestExportLateFailureAbortsHTTP2Stream \
+    TestExportLateFailureDoesNotEndAsNormalHTTP1Response \
+    TestExportLatePanicAbortsResponse
 }
 
 t26() {
@@ -106,5 +115,6 @@ case "$mode" in
   client) client ;;
   service) require_disposable; service ;;
   legacy) require_disposable; t26; t27 ;;
+  export-ownership) go_receipts integration,t26flutter TestT35ExportAssessmentOwnership ;;
 esac
 printf 'T35 privacy gate %s PASS\n' "$mode"

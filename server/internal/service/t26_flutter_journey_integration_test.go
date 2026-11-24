@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -313,6 +314,15 @@ func t26FailureType(err error) string {
 	}
 }
 
+// Hooks can emit private Go types. Read the JSON fields used by the archive.
+func t26DecodeExport(record, dst any) error {
+	data, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, dst)
+}
+
 func t26SyntheticOwner(ctx context.Context, tx pgx.Tx, s *Runtime, subject string) (privacy.ExportRequest, error) {
 	rows, err := tx.Query(ctx, `select id from users`)
 	if err != nil {
@@ -328,7 +338,15 @@ func t26SyntheticOwner(ctx context.Context, tx pgx.Tx, s *Runtime, subject strin
 	owner := privacy.ExportRequest{UserID: user}
 	identityFound := false
 	err = accounts.Hooks(s.Fields).Export(ctx, tx, owner, func(record any) error {
-		if data, ok := record.(map[string]any); ok && data["kind"] == "identity" && data["provider"] == "apple" && data["subject"] == subject {
+		var entry struct {
+			Kind     string `json:"kind"`
+			Provider string `json:"provider"`
+			Subject  string `json:"subject"`
+		}
+		if err := t26DecodeExport(record, &entry); err != nil {
+			return err
+		}
+		if entry.Kind == "identity" && entry.Provider == "apple" && entry.Subject == subject {
 			identityFound = true
 		}
 		return nil
@@ -371,12 +389,15 @@ func t26LogFailureCounts(t *testing.T, s *Runtime, subject string) {
 func t26CheckAssessment(ctx context.Context, tx pgx.Tx, s *Runtime, owner privacy.ExportRequest) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := assessment.Hooks(s.Fields).Export(ctx, tx, owner, func(record any) error {
-		entry, ok := record.(struct {
+		var entry struct {
 			assessment.Result
 			Version string `json:"version"`
 			Answers []int  `json:"answers"`
-		})
-		if !ok || entry.ID == uuid.Nil || id != uuid.Nil || len(entry.Answers) != 16 {
+		}
+		if err := t26DecodeExport(record, &entry); err != nil {
+			return err
+		}
+		if entry.ID == uuid.Nil || id != uuid.Nil || len(entry.Answers) != 16 {
 			return t26ReadbackAssertion("expected one persisted 16-answer assessment")
 		}
 		want, err := s.Assessments.Bank.Score(entry.Version, entry.Answers)
@@ -395,38 +416,74 @@ func t26CheckAssessment(ctx context.Context, tx pgx.Tx, s *Runtime, owner privac
 	return id, nil
 }
 
-type t26PracticeRecord = struct {
-	training.Session
-	Input  training.Input `json:"setup"`
-	Source uuid.UUID      `json:"source_id"`
+type t26PracticeRecord struct {
+	training.SessionSummary
+	Setup *struct {
+		Level *uuid.UUID `json:"level_id"`
+	} `json:"setup"`
+	Messages []struct {
+		ID   uuid.UUID `json:"id"`
+		Role string    `json:"role"`
+		Seq  int       `json:"seq"`
+		Text string    `json:"text"`
+	} `json:"messages"`
+	Source uuid.UUID `json:"source_id"`
+}
+
+func t26PracticeExport(record any) (t26PracticeRecord, error) {
+	var entry t26PracticeRecord
+	if err := t26DecodeExport(record, &entry); err != nil {
+		return entry, err
+	}
+	if entry.ID == uuid.Nil {
+		return entry, t26ReadbackAssertion("expected one persisted practice session")
+	}
+	return entry, nil
 }
 
 func t26CheckPractice(ctx context.Context, tx pgx.Tx, h *practiceWire, owner privacy.ExportRequest) (t26PracticeRecord, error) {
 	var practice t26PracticeRecord
 	err := training.Hooks(h.s.Fields).Export(ctx, tx, owner, func(record any) error {
-		entry, ok := record.(t26PracticeRecord)
-		if !ok || entry.ID == uuid.Nil || practice.ID != uuid.Nil {
+		if practice.ID != uuid.Nil {
 			return t26ReadbackAssertion("expected one persisted practice session")
 		}
-		practice = entry
-		return nil
+		var err error
+		practice, err = t26PracticeExport(record)
+		return err
 	})
 	if err != nil {
 		return practice, err
 	}
 	if practice.ID == uuid.Nil || practice.Status != "complete" || practice.CompletedAt == nil || practice.Mode != "full_session" ||
-		practice.Level == nil || *practice.Level == uuid.Nil || practice.Input.Level == nil || *practice.Input.Level != *practice.Level {
+		practice.Level == nil || *practice.Level == uuid.Nil || practice.Setup == nil || practice.Setup.Level == nil || *practice.Setup.Level != *practice.Level {
 		return practice, t26ReadbackAssertion("expected a completed full-session practice pinned to a catalog level")
 	}
 	turns := len(practice.Messages) / 2
 	if turns == 0 || len(practice.Messages)%2 != 0 || h.generations.Load() != int32(turns) {
 		return practice, t26ReadbackAssertion("saved SSE turns do not match the scripted generations")
 	}
+	// Client message IDs are excluded from the archive. Bind the stored IDs
+	// to the exact exported messages before checking the turn linkage.
+	rows, err := tx.Query(ctx, `select m.id, m.client_message_id
+		from practice_messages m join activities a on a.id=m.activity_id
+		where a.user_id=$1 and a.id=$2 and a.kind='practice' order by m.seq`, owner.UserID, practice.ID)
+	if err != nil {
+		return practice, err
+	}
+	type messageLink struct{ ID, ClientID uuid.UUID }
+	links, err := pgx.CollectRows(rows, pgx.RowToStructByPos[messageLink])
+	if err != nil {
+		return practice, err
+	}
+	if len(links) != len(practice.Messages) {
+		return practice, t26ReadbackAssertion("stored practice message count does not match the export")
+	}
 	for i := 0; i < len(practice.Messages); i += 2 {
 		user, assistant := practice.Messages[i], practice.Messages[i+1]
 		if user.Role != "user" || assistant.Role != "assistant" ||
 			user.Seq != i+1 || assistant.Seq != i+2 ||
-			user.ClientMessageId == uuid.Nil || user.ClientMessageId != assistant.ClientMessageId ||
+			user.ID != links[i].ID || assistant.ID != links[i+1].ID ||
+			links[i].ClientID == uuid.Nil || links[i].ClientID != links[i+1].ClientID ||
 			strings.TrimSpace(user.Text) == "" || assistant.Text != "合成甲。合成乙。" {
 			return practice, t26ReadbackAssertion(fmt.Sprintf("invalid persisted SSE turn %d", i/2+1))
 		}
@@ -460,8 +517,20 @@ func t26CheckPractice(ctx context.Context, tx pgx.Tx, h *practiceWire, owner pri
 func t26CheckPlan(ctx context.Context, tx pgx.Tx, s *Runtime, owner privacy.ExportRequest, assessmentID uuid.UUID, practice t26PracticeRecord) error {
 	var completedLevel, projectedScore int
 	err := growth.Hooks(s.Fields).Export(ctx, tx, owner, func(record any) error {
-		switch entry := record.(type) {
-		case growth.PlanExportRecord:
+		var entry struct {
+			RecordType   string                        `json:"record_type"`
+			AssessmentID *uuid.UUID                    `json:"assessment_id"`
+			CompletedAt  *time.Time                    `json:"completed_at"`
+			Items        []growth.PlanItemExportRecord `json:"items"`
+			SourceID     uuid.UUID                     `json:"source_id"`
+			Kind         string                        `json:"kind"`
+			NVC          growth.NVCValues              `json:"nvc"`
+		}
+		if err := t26DecodeExport(record, &entry); err != nil {
+			return err
+		}
+		switch entry.RecordType {
+		case "plan":
 			if entry.AssessmentID == nil || *entry.AssessmentID != assessmentID || entry.CompletedAt == nil {
 				break
 			}
@@ -470,7 +539,7 @@ func t26CheckPlan(ctx context.Context, tx pgx.Tx, s *Runtime, owner privacy.Expo
 					completedLevel++
 				}
 			}
-		case growth.ExportRecord:
+		case "score":
 			if entry.SourceID == practice.Source && entry.Kind == "practice" && entry.NVC.Total == practice.Result.Score.NVC.Total {
 				projectedScore++
 			}
