@@ -1,0 +1,17 @@
+# No evidence verifier / production key provider at this revision. Not a boolean override.
+x-closed: &closed {release-lock: {condition: service_completed_successfully}}
+services:
+  release-lock:
+    image: ${REDIS_IMAGE:?}
+    network_mode: none
+    entrypoint: [/bin/sh, -c, 'echo "production blocked - see T34 signoff" >&2; exit 78']
+    read_only: true
+  db: {depends_on: *closed}
+  cache: {depends_on: *closed}
+  ledger: {depends_on: *closed}
+  api: {depends_on: *closed}
+  web: {depends_on: *closed}
+  backup: {depends_on: *closed}
+  monitor: {depends_on: *closed}
+  alert-sink: {depends_on: *closed}
+  chat-sweeper: {depends_on: *closed}

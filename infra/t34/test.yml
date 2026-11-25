@@ -1,0 +1,82 @@
+x-test: &test {APP_ENV: development, FIELD_KEY_BASE64: '${TEST_FIELD_KEY:?}'}
+x-authorized: &authorized {permit: {condition: service_completed_successfully}}
+services:
+  permit:
+    image: ${OPS_IMAGE:?}
+    profiles: [serve]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: {driver: none}
+    entrypoint: [/ops/gate.sh, verify]
+    networks: [default, ledger-net]
+    volumes: [approval:/gate:ro]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=8m,mode=1777"]
+    depends_on:
+      db: {condition: service_healthy}
+      cache: {condition: service_healthy}
+      ledger: {condition: service_healthy}
+    environment:
+      GATE_FILE: /gate/ticket
+      DATABASE_URL: postgres://postgres:${DB_PASS:?}@${DB_SERVICE:-db}:5432/postgres?sslmode=disable
+      # The redis-cli shipped by the ops image needs an explicit ACL user in the URI.
+      LEDGER_URL: redis://default:${LEDGER_PASS:?}@ledger:6379/0
+      INSTALLATION: '${INSTALLATION:?}'
+      DB_SERVICE: '${DB_SERVICE:-db}'
+      CACHE_SERVICE: '${CACHE_SERVICE:-cache}'
+      CHALLENGE: '${CHALLENGE:?}'
+      BACKUP_RETENTION_DAYS: '45'
+      BUSINESS_DUMP_SHA256: '${BUSINESS_DUMP_SHA256:-}'
+      LEDGER_RETENTION_MODE: '${LEDGER_RETENTION_MODE:-fresh}'
+      LEDGER_DEADLINES: '${LEDGER_DEADLINES:-}'
+      LEDGER_WRITES: '${LEDGER_WRITES:-}'
+      LEDGER_WINDOW_CUTOFFS: '${LEDGER_WINDOW_CUTOFFS:-}'
+  issuer:
+    image: ${OPS_IMAGE:?}
+    profiles: [offline]
+    network_mode: none
+    user: '0'
+    read_only: true
+    logging: {driver: none}
+    entrypoint: [/ops/gate.sh]
+    command: [issue]
+    volumes: [approval:/gate]
+  api: {environment: *test, profiles: [serve], networks: [default, ledger-net], depends_on: *authorized}
+  web: {profiles: [serve], networks: [default], depends_on: *authorized}
+  monitor:
+    profiles: [serve]
+    networks: [default]
+    depends_on:
+      permit: {condition: service_completed_successfully}
+      alert-sink: {condition: service_healthy}
+  backup: {profiles: [serve], networks: [default], depends_on: *authorized}
+  alert-sink: {profiles: [serve], networks: [default]}
+  chat-sweeper: {profiles: [serve], depends_on: *authorized}
+  drill:
+    image: ${DRILL_IMAGE:?}
+    profiles: [offline]
+    read_only: true
+    logging: {driver: none}
+    networks: [default, ledger-net]
+    environment:
+      <<: *test
+      DATABASE_URL: postgres://postgres:${DB_PASS:?}@${DB_SERVICE:-db}:5432/postgres?sslmode=disable
+      REDIS_URL: redis://${CACHE_SERVICE:-cache}:6379/0
+      LEDGER_URL: redis://:${LEDGER_PASS:?}@ledger:6379/0
+      BACKUP_RETENTION_DAYS: '45'
+  restored:
+    profiles: [offline]
+    image: ${PG_IMAGE:?}
+    environment: {POSTGRES_PASSWORD: '${DB_PASS:?}'}
+    logging: {driver: none}
+    networks: [default]
+    volumes: ['quarantine:/var/lib/postgresql/data']
+    healthcheck: {test: [CMD, pg_isready, -h, 127.0.0.1, -U, postgres], interval: 2s, timeout: 2s, retries: 45}
+  coldcache:
+    profiles: [offline]
+    image: ${REDIS_IMAGE:?}
+    command: [redis-server, --save, '']
+    logging: {driver: none}
+    networks: [default]
+    tmpfs: [/data]
+volumes: {quarantine: {}, approval: {}}

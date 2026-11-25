@@ -1,0 +1,92 @@
+name: T34 isolated hosted proof
+on:
+  workflow_dispatch:
+    inputs:
+      initial_revision:
+        description: Full SHA of the first published, schema-compatible main commit
+        required: true
+        type: string
+      update_revision:
+        description: Full SHA of the second, different published main commit
+        required: true
+        type: string
+      previous_revision:
+        description: Full SHA of the compatible rollback commit
+        required: true
+        type: string
+      wait_seconds:
+        description: Real wait between initialization and cross-process update (minimum 600)
+        required: true
+        default: '620'
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: t34-isolated-hosted-proof
+  cancel-in-progress: false
+jobs:
+  proof:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner }}
+    environment: t34-synthetic-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      T34_PROOF_INITIAL_REVISION: ${{ inputs.initial_revision }}
+      T34_PROOF_UPDATE_REVISION: ${{ inputs.update_revision }}
+      T34_PROOF_PREVIOUS_REVISION: ${{ inputs.previous_revision }}
+      T34_PROOF_WAIT_SECONDS: ${{ inputs.wait_seconds }}
+      T34_TRUSTED_MAIN_SHA: ${{ github.sha }}
+      T34_PROOF_OUTPUT_DIR: ${{ runner.temp }}/t34-isolated-proof
+    steps:
+      - name: Check out the trusted main workflow code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check and materialize the protected decoder approval
+        id: approval
+        env:
+          T34_DECODER_APPROVALS_JSON: ${{ secrets.T34_DECODER_APPROVALS_JSON }}
+        shell: bash
+        run: |
+          if [[ -z "$T34_DECODER_APPROVALS_JSON" ]]; then
+            printf 'configured=false\n' >> "$GITHUB_OUTPUT"
+            printf '### T34 isolated proof\n\n未执行：受保护环境缺少 `T34_DECODER_APPROVALS_JSON`。不得将本结果记作发布通过。\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python3 infra/t34/ci/materialize_decoder_approval.py \
+            "$GITHUB_WORKSPACE" \
+            "$RUNNER_TEMP/t34-decoder-approvals-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          printf 'configured=true\n' >> "$GITHUB_OUTPUT"
+      - name: Verify trusted revisions before starting an engine
+        if: ${{ steps.approval.outputs.configured == 'true' }}
+        env:
+          INITIAL_REVISION: ${{ inputs.initial_revision }}
+          UPDATE_REVISION: ${{ inputs.update_revision }}
+          PREVIOUS_REVISION: ${{ inputs.previous_revision }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_ACTOR" = "$GITHUB_REPOSITORY_OWNER"
+          for revision in "$INITIAL_REVISION" "$UPDATE_REVISION" "$PREVIOUS_REVISION"; do
+            [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+            git cat-file -e "$revision^{commit}"
+            git merge-base --is-ancestor "$revision" "$GITHUB_SHA"
+          done
+          test "$INITIAL_REVISION" != "$UPDATE_REVISION"
+      - name: Run one disposable rootless hosted-VM proof
+        if: ${{ steps.approval.outputs.configured == 'true' }}
+        env:
+          T34_DECODER_APPROVALS: ${{ runner.temp }}/t34-decoder-approvals-${{ github.run_id }}-${{ github.run_attempt }}.json
+        run: infra/t34/ci/run_hosted_proof.sh
+      - name: Upload the sanitized proof receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: t34-isolated-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/t34-isolated-proof
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Remove materialized decoder approval
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/t34-decoder-approvals-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"

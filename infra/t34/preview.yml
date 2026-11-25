@@ -1,0 +1,4 @@
+# Only the verified web tier gets a random loopback port on explicit request.
+services:
+  web: {ports: ['127.0.0.1::8080'], networks: [default, preview]}
+networks: {preview: {internal: true}}

@@ -1,0 +1,106 @@
+name: T34 release
+on: [push, pull_request, workflow_dispatch]
+permissions: {contents: read}
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with: {persist-credentials: false, fetch-depth: 0}
+      - name: Run T34 offline contracts
+        working-directory: infra/t34
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+  stage-preflight:
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+    needs: contract
+    environment: t34-synthetic-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      configured: ${{ steps.preflight.outputs.configured }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with: {persist-credentials: false, fetch-depth: 0}
+      - name: Check protected release inputs
+        id: preflight
+        env:
+          RUNNER_LABEL: ${{ vars.T34_STAGING_RUNNER_LABEL }}
+          STATE_VOLUME: ${{ vars.T34_STAGING_STATE_VOLUME }}
+          T34_PREVIOUS_COMMIT: ${{ vars.T34_PREVIOUS_COMMIT }}
+          APPROVALS_JSON: ${{ secrets.T34_DECODER_APPROVALS_JSON }}
+        shell: bash
+        run: |
+          configured=true
+          if [[ -z "$RUNNER_LABEL" || -z "$STATE_VOLUME" ]]; then
+            configured=false
+            reason='缺少受保护的自托管 runner/状态卷配置。'
+          elif [[ ! "$T34_PREVIOUS_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            configured=false
+            reason='缺少受保护的前版提交完整 SHA `T34_PREVIOUS_COMMIT`。'
+          elif [[ -z "$APPROVALS_JSON" ]]; then
+            configured=false
+            reason='缺少受保护环境 secret `T34_DECODER_APPROVALS_JSON`。'
+          else
+            reason='准入配置已提供；仅用于隔离合成 staging。'
+          fi
+          printf 'configured=%s\n' "$configured" >> "$GITHUB_OUTPUT"
+          {
+            printf '### T34 隔离合成 staging\n\n'
+            if [[ "$configured" == true ]]; then
+              printf '%s\n' "$reason"
+              printf '%s\n' '作业会从受保护 secret 物化外部审批文件，再运行精确工件绑定准入；它既不由候选代码生成审批，也不代表真实部署或生产签收。'
+            else
+              printf '未部署/已跳过，发布准入未执行。%s\n' "$reason"
+              printf '%s\n' '不得将本结果记作 T34 发布通过。'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Materialize external decoder approval
+        if: ${{ steps.preflight.outputs.configured == 'true' }}
+        env:
+          T34_DECODER_APPROVALS_JSON: ${{ secrets.T34_DECODER_APPROVALS_JSON }}
+          T34_APPROVAL_FILE: ${{ runner.temp }}/t34-decoder-approvals-${{ github.run_id }}-${{ github.run_attempt }}.json
+        run: >-
+          python3 infra/t34/ci/materialize_decoder_approval.py
+          "$GITHUB_WORKSPACE" "$T34_APPROVAL_FILE"
+      - name: Validate artifact-bound release admission
+        if: ${{ steps.preflight.outputs.configured == 'true' }}
+        env:
+          T34_PREVIOUS_COMMIT: ${{ vars.T34_PREVIOUS_COMMIT }}
+          T34_DECODER_APPROVALS: ${{ runner.temp }}/t34-decoder-approvals-${{ github.run_id }}-${{ github.run_attempt }}.json
+        run: infra/t34/accept.sh --config-only
+      - name: Remove materialized decoder approval
+        if: always()
+        env:
+          T34_APPROVAL_FILE: ${{ runner.temp }}/t34-decoder-approvals-${{ github.run_id }}-${{ github.run_attempt }}.json
+        run: rm -f -- "$T34_APPROVAL_FILE"
+  stage-test:
+    if: ${{ needs.stage-preflight.outputs.configured == 'true' }}
+    needs: stage-preflight
+    environment: t34-synthetic-release
+    concurrency: {group: t34-ci-staging, cancel-in-progress: false}
+    runs-on: ${{ vars.T34_STAGING_RUNNER_LABEL }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with: {persist-credentials: false, fetch-depth: 0}
+      - name: Materialize external decoder approval
+        env:
+          T34_DECODER_APPROVALS_JSON: ${{ secrets.T34_DECODER_APPROVALS_JSON }}
+          T34_APPROVAL_FILE: ${{ runner.temp }}/t34-decoder-approvals-${{ github.run_id }}-${{ github.run_attempt }}.json
+        run: >-
+          python3 infra/t34/ci/materialize_decoder_approval.py
+          "$GITHUB_WORKSPACE" "$T34_APPROVAL_FILE"
+      - name: Deploy the isolated synthetic staging environment
+        env:
+          T34_STAGING_STATE_VOLUME: ${{ vars.T34_STAGING_STATE_VOLUME }}
+          T34_PREVIOUS_COMMIT: ${{ vars.T34_PREVIOUS_COMMIT }}
+          T34_DECODER_APPROVALS: ${{ runner.temp }}/t34-decoder-approvals-${{ github.run_id }}-${{ github.run_attempt }}.json
+        run: infra/t34/accept.sh --ci-staging
+      - name: Remove materialized decoder approval
+        if: always()
+        env:
+          T34_APPROVAL_FILE: ${{ runner.temp }}/t34-decoder-approvals-${{ github.run_id }}-${{ github.run_attempt }}.json
+        run: rm -f -- "$T34_APPROVAL_FILE"

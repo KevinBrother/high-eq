@@ -1,0 +1,119 @@
+x-log: &bounded {driver: json-file, options: {max-size: 1m, max-file: '2'}}
+x-pg: &pg
+  image: ${PG_IMAGE:?}
+  environment: {POSTGRES_PASSWORD: '${DB_PASS:?}'}
+  command: [postgres, -c, log_statement=none, -c, log_min_error_statement=panic, -c, log_error_verbosity=terse]
+  logging: {driver: none}
+  healthcheck: {test: [CMD, pg_isready, -h, 127.0.0.1, -U, postgres], interval: 2s, timeout: 2s, retries: 45}
+x-redis: &redis
+  image: ${REDIS_IMAGE:?}
+  logging: {driver: none}
+  healthcheck: {test: [CMD, redis-cli, ping], interval: 2s, timeout: 2s, retries: 45}
+x-client: &client
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  logging: *bounded
+  environment: &appenv
+    APP_ENV: production
+    GIN_MODE: release
+    DATABASE_URL: postgres://postgres:${DB_PASS:?}@${DB_SERVICE:-db}:5432/postgres?sslmode=disable
+    REDIS_URL: redis://${CACHE_SERVICE:-cache}:6379/0
+    LEDGER_URL: redis://:${LEDGER_PASS:?}@ledger:6379/0
+    BACKUP_RETENTION_DAYS: '45'
+services:
+  db: {<<: *pg, volumes: ['business:/var/lib/postgresql/data']}
+  cache: {<<: *redis, command: [redis-server, --save, ''], tmpfs: [/data]}
+  ledger:
+    <<: *redis
+    command: [redis-server, --save, '', --appendonly, 'yes', --appendfsync, always, --maxmemory-policy, noeviction, --aof-load-truncated, 'no', --requirepass, '${LEDGER_PASS:?}']
+    environment: {REDISCLI_AUTH: '${LEDGER_PASS:?}'}
+    networks: [ledger-net]
+    volumes: [deletions:/data]
+  api:
+    <<: *client
+    image: '${API_IMAGE:?}'
+    networks: [default, ledger-net]
+    depends_on:
+      chat-sweeper: {condition: service_healthy}
+  web:
+    <<: *client
+    environment: {DATABASE_URL: '', REDIS_URL: '', LEDGER_URL: ''}
+    image: ${WEB_IMAGE:?}
+    networks: [default]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m,mode=1777"]
+    depends_on:
+      api: {condition: service_started}
+      chat-sweeper: {condition: service_healthy}
+    healthcheck: {test: [CMD, wget, -qO, /dev/null, 'http://127.0.0.1:8080/v1/health'], interval: 2s, timeout: 2s, retries: 45}
+  backup:
+    image: ${OPS_IMAGE:?}
+    command: [daily]
+    restart: unless-stopped
+    read_only: true
+    logging: *bounded
+    environment:
+      PGHOST: '${DB_SERVICE:-db}'
+      PGUSER: postgres
+      PGPASSWORD: '${DB_PASS:?}'
+      PGDATABASE: postgres
+      INSTALLATION: '${INSTALLATION:?}'
+      VAULT_DIR: /vault
+      BACKUP_MAX_AGE: '93600'
+    networks: [default]
+    volumes: [vault:/vault]
+    healthcheck: {test: [CMD, /ops/ops.sh, backup-health], interval: 30s, timeout: 5s, retries: 3, start_period: 30s}
+  monitor:
+    image: ${OPS_IMAGE:?}
+    command: [monitor]
+    restart: unless-stopped
+    read_only: true
+    logging: *bounded
+    environment:
+      PGHOST: '${DB_SERVICE:-db}'
+      PGUSER: t34_cost
+      PGPASSWORD: '${COST_PASS:?}'
+      PGDATABASE: postgres
+      PGOPTIONS: '-c default_transaction_read_only=on'
+      ALERT_WEBHOOK: '${ALERT_WEBHOOK:-http://alert-sink:8080/alerts}'
+    networks: [default]
+    depends_on:
+      alert-sink: {condition: service_healthy}
+  alert-sink:
+    image: ${SINK_IMAGE:?}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *bounded
+    networks: [default]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=8m,mode=1777"]
+    healthcheck: {test: [CMD, /sink, healthcheck], interval: 2s, timeout: 2s, retries: 30}
+  chat-sweeper:
+    image: ${OPS_IMAGE:?}
+    entrypoint: [python3, /ops/sweeper.py]
+    command: [run, /tmp/chat-sweep.ready]
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *bounded
+    environment:
+      PGHOST: '${DB_SERVICE:-db}'
+      PGUSER: postgres
+      PGPASSWORD: '${DB_PASS:?}'
+      PGDATABASE: postgres
+      PGCONNECT_TIMEOUT: '5'
+      CHAT_SWEEPER_TARGET_SHA256: '${CHAT_SWEEPER_TARGET_SHA256:-}'
+    networks: [default]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=8m,mode=1777"]
+    volumes: [{type: tmpfs, target: /var/lib/postgresql/data}]
+    healthcheck:
+      test: [CMD, python3, /ops/sweeper.py, health, /tmp/chat-sweep.ready]
+      interval: 2s
+      timeout: 5s
+      retries: 3
+      start_period: 75s
+networks:
+  default: {internal: true}
+  ledger-net: {internal: true}
+volumes: {business: {}, deletions: {}, vault: {}}
