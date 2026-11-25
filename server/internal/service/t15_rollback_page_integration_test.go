@@ -6,11 +6,16 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -126,13 +131,35 @@ func TestT15AdminRollbackNextAppCall(t *testing.T) {
 		t.Fatal("Flutter SDK is required on PATH")
 	}
 	beforeRollback := h.number(`select count(*) from admin_audit_logs where actor_id=$1 and action='setPromptRelease' and result='ok'`, operator)
+	// Count only the page's own admin writes, through a loopback proxy. The
+	// preparation publish used h.api.URL directly and is outside this boundary.
+	// Bodies, tokens and IDs are not recorded.
+	backend, err := url.Parse(h.api.URL)
+	if err != nil {
+		t.Fatal("could not resolve the fixture admin origin")
+	}
+	proxy := httputil.NewSingleHostReverseProxy(backend)
+	var putMu sync.Mutex
+	pagePuts := 0
+	pageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == "/admin/v1/prompt-releases" {
+			putMu.Lock()
+			pagePuts++
+			putMu.Unlock()
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer pageServer.Close()
+	putMu.Lock()
+	pagePuts = 0
+	putMu.Unlock()
 	runCtx, cancel := context.WithTimeout(h.ctx, 6*time.Minute)
 	defer cancel()
 	receipt := filepath.Join(t.TempDir(), "rollback-receipt")
 	cmd := exec.CommandContext(runCtx, flutter, "test", "--no-pub", "-r", "expanded", pageTest)
 	cmd.Dir = adminDir
 	cmd.Env = append(os.Environ(),
-		"T15_ADMIN_ORIGIN="+h.api.URL,
+		"T15_ADMIN_ORIGIN="+pageServer.URL,
 		"T15_ADMIN_TOKEN="+auth.AccessToken,
 		"T15_MODEL_LABEL=primary · "+h.primaryModel.String(),
 		"T15_CURRENT="+v2Name,
@@ -142,11 +169,19 @@ func TestT15AdminRollbackNextAppCall(t *testing.T) {
 	var output bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &output, &output
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("T15 Flutter /prompts page stopped the flow (exit=%v): %s", err, t15Redact(output.String(), auth.AccessToken, h.api.URL))
+		t.Fatalf("T15 Flutter /prompts page stopped the flow (exit=%v): %s", err, t15Redact(output.String(), auth.AccessToken, pageServer.URL))
 	}
 	receiptData, err := os.ReadFile(receipt)
 	if err != nil || strings.TrimSpace(string(receiptData)) != "rollback="+seedName {
 		t.Fatalf("T15 Flutter /prompts page finished without rolling back")
+	}
+	// Exactly one write must come from the single page click; a retry or an
+	// extra request beyond the UI boundary is a failure, not a bigger number.
+	putMu.Lock()
+	puts := pagePuts
+	putMu.Unlock()
+	if puts != 1 {
+		t.Fatalf("the /prompts page issued %d PUT /admin/v1/prompt-releases requests, want exactly 1", puts)
 	}
 
 	var primary, experiment *uuid.UUID
@@ -176,7 +211,7 @@ func TestT15AdminRollbackNextAppCall(t *testing.T) {
 	if got := h.number(`select count(*) from activities where id in ($1,$2) and user_id=$3`, firstActivity, secondActivity, user.UserId); got != 2 {
 		t.Fatalf("the two App attempts did not belong to the same synthetic user: %d rows", got)
 	}
-	t.Logf("T15 page->next call: page_releases=1 audit=%s/%s/%s pointer=%s calls=%s->%s", action, target, result, seedName, v2Name, seedName)
+	t.Logf("T15 page->next call: page_puts=%d audit=%s/%s/%s pointer=%s calls=%s->%s", puts, action, target, result, seedName, v2Name, seedName)
 }
 
 // t15Redact keeps a bounded diagnostic tail without the session token or the

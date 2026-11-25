@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# T15 real-service check: the shipped /prompts page rolls one published
-# role-play prompt back to v1 over loopback HTTP; the same synthetic App user's
-# next normal attempt then uses the older template at the synthetic upstream.
-# Disposable stores only; no real provider, account, browser or credential.
+# T15 real-service check. Default (no arguments) runs the rollback journey: the
+# shipped /prompts page rolls one published role-play prompt back to v1 over
+# loopback HTTP; the same synthetic App user's next normal attempt then uses
+# the older template at the synthetic upstream.
+#
+# Optional --dashboard is the only other choice: the shipped /metrics page
+# selects task, model and prompt version for one synthetic review and the Go
+# parent compares what the page rendered with persisted calls and the numeric
+# projection. Both modes use fresh disposable stores only; no real provider,
+# account, browser or credential, and no caller-supplied store URLs.
 #
 # The one-time PostgreSQL + two Redis assembly is reused in-repo from
 # app/tool/t27/history_journey.py (run_services), so this entry does not copy a
-# bootstrap script and never accepts caller-supplied store URLs.
+# bootstrap script.
 set -euo pipefail
 umask 077
 
@@ -16,6 +22,21 @@ prerequisite() {
   printf 'T15 verify prerequisite: %s\n' "$1" >&2
   exit 2
 }
+
+usage() {
+  printf 'usage: %s [--dashboard]\n' "$(basename "$0")" >&2
+  exit 2
+}
+
+# Zero arguments keep the rollback journey; exactly one argument is allowed and
+# must be --dashboard. A single empty argument is not zero arguments.
+if (( $# == 0 )); then
+  mode=rollback
+elif (( $# == 1 )) && [[ $1 == --dashboard ]]; then
+  mode=dashboard
+else
+  usage
+fi
 
 [[ ${T15_DISPOSABLE:-} == yes ]] ||
   prerequisite 'T15_DISPOSABLE=yes is required for disposable loopback stores'
@@ -27,10 +48,17 @@ redis_bin=$(command -v redis-server) || prerequisite 'redis-server must be on PA
 pg_bin=$(cd "$(dirname "$initdb_bin")" && pwd)
 [[ -f $root/app/tool/t27/history_journey.py ]] ||
   prerequisite 'missing app/tool/t27/history_journey.py (store assembly to reuse)'
-[[ -f $root/server/internal/service/t15_rollback_page_integration_test.go ]] ||
-  prerequisite 'missing server/internal/service/t15_rollback_page_integration_test.go'
-[[ -f $root/admin/tool/t15/rollback_live_test.dart ]] ||
-  prerequisite 'missing admin/tool/t15/rollback_live_test.dart'
+if [[ $mode == dashboard ]]; then
+  [[ -f $root/server/internal/service/t15_dashboard_page_integration_test.go ]] ||
+    prerequisite 'missing server/internal/service/t15_dashboard_page_integration_test.go'
+  [[ -f $root/admin/tool/t15/dashboard_live_test.dart ]] ||
+    prerequisite 'missing admin/tool/t15/dashboard_live_test.dart'
+else
+  [[ -f $root/server/internal/service/t15_rollback_page_integration_test.go ]] ||
+    prerequisite 'missing server/internal/service/t15_rollback_page_integration_test.go'
+  [[ -f $root/admin/tool/t15/rollback_live_test.dart ]] ||
+    prerequisite 'missing admin/tool/t15/rollback_live_test.dart'
+fi
 [[ -f $root/admin/.dart_tool/package_config.json ]] ||
   prerequisite 'run flutter pub get --enforce-lockfile in admin first'
 [[ -z ${DATABASE_URL:-} ]] ||
@@ -41,7 +69,7 @@ pg_bin=$(cd "$(dirname "$initdb_bin")" && pwd)
   prerequisite 'LEDGER_URL is not accepted; T15 always owns fresh disposable stores'
 
 exec python3 - "$root" "$pg_bin" "$redis_bin" \
-  "$(command -v go)" "$(command -v flutter)" <<'PY'
+  "$(command -v go)" "$(command -v flutter)" "$mode" <<'PY'
 import importlib.util
 import os
 import pathlib
@@ -53,6 +81,12 @@ from types import SimpleNamespace
 root, pg_bin, redis, go, flutter = (
     pathlib.Path(value) for value in sys.argv[1:6]
 )
+mode = sys.argv[6]
+tests = {
+    "rollback": ("integration,t15rollback", "TestT15AdminRollbackNextAppCall"),
+    "dashboard": ("integration,t15dashboard", "TestT15DashboardRealPage"),
+}
+tags, test_name = tests[mode]
 
 spec = importlib.util.spec_from_file_location(
     "t27_history_journey", root / "app/tool/t27/history_journey.py"
@@ -114,17 +148,17 @@ def run_journey(go_exe, env, log):
     with log.open("wb") as output:
         proc = subprocess.run(
             [go_exe, "test", "-mod=readonly", "-count=1", "-timeout=10m", "-v",
-             "-tags", "integration,t15rollback",
-             "-run", "^TestT15AdminRollbackNextAppCall$", "./internal/service"],
+             "-tags", tags,
+             "-run", f"^{test_name}$", "./internal/service"],
             cwd=root / "server", env=test_env, stdout=output,
             stderr=subprocess.STDOUT,
         )
     lines = log.read_text(errors="replace").splitlines()
     print("\n".join(lines[-40:]), flush=True)
-    if any(line.startswith("--- SKIP: TestT15AdminRollbackNextAppCall") for line in lines):
+    if any(line.startswith(f"--- SKIP: {test_name}") for line in lines):
         raise hj.Skipped("the named test was skipped", stage="journey")
     if proc.returncode != 0 or not any(
-        line.startswith("--- PASS: TestT15AdminRollbackNextAppCall") for line in lines
+        line.startswith(f"--- PASS: {test_name}") for line in lines
     ):
         raise hj.Failed(
             f"the named test exited {proc.returncode} without a PASS, see {log}",
