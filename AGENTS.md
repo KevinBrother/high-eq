@@ -4,7 +4,7 @@
 
 - **每次回复都必须以 🐶 开头**
 
-## 主会话尽量不要直接干活，你主要是负责派活的
+## 主会话不要直接干活，你主要是负责派活的
 
 ## 每完成一个任务 commit 一次，并push
 
@@ -12,9 +12,9 @@
 
 ## 每张卡使用独立的新会话，只通过仓库文档和任务交接记录传递上下文
 
-## 独立的新会话应该让 gpt-6.2-sol（high）和 deepseek-v4.1-flash（high） 干
+## 每张实施卡由主会话通过 Claude CLI 新开独立会话，固定使用 ds/deepseek-v4.1-flash（high）实施
 
-### 且绝大部分应该是 deepseek-v4.1-flash（high） 干，然后 gpt-6.2-sol（high） 检查它的结果
+### 命令：`claude --model ds/deepseek-v4.1-flash --effort high`；gpt-6.2-sol（high）仅独立复核，不接替实施；实施模型不可用时报告，不自行切换
 
 ## 功能
 
