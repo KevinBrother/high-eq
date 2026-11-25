@@ -50,6 +50,7 @@ class _ReviewPageState extends State<ReviewPage> {
   bool submitting = false;
   bool confirming = false;
   bool canRetry = false;
+  bool quotaExhausted = false;
   bool _draftSealed = false;
   int _editRevision = 0;
   int _pendingSaves = 0;
@@ -173,6 +174,7 @@ class _ReviewPageState extends State<ReviewPage> {
       submittedDraft = null;
       actionError = null;
       canRetry = false;
+      quotaExhausted = false;
     });
     _save();
   }
@@ -311,6 +313,7 @@ class _ReviewPageState extends State<ReviewPage> {
       submitting = true;
       actionError = null;
       canRetry = false;
+      quotaExhausted = false;
       submittedDraft = submitted;
       requestId = nextRequestId;
       _possibleAttempts = possibleAttempts;
@@ -358,18 +361,24 @@ class _ReviewPageState extends State<ReviewPage> {
       if (!mounted) return;
       final moderation =
           failure.status == 503 && failure.code == 'moderation_unavailable';
+      final quota = failure.status == 429;
       setState(() {
         attempt = null;
-        canRetry =
-            moderation || (failure.retryable ?? false) || failure.status == 500;
-        actionError = switch (failure.status) {
-          503 when moderation => '服务暂不可用，可重试',
-          403 => '复盘授权或关系人权限已变更，请检查后重试。',
-          429 => '今日复盘次数已用完，请稍后再来。',
-          409 => '这次请求与已提交内容不一致，请修改后再试。',
-          500 => '暂时无法确认本次结果，可能已生成并计次。请用原请求查看结果。',
-          _ => '连接未完成，可用原请求重试。',
-        };
+        canRetry = !quota &&
+            (moderation ||
+                (failure.retryable ?? false) ||
+                failure.status == 500);
+        quotaExhausted = quota;
+        actionError = quota
+            ? _quotaMessage(failure.retryAt)
+            : switch (failure.status) {
+                503 when moderation => '服务暂不可用，可重试',
+                403 => '复盘授权或关系人权限已变更，请检查后重试。',
+                409 => '这次请求与已提交内容不一致，请修改后再试。',
+                500 =>
+                  '暂时无法确认本次结果，可能已生成并计次。请用原请求查看结果。',
+                _ => '连接未完成，可用原请求重试。',
+              };
       });
     } on FormatException {
       if (mounted) {
@@ -425,6 +434,7 @@ class _ReviewPageState extends State<ReviewPage> {
       attempt = null;
       actionError = null;
       canRetry = false;
+      quotaExhausted = false;
       requestId = newRequestId();
       _possibleAttempts = const [];
       submittedDraft = null;
@@ -432,6 +442,24 @@ class _ReviewPageState extends State<ReviewPage> {
       _editRevision++;
     });
     _save();
+  }
+
+  String _quotaMessage(DateTime? retryAt) {
+    final at = retryAt?.toLocal();
+    if (at == null) return '今日文字复盘剩余 0 次，请在额度重置后再试。';
+    final time =
+        '${at.hour.toString().padLeft(2, '0')}:${at.minute.toString().padLeft(2, '0')}';
+    return '今日文字复盘剩余 0 次，${at.month} 月 ${at.day} 日 $time 重置（本地时间）。';
+  }
+
+  Future<void> _openQuota() async {
+    await Navigator.pushNamed(context, '/membership');
+    if (!mounted) return;
+    // The draft stays untouched; returning only re-enables a fresh attempt.
+    setState(() {
+      quotaExhausted = false;
+      actionError = null;
+    });
   }
 
   void _continueSavedDraft() {
@@ -511,11 +539,14 @@ class _ReviewPageState extends State<ReviewPage> {
                             onChanged: _changed,
                             onNext: _stageReady && stage < 3 ? _next : null,
                             onBack: stage > 0 ? _back : null,
-                            onSubmit: _complete && !canRetry ? _submit : null,
+                            onSubmit: _complete && !canRetry && !quotaExhausted
+                                ? _submit
+                                : null,
                             busy: submitting,
                             saving: saving,
                             error: actionError ?? draftError,
                             onRetry: canRetry ? _retry : null,
+                            onViewQuota: quotaExhausted ? _openQuota : null,
                           ),
                         ReviewBookView(
                           repo: widget.repo,

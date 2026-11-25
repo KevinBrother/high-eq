@@ -21,6 +21,7 @@ class ReviewForm extends StatelessWidget {
     required this.saving,
     required this.error,
     required this.onRetry,
+    this.onViewQuota,
   });
 
   final int stage;
@@ -39,6 +40,7 @@ class ReviewForm extends StatelessWidget {
   final bool saving;
   final String? error;
   final VoidCallback? onRetry;
+  final VoidCallback? onViewQuota;
 
   @override
   Widget build(BuildContext context) {
@@ -89,6 +91,14 @@ class ReviewForm extends StatelessWidget {
               const SizedBox(height: 14),
               _RetryNotice(message: error!, onRetry: onRetry),
             ],
+            if (onViewQuota != null)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  onPressed: onViewQuota,
+                  child: const Text('查看额度与重置时间'),
+                ),
+              ),
             const SizedBox(height: 14),
             Row(
               children: [
