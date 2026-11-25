@@ -5,8 +5,9 @@ import '../onboarding/surface.dart';
 import 'store.dart';
 
 class MemberPage extends StatefulWidget {
-  const MemberPage(this.store, {super.key});
+  const MemberPage(this.store, {super.key, this.onOpenEmotion});
   final MemberStore store;
+  final VoidCallback? onOpenEmotion;
   @override
   State<MemberPage> createState() => _MemberState();
 }
@@ -102,6 +103,14 @@ class _MemberState extends State<MemberPage> with WidgetsBindingObserver {
         const Text(
           '不限次对练、回复助手和文字复盘，更多关系人、个性化计划、录音与心率对齐回放，以及按对象和场景汇总的情绪画像。使用传感器前另行征求同意。',
         ),
+        if (widget.onOpenEmotion case final openEmotion?)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.insights_outlined),
+            title: const Text('查看本人情绪汇总'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: openEmotion,
+          ),
         const SizedBox(height: 18),
         Text(ios ? 'Apple 自动续期订阅，可在系统设置取消。' : '安卓月卡或年卡，一次性购买，不自动续费。'),
         Wrap(

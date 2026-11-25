@@ -5,6 +5,7 @@ import 'core/api.dart';
 import 'core/providers.dart';
 import 'core/session.dart';
 import 'core/theme.dart';
+import 'features/emotion/assist/emotion_entry_route.dart';
 import 'features/growth/growth_page.dart';
 import 'features/growth/practice_home.dart';
 import 'features/home/shell.dart';
@@ -237,6 +238,15 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
           ).pushNamedAndRemoveUntil('/assessment', (_) => false);
         }
 
+        void openEmotion(BuildContext context, EmotionEntryOrigin origin) {
+          final navigator = Navigator.of(context);
+          if (settings.arguments == EmotionEntryOrigin.summary) {
+            navigator.pop();
+          } else {
+            navigator.pushNamed('/emotion', arguments: origin);
+          }
+        }
+
         Widget ordinaryScreen(BuildContext context) {
           final admitted = scope!;
           switch (settings.name) {
@@ -277,8 +287,19 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
                 ApiReviews(api!, admitted),
                 prefill: ReviewPrefill.tryFromRoute(settings.arguments),
               );
+            case '/emotion':
+              final origin = settings.arguments;
+              return EmotionEntryRoute(
+                api: api!,
+                scope: admitted,
+                origin: origin is EmotionEntryOrigin ? origin : null,
+              );
             case '/membership':
-              return MemberPage(MemberStore(api!, admitted));
+              return MemberPage(
+                MemberStore(api!, admitted),
+                onOpenEmotion: () =>
+                    openEmotion(context, EmotionEntryOrigin.membership),
+              );
             case '/voice':
               return Consumer(
                 builder: (context, ref, _) => ref
@@ -288,6 +309,8 @@ class _HighEqAppState extends ConsumerState<HighEqApp> {
                         api: api!,
                         scope: admitted,
                         gate: gate,
+                        onOpenEmotion: () =>
+                            openEmotion(context, EmotionEntryOrigin.voice),
                       ),
                       loading: () => const Scaffold(
                         body: Center(child: CircularProgressIndicator()),

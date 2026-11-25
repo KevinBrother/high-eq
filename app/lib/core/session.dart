@@ -776,9 +776,14 @@ class Sessions {
     });
   }
 
-  Future<void> rotate(AccountScope scope, Tokens tokens) => _serial(() async {
+  Future<void> rotate(
+    AccountScope scope,
+    Tokens tokens, {
+    void Function()? checkCurrent,
+  }) => _serial(() async {
     require(scope);
     if (tokens.account != scope.account) throw SessionChanged();
+    checkCurrent?.call();
     await _persistRaw(tokens, _key!);
     require(scope);
     _tokens = tokens;

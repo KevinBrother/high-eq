@@ -208,6 +208,13 @@ class HomeShell extends StatelessWidget {
                       const PrivacyEntryTile(),
                       ListTile(
                         contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.insights_outlined),
+                        title: const Text('情绪辅助与本人汇总'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.pushNamed(context, '/emotion'),
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
                         leading: const Icon(Icons.monitor_heart_outlined),
                         title: const Text('健康数据'),
                         trailing: const Icon(Icons.chevron_right),

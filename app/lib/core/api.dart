@@ -58,11 +58,23 @@ final class LogoutResult {
 
 enum _UnauthorizedPolicy { standard, preserveOnRefreshFailure, healthGate }
 
+class _RefreshRound {
+  _RefreshRound(
+    this.issuedRefreshToken, {
+    required this.retainSuccessfulRefresh,
+  });
+
+  final String issuedRefreshToken;
+  bool retainSuccessfulRefresh;
+  final waiters = <void Function()?>[];
+  late final Future<void> done;
+}
+
 class AppApi {
   final Uri origin;
   final Transport transport;
   final Sessions sessions;
-  final _refreshing = <AccountScope, Future<void>>{};
+  final _refreshing = <AccountScope, _RefreshRound>{};
   AppApi(this.origin, this.transport, this.sessions);
   static const _timeout = Duration(seconds: 20);
   static const healthQueueKey = Sessions.healthQueueKey;
@@ -215,31 +227,85 @@ class AppApi {
     } while (cursor != null);
   }
 
-  Future<void> _refresh(AccountScope scope) =>
-      _refreshing.putIfAbsent(scope, () async {
+  Future<void> _refresh(
+    AccountScope scope, {
+    void Function()? checkCurrent,
+    bool retainSuccessfulRefresh = false,
+  }) {
+    checkCurrent?.call();
+    final existing = _refreshing[scope];
+    if (existing != null) {
+      existing.waiters.add(checkCurrent);
+      existing.retainSuccessfulRefresh |= retainSuccessfulRefresh;
+      return existing.done;
+    }
+    final round = _RefreshRound(
+      sessions.require(scope).refresh,
+      retainSuccessfulRefresh: retainSuccessfulRefresh,
+    )..waiters.add(checkCurrent);
+    _refreshing[scope] = round;
+    round.done = _runRefresh(scope, round);
+    return round.done;
+  }
+
+  Future<void> _runRefresh(AccountScope scope, _RefreshRound round) async {
+    void requireIssuedCredentials() {
+      final current = sessions.require(scope);
+      if (current.refresh != round.issuedRefreshToken) throw SessionChanged();
+    }
+
+    void requireLiveRound() {
+      requireIssuedCredentials();
+      Object? invalid;
+      StackTrace? invalidStack;
+      for (final check in round.waiters) {
         try {
-          final response = await _send(AppOp.refreshTokens, {}, {}, {
-            'refresh_token': sessions.require(scope).refresh,
-          }, null);
-          await _success(response, AppOp.refreshTokens);
-          final tokens = Tokens.fromJson(
-            jsonDecode(
-              await response.stream.bytesToString(utf8).timeout(_timeout),
-            ),
-          );
-          if (tokens.account != scope.account) {
-            throw const ApiFailure(401, 'unauthenticated', '请重新登录', false);
-          }
-          await sessions.rotate(scope, tokens);
-        } on ApiFailure catch (e) {
-          if (e.status == 401 && identical(sessions.active, scope)) {
-            await sessions.clearAfterUnauthorized(scope);
-          }
-          rethrow;
-        } finally {
-          _refreshing.remove(scope);
+          check?.call();
+          return;
+        } on Object catch (error, stack) {
+          invalid ??= error;
+          invalidStack ??= stack;
         }
-      });
+      }
+      if (invalid != null) Error.throwWithStackTrace(invalid, invalidStack!);
+      throw SessionChanged();
+    }
+
+    void requireSuccessfulRotation() {
+      if (round.retainSuccessfulRefresh) {
+        requireIssuedCredentials();
+      } else {
+        requireLiveRound();
+      }
+    }
+
+    try {
+      final response = await _send(AppOp.refreshTokens, {}, {}, {
+        'refresh_token': round.issuedRefreshToken,
+      }, null);
+      await _success(response, AppOp.refreshTokens);
+      final tokens = Tokens.fromJson(
+        jsonDecode(await response.stream.bytesToString(utf8).timeout(_timeout)),
+      );
+      if (tokens.account != scope.account) {
+        throw const ApiFailure(401, 'unauthenticated', '请重新登录', false);
+      }
+      requireSuccessfulRotation();
+      await sessions.rotate(
+        scope,
+        tokens,
+        checkCurrent: requireSuccessfulRotation,
+      );
+    } on ApiFailure catch (e) {
+      if (e.status == 401 && identical(sessions.active, scope)) {
+        requireLiveRound();
+        await sessions.clearAfterUnauthorized(scope);
+      }
+      rethrow;
+    } finally {
+      if (identical(_refreshing[scope], round)) _refreshing.remove(scope);
+    }
+  }
 
   Future<Never> _rejectUnauthorized(AccountScope scope) async {
     final active = sessions.active;
@@ -311,13 +377,19 @@ class AppApi {
     Future<void> Function()? beforeSend,
     void Function()? checkBeforeSend,
     Future<void>? abortTrigger,
+    void Function()? checkRequestCurrent,
+    bool retainSuccessfulRefresh = false,
     _UnauthorizedPolicy unauthorizedPolicy = _UnauthorizedPolicy.standard,
   }) async* {
     String? access;
     if (op.secured) {
       if (scope == null) throw SessionChanged();
       if (!sessions.require(scope).expires.isAfter(DateTime.now())) {
-        await _refresh(scope);
+        await _refresh(
+          scope,
+          checkCurrent: checkRequestCurrent,
+          retainSuccessfulRefresh: retainSuccessfulRefresh,
+        );
       }
       access = sessions.require(scope).access;
     }
@@ -327,6 +399,7 @@ class AppApi {
       // the token that is current after that suspension, not the pre-guard one.
       access = sessions.require(scope!).access;
     }
+    checkRequestCurrent?.call();
     checkBeforeSend?.call();
     var response = await _send(
       op,
@@ -340,8 +413,15 @@ class AppApi {
     // that proof and must never replay it or end an otherwise valid lease.
     if (op.secured && op != AppOp.freezeAccount && response.statusCode == 401) {
       await response.stream.listen(null).cancel();
+      checkRequestCurrent?.call();
       try {
-        if (sessions.require(scope!).access == access) await _refresh(scope);
+        if (sessions.require(scope!).access == access) {
+          await _refresh(
+            scope,
+            checkCurrent: checkRequestCurrent,
+            retainSuccessfulRefresh: retainSuccessfulRefresh,
+          );
+        }
       } on SessionChanged {
         rethrow;
       } catch (_) {
@@ -351,12 +431,14 @@ class AppApi {
             unauthorizedPolicy != _UnauthorizedPolicy.standard) {
           rethrow;
         }
+        checkRequestCurrent?.call();
         await _rejectUnauthorized(scope!);
       }
       // Token refresh can take long enough for consent or membership to change.
       // Recheck the caller's fail-closed condition before replaying any body.
       await beforeSend?.call();
       final replayAccess = sessions.require(scope).access;
+      checkRequestCurrent?.call();
       checkBeforeSend?.call();
       response = await _send(
         op,
@@ -369,6 +451,7 @@ class AppApi {
       if (response.statusCode == 401 &&
           unauthorizedPolicy != _UnauthorizedPolicy.healthGate) {
         await response.stream.listen(null).cancel();
+        checkRequestCurrent?.call();
         await _rejectUnauthorized(scope);
       }
     }
@@ -412,10 +495,20 @@ class AppApi {
     );
   }
 
+  /// [checkRequestCurrent] must be synchronous and available before any
+  /// preflight. It guards dispatch and credential work for requests whose
+  /// lifetime is shorter than the account lease, such as a summary screen.
+  ///
+  /// [retainSuccessfulRefresh] lets an already sent refresh commit its
+  /// successful rotation while the issuing login and refresh token are still
+  /// current. Dispatch, business replay, and logout on a refresh 401 continue
+  /// to require a current request.
   Future<Json> jsonGuarded(
     AppOp op, {
     required Future<void> Function() beforeSend,
     void Function()? checkBeforeSend,
+    void Function()? checkRequestCurrent,
+    bool retainSuccessfulRefresh = false,
     AccountScope? scope,
     Map<String, String> path = const {},
     Map<String, String> query = const {},
@@ -428,6 +521,8 @@ class AppApi {
     body: body,
     beforeSend: beforeSend,
     checkBeforeSend: checkBeforeSend,
+    checkRequestCurrent: checkRequestCurrent,
+    retainSuccessfulRefresh: retainSuccessfulRefresh,
   );
 
   Future<Json> _json(
@@ -438,6 +533,8 @@ class AppApi {
     Json? body,
     Future<void> Function()? beforeSend,
     void Function()? checkBeforeSend,
+    void Function()? checkRequestCurrent,
+    bool retainSuccessfulRefresh = false,
     _UnauthorizedPolicy unauthorizedPolicy = _UnauthorizedPolicy.standard,
   }) async {
     if (op.accept != 'application/json') throw ArgumentError('请使用流式接口');
@@ -450,6 +547,8 @@ class AppApi {
         body: body,
         beforeSend: beforeSend,
         checkBeforeSend: checkBeforeSend,
+        checkRequestCurrent: checkRequestCurrent,
+        retainSuccessfulRefresh: retainSuccessfulRefresh,
         unauthorizedPolicy: unauthorizedPolicy,
       ).transform(utf8.decoder).join(),
     );

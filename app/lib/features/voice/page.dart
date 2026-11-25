@@ -12,17 +12,20 @@ import 'store.dart';
 
 class VoicePage extends StatefulWidget {
   final VoiceController controller;
-  const VoicePage({super.key, required this.controller});
+  final VoidCallback? onOpenEmotion;
+  const VoicePage({super.key, required this.controller, this.onOpenEmotion});
 
   factory VoicePage.forAccount({
     Key? key,
     required AppApi api,
     required AccountScope scope,
     required ConsentGate gate,
+    VoidCallback? onOpenEmotion,
   }) {
     final platform = MethodChannelVoiceCapture();
     return VoicePage(
       key: key,
+      onOpenEmotion: onOpenEmotion,
       controller: VoiceController(
         sessions: api.sessions,
         scope: scope,
@@ -101,6 +104,19 @@ class _VoicePageState extends State<VoicePage> with WidgetsBindingObserver {
                 padding: const EdgeInsets.fromLTRB(20, 18, 20, 36),
                 children: [
                   _intro(context),
+                  if (widget.onOpenEmotion case final openEmotion?)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.insights_outlined),
+                      title: const Text('查看本人情绪汇总'),
+                      trailing: const Icon(Icons.chevron_right),
+                      enabled:
+                          !controller.isCapturing &&
+                          controller.status != VoiceStatus.starting &&
+                          controller.status != VoiceStatus.stopping &&
+                          controller.playingRecordingId == null,
+                      onTap: openEmotion,
+                    ),
                   const SizedBox(height: 16),
                   _captureCard(context),
                   const SizedBox(height: 14),
