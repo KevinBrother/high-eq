@@ -74,7 +74,9 @@ void main() {
     'tier': expiresAt == null ? 'free' : 'member',
     'expires_at': expiresAt?.toUtc().toIso8601String(),
     'auto_watch_alert_available': true,
-    'allowances': [],
+    'allowances': [
+      {'feature': 'practice', 'remaining': expiresAt == null ? 3 : null},
+    ],
   };
 
   Future<http.StreamedResponse> ordinary(AppOp op, http.Request req) async {
@@ -514,6 +516,56 @@ void main() {
     expect(count17, findsNothing);
     expect(find.text('我上头了'), findsOneWidget);
   });
+  testOnPhone(
+    'expired summary returns to the original member page and rechecks quota',
+    (tester) async {
+      await mount(tester);
+      await openMeFromPractice(tester);
+      await tapIn(tester, me, '会员与今日额度');
+      final unlimited = find.text('对练 · 不限次');
+      await pumpUntil(tester, unlimited);
+      await pumpUntil(tester, member);
+      final originalMember = tester.element(member);
+      await tapIn(tester, member, '查看本人情绪汇总');
+      await summaryCount(tester, count17);
+
+      expiresAt = null;
+      await tapIn(tester, summaryPage, '重新读取汇总');
+      await pumpUntil(tester, find.text('查看会员方案'));
+      final recheck = Completer<http.StreamedResponse>();
+      addTearDown(() {
+        if (!recheck.isCompleted) recheck.complete(response(rights()));
+      });
+      serve = (op, req) async =>
+          op == AppOp.getEntitlements ? recheck.future : ordinary(op, req);
+      final beforeReturn = calls.length;
+      final beforeHealth = List.of(healthCalls);
+      await tapVisible(tester, find.text('查看会员方案'));
+      await pumpUntil(tester, member);
+      expect(tester.element(member), same(originalMember));
+      expect(unlimited, findsNothing);
+      await pumpUntilCondition(
+        tester,
+        () => calls.length > beforeReturn,
+        reason: 'the member route must request fresh entitlements on return',
+      );
+
+      recheck.complete(response({'code': 'unavailable'}, 503));
+      await pumpUntil(tester, find.text('服务暂不可用，请重试。'));
+      expect(unlimited, findsNothing);
+      expect(find.text('对练 · 剩余 3 次'), findsNothing);
+      expect(calls.skip(beforeReturn), [AppOp.getEntitlements]);
+      expect(healthCalls, beforeHealth);
+      expect(voiceCalls, isEmpty);
+
+      serve = ordinary;
+      await tapIn(tester, member, '刷新权益');
+      await pumpUntil(tester, find.text('对练 · 剩余 3 次'));
+      await goBack(tester);
+      await pumpUntil(tester, me);
+    },
+  );
+
   testOnPhone('same login renews from the official membership tile', (
     tester,
   ) async {

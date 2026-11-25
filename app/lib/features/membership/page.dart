@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../core/api.dart';
 import '../../core/transport.dart';
@@ -14,33 +16,131 @@ class MemberPage extends StatefulWidget {
 
 class _MemberState extends State<MemberPage> with WidgetsBindingObserver {
   Json? rights;
+  Object? _rightsRequest;
+  bool _currentRoute = false;
+  late bool _foreground;
   bool busy = false, conflict = false;
   String plan = 'monthly';
   String? message;
+
+  bool _sameAccount(MemberStore store) =>
+      mounted &&
+      identical(store.api, widget.store.api) &&
+      identical(store.scope, widget.store.scope) &&
+      identical(store.api.sessions.active, store.scope);
+
+  bool get _canRead =>
+      _currentRoute && _foreground && _sameAccount(widget.store);
+
   @override
   void initState() {
     super.initState();
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    _foreground = lifecycle == null || lifecycle == AppLifecycleState.resumed;
     WidgetsBinding.instance.addObserver(this);
-    run(load);
+    widget.store.api.sessions.identity.addListener(_identityChanged);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final current = ModalRoute.isCurrentOf(context) ?? true;
+    if (_currentRoute == current) return;
+    _currentRoute = current;
+    _recheckVisibility();
+  }
+
+  @override
+  void didUpdateWidget(covariant MemberPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldStore = oldWidget.store;
+    final store = widget.store;
+    if (identical(oldStore.scope, store.scope) &&
+        identical(oldStore.api, store.api)) {
+      return;
+    }
+    oldStore.api.sessions.identity.removeListener(_identityChanged);
+    store.api.sessions.identity.addListener(_identityChanged);
+    _identityChanged();
   }
 
   @override
   void dispose() {
+    widget.store.api.sessions.identity.removeListener(_identityChanged);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState s) {
-    if (s == AppLifecycleState.resumed && !busy) run(load);
+    final foreground = s == AppLifecycleState.resumed;
+    if (foreground == _foreground) return;
+    _foreground = foreground;
+    _recheckVisibility();
   }
 
-  Future<void> load() async {
-    rights = await widget.store.rights();
+  void _identityChanged() {
+    setState(() {
+      busy = false;
+      message = null;
+      conflict = false;
+    });
+    _recheckVisibility();
+  }
+
+  void _recheckVisibility() {
+    if (_canRead) {
+      unawaited(load());
+    } else {
+      setState(() {
+        rights = null;
+        _rightsRequest = null;
+      });
+    }
+  }
+
+  static bool _isActiveMember(Json snapshot) {
+    final expiresAt = snapshot['expires_at'];
+    return snapshot['tier'] == 'member' &&
+        expiresAt is String &&
+        (DateTime.tryParse(expiresAt)?.isAfter(DateTime.now()) ?? false);
+  }
+
+  Future<void> load({bool keepMessage = false}) async {
+    if (!_canRead) return;
+    final request = Object();
+    final store = widget.store;
+    setState(() {
+      _rightsRequest = request;
+      rights = null;
+      if (!keepMessage && !busy) {
+        message = null;
+        conflict = false;
+      }
+    });
+    try {
+      final snapshot = await store.rights();
+      if (!_canRead || !identical(_rightsRequest, request)) return;
+      setState(() {
+        _rightsRequest = null;
+        if (snapshot['tier'] == 'free' || _isActiveMember(snapshot)) {
+          rights = snapshot;
+        } else {
+          message = '暂时无法确认当前权益，请刷新重试。';
+        }
+      });
+    } catch (e) {
+      if (!_canRead || !identical(_rightsRequest, request)) return;
+      setState(() {
+        _rightsRequest = null;
+        message = friendlyError(e);
+      });
+    }
   }
 
   Future<void> run(Future<void> Function() action) async {
-    if (busy) return;
+    if (busy || !_canRead) return;
+    final store = widget.store;
     setState(() {
       busy = true;
       message = null;
@@ -49,6 +149,7 @@ class _MemberState extends State<MemberPage> with WidgetsBindingObserver {
     try {
       await action();
     } catch (e) {
+      if (!_sameAccount(store)) return;
       if (e is ApiFailure && e.status == 409) {
         conflict = true;
         message = '交易属于其他账号。请验证并登录原购买账号，再恢复购买；权益不会转移。';
@@ -56,34 +157,37 @@ class _MemberState extends State<MemberPage> with WidgetsBindingObserver {
         message = friendlyError(e);
       }
     } finally {
-      if (mounted) setState(() => busy = false);
+      if (_sameAccount(store)) setState(() => busy = false);
     }
   }
 
   Future<void> purchase(String channel, {bool restore = false}) async {
     final store = widget.store;
+    final String result;
     if (channel == 'apple') {
       final found = await store.apple(plan: restore ? null : plan);
-      message = found ? '交易已交由服务端核验，权益以查询结果为准。' : '没有找到可恢复的交易。';
+      result = found ? '交易已交由服务端核验，权益以查询结果为准。' : '没有找到可恢复的交易。';
     } else {
       await store.android(channel, plan);
-      message = '已发起支付，返回后请刷新确认到账。';
+      result = '已发起支付，返回后请刷新确认到账。';
     }
-    await load();
+    if (!_sameAccount(store)) return;
+    message = result;
+    await load(keepMessage: true);
   }
 
   @override
   Widget build(BuildContext context) {
     final ios = Theme.of(context).platform == TargetPlatform.iOS;
-    final r = rights;
-    final member =
-        r?['tier'] == 'member' &&
-        (DateTime.tryParse(r?['expires_at'] ?? '')?.isAfter(DateTime.now()) ??
-            false);
+    final snapshot = rights;
+    final member = snapshot != null && _isActiveMember(snapshot);
+    final r = _canRead && (member || snapshot?['tier'] == 'free')
+        ? snapshot
+        : null;
     return FlowSurface(
       widget.store.port.demo ? '会员手记   /   契约模拟 · 不扣款' : '会员手记   /   跨平台权益',
-      member ? '你的会员空间' : '让练习更贴近自己',
-      busy: busy,
+      member && r != null ? '你的会员空间' : '让练习更贴近自己',
+      busy: busy || _rightsRequest != null,
       message: message,
       [
         if (conflict)
@@ -95,9 +199,11 @@ class _MemberState extends State<MemberPage> with WidgetsBindingObserver {
         const Text('免费也可使用自评与雷达、小练习、卡片、通用计划和 1 位关系人。手动标记和查看记录不扣 AI 次数。'),
         const Divider(height: 32),
         Text('今日额度', style: Theme.of(context).textTheme.titleLarge),
-        if (r != null)
+        if (_rightsRequest != null)
+          const Text('正在确认当前权益…')
+        else if (r != null)
           for (final a in r['allowances']) QuotaLine(a),
-        TextButton(onPressed: () => run(load), child: const Text('刷新权益')),
+        TextButton(onPressed: load, child: const Text('刷新权益')),
         const Divider(height: 32),
         Text('会员包含什么', style: Theme.of(context).textTheme.titleLarge),
         const Text(
@@ -144,7 +250,7 @@ class _MemberState extends State<MemberPage> with WidgetsBindingObserver {
               onPressed: () => run(() => purchase('alipay')),
               child: const Text('支付宝支付'),
             ),
-            TextButton(onPressed: () => run(load), child: const Text('恢复账号权益')),
+            TextButton(onPressed: load, child: const Text('恢复账号权益')),
           ],
         ],
       ],

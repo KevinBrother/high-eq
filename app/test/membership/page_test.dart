@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -30,6 +31,28 @@ class _Rights extends MemberStore {
       throw const ApiFailure(409, 'conflict', '不属于当前账号', false);
 }
 
+class _DeferredRights extends MemberStore {
+  _DeferredRights(super.api, super.scope);
+  final requests = <Completer<Json>>[];
+
+  @override
+  Future<Json> rights() {
+    final request = Completer<Json>();
+    requests.add(request);
+    return request.future;
+  }
+}
+
+Json _quota(int? remaining) => {
+  'tier': remaining == null ? 'member' : 'free',
+  'expires_at': remaining == null
+      ? DateTime.now().add(const Duration(hours: 1)).toIso8601String()
+      : null,
+  'allowances': [
+    {'feature': 'practice', 'remaining': remaining},
+  ],
+};
+
 void main() {
   late Sessions session;
   late AccountScope a;
@@ -39,6 +62,56 @@ void main() {
     session = Sessions(MemorySecret(), dir);
     a = await session.activate(tokens('A'));
   });
+  testWidgets('resume rechecks quota while an older response is pending', (
+    t,
+  ) async {
+    final store = _DeferredRights(
+      AppApi(Uri.https('example.invalid'), ExampleTransport(), session),
+      a,
+    );
+    t.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await t.pumpWidget(MaterialApp(home: MemberPage(store)));
+    final olderRead = store.requests.single;
+    t.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await t.pump();
+    t.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await t.pump();
+    expect(store.requests, hasLength(2));
+    store.requests.last.complete(_quota(3));
+    await t.pumpAndSettle();
+    expect(find.text('对练 · 剩余 3 次'), findsOneWidget);
+
+    olderRead.complete(_quota(null));
+    await t.pumpAndSettle();
+    expect(find.text('对练 · 剩余 3 次'), findsOneWidget);
+    expect(find.text('对练 · 不限次'), findsNothing);
+  });
+
+  testWidgets('a new account lease cannot adopt a late member snapshot', (
+    t,
+  ) async {
+    final api = AppApi(
+      Uri.https('example.invalid'),
+      ExampleTransport(),
+      session,
+    );
+    final oldStore = _DeferredRights(api, a);
+    t.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await t.pumpWidget(MaterialApp(home: MemberPage(oldStore)));
+    final olderRead = oldStore.requests.single;
+
+    final b = (await t.runAsync(() => session.activate(tokens('B'))))!;
+    final newStore = _DeferredRights(api, b);
+    await t.pumpWidget(MaterialApp(home: MemberPage(newStore)));
+    expect(newStore.requests, hasLength(1));
+    newStore.requests.single.complete(_quota(3));
+    await t.pumpAndSettle();
+    olderRead.complete(_quota(null));
+    await t.pumpAndSettle();
+    expect(find.text('对练 · 剩余 3 次'), findsOneWidget);
+    expect(find.text('对练 · 不限次'), findsNothing);
+  });
+
   // Release has no matching approval. Neither review outcome nor a stale true
   // from the server can advertise the feature in this binary.
   for (final advertised in [false, true]) {
