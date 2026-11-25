@@ -267,11 +267,21 @@ func newPracticeWireWithContextAndFailureReporter(t *testing.T, ctx context.Cont
 		return id
 	}
 	m, b, mod := mk(gateway.Model, "primary"), mk(gateway.Model, "fallback"), mk(gateway.Moderation, "moderator")
-	// Release the fixture's global task routes before closing its runtime.
+	// The routes outlive Runtime restarts. Use a connection owned by cleanup.
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, err := h.s.db.Exec(ctx, `delete from model_routes
+		conn, err := pgx.Connect(ctx, cfg.DatabaseURL)
+		if err != nil {
+			t.Errorf("connect to clean up practice model routes: %v", err)
+			return
+		}
+		defer func() {
+			if err := conn.Close(ctx); err != nil {
+				t.Errorf("close practice model route cleanup connection: %v", err)
+			}
+		}()
+		_, err = conn.Exec(ctx, `delete from model_routes
 			where task in ('role_play', 'scoring')
 			  and primary_model=$1 and fallback_model=$2 and moderation_model=$3`, m, b, mod)
 		if err != nil {
