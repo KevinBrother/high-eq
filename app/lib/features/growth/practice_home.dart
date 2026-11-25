@@ -5,7 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/session.dart';
+import '../contacts/scene.dart';
 import '../home/shell.dart';
+import '../practice/providers.dart';
+import '../practice/repository.dart';
 import 'models.dart';
 import 'practice_home_actions.dart';
 import 'reminder_boundary.dart';
@@ -18,11 +21,12 @@ class PracticeHomeRoute extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final repository = ref.watch(growthRepositoryProvider);
+    final catalog = ref.watch(practiceRepositoryProvider);
     return HomeShell(
       Section.practice,
       content: repository == null
           ? const SessionTransitionPane(label: '正在重新载入练习首页…')
-          : PracticeHomePage(repository: repository),
+          : PracticeHomePage(repository: repository, catalog: catalog),
     );
   }
 }
@@ -31,10 +35,15 @@ class PracticeHomePage extends StatefulWidget {
   const PracticeHomePage({
     required this.repository,
     super.key,
+    this.catalog,
     this.now = DateTime.now,
   });
 
   final GrowthRepository repository;
+
+  /// Optional level catalog used to name pending retry rows. It is additive:
+  /// without it (or when the catalog fails) the plan still renders and opens.
+  final PracticeRepository? catalog;
   final DateTime Function() now;
 
   @override
@@ -47,6 +56,8 @@ class _PracticeHomePageState extends State<PracticeHomePage> {
   bool _loading = true;
   bool _offline = false;
   int _generation = 0;
+  int _nameGeneration = 0;
+  Map<String, String> _levelNames = const {};
   ValueListenable<int>? _invalidations;
   bool _suppressInvalidationReload = false;
 
@@ -60,9 +71,17 @@ class _PracticeHomePageState extends State<PracticeHomePage> {
   @override
   void didUpdateWidget(covariant PracticeHomePage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (identical(oldWidget.repository, widget.repository)) return;
+    if (identical(oldWidget.repository, widget.repository)) {
+      if (!identical(oldWidget.catalog, widget.catalog)) {
+        final snapshot = _snapshot;
+        if (snapshot != null) _resolveLevelNames(snapshot, _generation);
+      }
+      return;
+    }
     _stopListeningForInvalidation();
     _generation++;
+    _nameGeneration++;
+    _levelNames = const {};
     _snapshot = null;
     _error = null;
     _loading = true;
@@ -127,6 +146,7 @@ class _PracticeHomePageState extends State<PracticeHomePage> {
         _offline = false;
         _error = null;
       });
+      _resolveLevelNames(snapshot, generation);
     } on SessionChanged {
       if (!_isCurrent(generation, repository)) return;
       setState(() {
@@ -175,7 +195,42 @@ class _PracticeHomePageState extends State<PracticeHomePage> {
           _error = null;
         }
       });
+      if (cached != null) _resolveLevelNames(cached, generation);
     }
+  }
+
+  /// Adds the catalog title to pending retry rows so two same-day rows that
+  /// share the plan title can be told apart before opening them. Catalog
+  /// failures are ignored: the plan and its navigation never depend on this.
+  void _resolveLevelNames(GrowthSnapshot snapshot, int generation) {
+    final catalog = widget.catalog;
+    if (catalog == null) return;
+    final ids = {
+      for (final item in snapshot.plan.items)
+        if (item.kind == PlanKind.level && !item.completed) item.contentId,
+    };
+    if (ids.isEmpty) return;
+    final nameGeneration = ++_nameGeneration;
+    unawaited(() async {
+      final names = <String, String>{};
+      for (final scene in Scene.values) {
+        if (names.length == ids.length) break;
+        try {
+          for (final row in await catalog.levels(scene, null)) {
+            final id = row['id'];
+            final title = row['title'];
+            if (ids.contains(id) && title is String && title.trim().isNotEmpty) {
+              names[id] = title;
+            }
+          }
+        } catch (_) {
+          // Catalog title is enhancement only.
+        }
+      }
+      if (!mounted || nameGeneration != _nameGeneration) return;
+      if (generation != _generation || names.isEmpty) return;
+      setState(() => _levelNames = names);
+    }());
   }
 
   Future<void> _openItem(PlanItemData item) async {
@@ -308,7 +363,11 @@ class _PracticeHomePageState extends State<PracticeHomePage> {
                 ],
                 _reminder(snapshot),
                 const SizedBox(height: 16),
-                _PlanCard(snapshot: snapshot, onOpen: _openItem),
+                _PlanCard(
+                  snapshot: snapshot,
+                  levelNames: _levelNames,
+                  onOpen: _openItem,
+                ),
                 const SizedBox(height: 22),
                 PracticeContinueActions(onGo: _go),
                 const SizedBox(height: 26),
@@ -491,8 +550,13 @@ class _PracticeHeader extends StatelessWidget {
 }
 
 class _PlanCard extends StatelessWidget {
-  const _PlanCard({required this.snapshot, required this.onOpen});
+  const _PlanCard({
+    required this.snapshot,
+    required this.levelNames,
+    required this.onOpen,
+  });
   final GrowthSnapshot snapshot;
+  final Map<String, String> levelNames;
   final ValueChanged<PlanItemData> onOpen;
 
   @override
@@ -536,7 +600,11 @@ class _PlanCard extends StatelessWidget {
             )
           else
             for (final item in snapshot.plan.items)
-              _PlanTile(item: item, onTap: () => onOpen(item)),
+              _PlanTile(
+                item: item,
+                levelName: levelNames[item.contentId],
+                onTap: () => onOpen(item),
+              ),
         ],
       ),
     );
@@ -630,8 +698,13 @@ class _PlanTag extends StatelessWidget {
 }
 
 class _PlanTile extends StatelessWidget {
-  const _PlanTile({required this.item, required this.onTap});
+  const _PlanTile({
+    required this.item,
+    required this.levelName,
+    required this.onTap,
+  });
   final PlanItemData item;
+  final String? levelName;
   final VoidCallback onTap;
 
   @override
@@ -665,7 +738,13 @@ class _PlanTile extends StatelessWidget {
               fontWeight: FontWeight.w600,
             ),
           ),
-          subtitle: Text(item.completed ? '$label · 已完成' : label),
+          subtitle: Text(
+            item.completed
+                ? '$label · 已完成'
+                : levelName == null
+                ? label
+                : '$label · $levelName',
+          ),
           trailing: ExcludeSemantics(
             child: Icon(item.completed ? Icons.done : Icons.chevron_right),
           ),
