@@ -67,6 +67,25 @@ python3 -B app/tool/t27/history_journey.py --ledger-only \
 
 8.2.0 应输出 `PASS(redis.ledger-durability)` 并退出 `0`。7.0.15 应输出 `NOT RUN(redis.ledger-durability)` 并退出 `2`。随后将新二进制传给本页开头的完整旅程命令，核验 18 阶段和 `RESULT: PASS`。GitHub Actions 上还需取得客户端和旧 HTTP 检查的两个独立 `PASS`。
 
+## 四周复测旅程
+
+从仓库根目录运行，复用宿主机安装的 Go 1.26、缓存完整的 Flutter SDK、PostgreSQL 17 和两份 Redis 实例。入口复用 `history_journey.py` 的随机回环服务启动、账本 `WAITAOF` 预检与清理，只替换 Go 用例；`flutter` 和 `go` 从 PATH 解析，App 目录由仓库检出位置确定，不接受卡目录或 SDK 绝对路径。入口只接受 `--pg-bin` 与 `--redis`，拒绝 `--ledger-only` 等通用预检参数；退出 0 必然要求完整旅程、五个阶段回执和具名 Go／Flutter 通过。Go 用例只在 `integration && t27reassess` 且显式 `T27_DISPOSABLE=yes` 时运行，不带 `t27reassess` 的服务器回归不受影响。
+
+```sh
+bash app/tool/t27/verify_reassessment.sh \
+  --pg-bin /path/to/postgresql-17/bin \
+  --redis /path/to/redis-server
+```
+
+| 阶段 | 通过条件 |
+| --- | --- |
+| `page.journey` | 同一合成免费账号从正式成长页的「去复测」进入正式 `/assessment`，完成 16 题第二套答卷并提交，得到 75 分和「距下次可复测还有 28 天」。首次自评（SEA 0、OEA 17、UOE 83、ROE 100）与复测（100、100、100、0）的四维读屏值和总分变化全部核对，OEA/UOE 不会被互换。次日只检查「单项练习」实际计划行子树内的目录副标题。 |
+| `readback.assessments` | 正式导出 Hook 在只读事务内解密 PostgreSQL，确认同一账号恰有两份测评；答卷、题库版本、重算分数一致，首份 `completed_at` 是数据库时钟减 28 天的夹具，两份相差至少 672 小时，最弱维度从 SEA／观察变为 ROE／请求。 |
+| `readback.plan-kept` / `readback.plan-adjusted` | 同日旧计划仍关联首份测评并保留观察维度；换到相邻当地日后生成的下一份计划关联复测结果。 |
+| `journey` | 正式 `GET /v1/assessments?limit=2` 的最近/更早映射、四维 `percent/display/level`、所有维度均有变化、总分差 +25 与持久导出行全部一致；正式 `GET /v1/plans/today` 的单项关卡 `content_id` 与持久计划行精确相等，页面再只在同一「单项练习」行的子树内核对对应目录副标题。 |
+
+边界：首份测评的四周历史只改 `completed_at` 一个字段，不推进系统时钟，也不执行未满四周的拒绝请求；换日通过正式 `PATCH /v1/me` 调整账号时区，不模拟真实午夜、前台恢复或后台恢复；页面只在「单项练习」计划行子树内按正式目录标题核对，不比较雷达像素，也不逐项核对旧计划全文。真实 Apple 授权、真机、Android、外部模型和云上执行均不在本入口的证明范围内；CI 只接入同一窄测，实际云执行需以运行回执为准。
+
 ## 终稿宿主复验（2026-11-24）
 
 - **正式旅程已通过。** 宿主在独立的 PostgreSQL 17、缓存 Redis 和启用 AOF 的账本 Redis 上执行同一轮 `TestT27HistoryJourney`，覆盖上表的 100+1 条正式分页、缓存恢复、级联删除和删除前后画像接口。该轮同时输出 `PASS(page.journey)`、`PASS(service.delete-cascade)`、`PASS(service.contact-summary-before)`、`PASS(service.contact-summary-after)`、`PASS(journey)` 和 `RESULT: PASS`。

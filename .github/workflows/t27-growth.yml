@@ -13,6 +13,7 @@ on:
       - 'app/test/marks/book_test.dart'
       - 'app/test/practice/**'
       - 'app/test/support/**'
+      - 'app/tool/t26/transport.dart'
       - 'app/tool/t27/**'
       - 'docs/api/app.yaml'
       - 'server/internal/**'
@@ -37,6 +38,7 @@ on:
       - 'app/test/marks/book_test.dart'
       - 'app/test/practice/**'
       - 'app/test/support/**'
+      - 'app/tool/t26/transport.dart'
       - 'app/tool/t27/**'
       - 'docs/api/app.yaml'
       - 'server/internal/**'
@@ -131,6 +133,13 @@ jobs:
         run: |
           python3 -B app/tool/t27/ci_check.py history python3 app/tool/t27/history_journey.py \
             --pg-bin /usr/lib/postgresql/17/bin --redis "$RUNNER_TEMP/t27-redis/redis-server"
+      - name: Four-week reassessment journey
+        id: reassessment
+        if: ${{ !cancelled() && steps.flutter_deps.outcome == 'success' && steps.go_modules.outcome == 'success' && steps.native_stack.outcome == 'success' }}
+        run: |
+          bash app/tool/t27/verify_reassessment.sh \
+            --pg-bin /usr/lib/postgresql/17/bin \
+            --redis "$RUNNER_TEMP/t27-redis/redis-server"
       - name: T27 verification summary
         if: ${{ always() }}
         env:
@@ -142,6 +151,7 @@ jobs:
           HISTORY_RECEIPT: ${{ steps.history.outputs.receipt }}
           HISTORY_STAGE: ${{ steps.history.outputs.stage }}
           HISTORY_DELETE_HTTP: ${{ steps.history.outputs.delete_http }}
+          REASSESSMENT_OUTCOME: ${{ steps.reassessment.outcome }}
         run: |
           all_passed=true
           record() {
@@ -165,6 +175,7 @@ jobs:
             record 'Flutter regressions and manual deletion check' "$CLIENT_OUTCOME" "$CLIENT_RECEIPT"
             record 'Original growth HTTP journey' "$LEGACY_OUTCOME" "$LEGACY_RECEIPT"
             record 'Formal 100+1 history, cache recovery, deletion cascade and contact summary' "$HISTORY_OUTCOME" "$HISTORY_RECEIPT" "$HISTORY_STAGE"
+            record 'Four-week reassessment, two weakest dimensions and next-day plan' "$REASSESSMENT_OUTCOME" PASS
             if [[ -n "$HISTORY_DELETE_HTTP" ]]; then
               echo
               printf 'Formal DELETE HTTP receipt: `%s`\n' "$HISTORY_DELETE_HTTP"
