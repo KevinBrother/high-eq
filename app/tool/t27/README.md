@@ -86,6 +86,31 @@ bash app/tool/t27/verify_reassessment.sh \
 
 边界：首份测评的四周历史只改 `completed_at` 一个字段，不推进系统时钟，也不执行未满四周的拒绝请求；换日通过正式 `PATCH /v1/me` 调整账号时区，不模拟真实午夜、前台恢复或后台恢复；页面只在「单项练习」计划行子树内按正式目录标题核对，不比较雷达像素，也不逐项核对旧计划全文。真实 Apple 授权、真机、Android、外部模型和云上执行均不在本入口的证明范围内；CI 只接入同一窄测，实际云执行需以运行回执为准。
 
+## 断卡成就保留旅程
+
+从仓库根目录运行，复用宿主机安装的 Go 1.26、缓存完整的 Flutter SDK、PostgreSQL 17 和两份 Redis 实例。入口复用 `history_journey.py` 的一次性服务启动、账本 `WAITAOF` 预检和清理，只替换 Go 用例；`flutter` 和 `go` 从 PATH 解析，App 目录由仓库检出位置确定，不接受卡目录或 SDK 绝对路径。入口只接受 `--pg-bin` 与 `--redis`，退出 `0` 必然要求完整旅程、十一个阶段回执和具名 Go／Flutter 通过。Go 用例只在 `integration && t27streak` 且显式 `T27_DISPOSABLE=yes`、`T19_DISPOSABLE=yes` 时运行；不带 `t27streak` 的服务器回归不编译此文件。
+
+```sh
+bash app/tool/t27/verify_retained_milestones.sh \
+  --pg-bin /path/to/postgresql-17/bin \
+  --redis /path/to/redis-server
+```
+
+| 阶段 | 通过条件 |
+| --- | --- |
+| `service.seeded-history` | 正式 HTTP 提交一份合成自评并生成今天的计划。唯一夹具是 30 个连续完成日的 `daily_plans` 行，末日为今天前两天，今天前一天完整未打卡。每行用生产字段密钥按生产 stored-plan 形状封装，含四个真实计划项、一个已完成的免费小练习和当地正午的 `completed_at`；生产计划导出在旅程开始前成功打开全部 31 份计划。 |
+| `service.retained-before` | 正式 `GET /v1/growth` 返回当前连续 `0` 天和 `[3,7,30]`；正式 `GET /v1/plans/today` 仍是四项皆未完成。没有改系统时钟，也没有把成就写进 API 响应或 UI 缓存。 |
+| `page.retained-milestones` | 正式 Flutter 练习首页显示「连续 0 天」、`0 / 4 已完成`，三个成就节点都是「已达成」，且没有「新成就解锁」弹窗。 |
+| `page.practice-strip` | 在练习首页用普通拖动把「坚持的痕迹」阶段区滚入视口；三个阶段文字都命中可点击视口，真实渲染树中每枚都是已获得分支（`Icons.workspace_premium` + `tertiaryContainer`），阶段区内没有锁图标或未获得底色。 |
+| `page.growth-retained` | 通过底部导航「成长」打开正式成长档案，普通拖动把「阶段成就」区滚入视口；「当前连续 0 天」，3/7/30 都按已获得分支真实渲染且可见，不是只找到离屏语义节点或标题。 |
+| `page.today-completion` | 在正式页面点开「读人练习」，选择一项、核对解析后点「完成今日练习」。页面显示「已打卡 · 连续 1 天」和 `1 / 4 已完成`，旧 3/7/30 仍在且没有弹出旧成就。 |
+| `page.cold-reopen` | 用全新空目录的 `Sessions` 和全新 ProviderScope 冷重开同一账号，重新登录后仍读回「连续 1 天」、`1 / 4 已完成`、已完成的读人小练习和三个已达成成就；阶段区滚入视口后仍按已获得分支渲染。结果不来自第一个页面的加密缓存。 |
+| `page.growth-cold-reopen` | 冷重开后再次通过底部导航打开正式成长档案，滚入「阶段成就」区核「当前连续 1 天」和 3/7/30 的已获得渲染；与断卡后首次打开的成长档案证据相互独立。 |
+| `service.today-once` / `service.retained-after` | 生产导出确认历史 30 行逐字节未改写，今天只有一行计划且恰好一个已完成项（免费小练习），`completed_at` 已落盘。正式 `GET /v1/growth` 返回连续 `1` 天和 `[3,7,30]`，`GET /v1/plans/today` 只有一个已完成项。 |
+| `journey` | 以上全部通过后才输出。 |
+
+边界：历史 3/7/30 是数据库夹具，不是自然连续 30 天的真实使用记录；今天的一天由正式页面的真实免费完成产生。不推进系统时钟，不模拟真实午夜或跨时区，不覆盖越权、换号、健康、模型、支付或真机。账号时区选在距离当地午夜最远的位置，避免测试期间跨日。`3` 和 `7` 阶段由同一 30 天连续段覆盖，不另造两段历史。两页证据都从正式导航、正式仓储和真实渲染树取得，未新增产品标记、改色值或绕过路由。
+
 ## 终稿宿主复验（2026-11-24）
 
 - **正式旅程已通过。** 宿主在独立的 PostgreSQL 17、缓存 Redis 和启用 AOF 的账本 Redis 上执行同一轮 `TestT27HistoryJourney`，覆盖上表的 100+1 条正式分页、缓存恢复、级联删除和删除前后画像接口。该轮同时输出 `PASS(page.journey)`、`PASS(service.delete-cascade)`、`PASS(service.contact-summary-before)`、`PASS(service.contact-summary-after)`、`PASS(journey)` 和 `RESULT: PASS`。
