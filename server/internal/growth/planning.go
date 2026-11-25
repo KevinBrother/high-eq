@@ -129,8 +129,12 @@ func (s *PlanService) Today(ctx context.Context, tx pgx.Tx, user uuid.UUID) (Pla
 	if err != nil {
 		return Plan{}, err
 	}
-	if p, ok, err := s.readDayPlan(ctx, tx, user, day); err != nil || ok {
-		return p, err
+	if p, ok, err := s.readDayPlan(ctx, tx, user, day); err != nil {
+		return Plan{}, err
+	} else if ok {
+		// The day's plan may have been opened before a retry deadline passed.
+		// Reconcile the due review into that same plan instead of rebuilding it.
+		return s.attachDueReview(ctx, tx, user, day, p, now)
 	}
 	var assessmentID uuid.UUID
 	err = tx.QueryRow(ctx, `select id from assessments where user_id=$1 order by completed_at desc,id desc limit 1`, user).Scan(&assessmentID)
@@ -145,6 +149,86 @@ func (s *PlanService) Today(ctx context.Context, tx pgx.Tx, user uuid.UUID) (Pla
 		return Plan{}, err
 	}
 	return s.generatePlan(ctx, tx, user, assessmentID, result, now, true)
+}
+
+// attachDueReview reconciles every retry that became due after the day's plan
+// was first opened. It appends a dedicated review item per outstanding source
+// instead of replacing the ordinary items already sent to the client, so
+// early-selected sessions still complete and count. Due sources never block
+// each other: a later deadline on the same local day is appended by a later
+// GET. Day, assessment, completed items and check-in stay untouched, and
+// repeated GETs are idempotent.
+func (s *PlanService) attachDueReview(ctx context.Context, tx pgx.Tx, user uuid.UUID, day string, plan Plan, now time.Time) (Plan, error) {
+	reviews, err := s.dueReviews(ctx, tx, user, now)
+	if err != nil {
+		return Plan{}, err
+	}
+	if len(reviews) == 0 {
+		return plan, nil
+	}
+	// Re-read under the row lock so a concurrent real completion or another GET
+	// cannot be overwritten with a stale plan.
+	var sealed []byte
+	err = tx.QueryRow(ctx, `select plan_enc from daily_plans where user_id=$1 and plan_day=$2 for update`, user, day).Scan(&sealed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return plan, nil
+	}
+	if err != nil {
+		return Plan{}, err
+	}
+	locked, err := s.openPlan(sealed, user, day)
+	if err != nil {
+		return Plan{}, err
+	}
+	changed := false
+	for _, review := range reviews {
+		skip := false
+		for i := range locked.Items {
+			item := &locked.Items[i]
+			if item.ReviewActivityID != nil && *item.ReviewActivityID == review.ActivityID {
+				skip = true
+				break
+			}
+			if item.Kind == KindLevel && item.ContentID == review.LevelID {
+				// The due level is already reachable in this plan (ordinary single,
+				// full session or another due source). Reusing it keeps identity
+				// stable and avoids duplicate content.
+				skip = true
+				break
+			}
+			if item.ID == PlanItemID(user, day, KindLevel, review.LevelID) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		// Append a dedicated review item instead of replacing the ordinary level
+		// already sent to the client. Its deterministic identity matches a review
+		// item generated in a fresh plan for the same user/day/level.
+		activityID := review.ActivityID
+		locked.Items = append(locked.Items, PlanItem{
+			ID:               PlanItemID(user, day, KindLevel, review.LevelID),
+			Kind:             KindLevel,
+			Title:            "单项练习",
+			ContentID:        review.LevelID,
+			Review:           true,
+			ReviewActivityID: &activityID,
+		})
+		changed = true
+	}
+	if !changed {
+		return locked, nil
+	}
+	sealed, err = s.sealPlan(locked, user, day)
+	if err != nil {
+		return Plan{}, err
+	}
+	if _, err = tx.Exec(ctx, `update daily_plans set plan_enc=$3 where user_id=$1 and plan_day=$2`, user, day, sealed); err != nil {
+		return Plan{}, err
+	}
+	return locked, nil
 }
 
 func (s *PlanService) CompleteItem(ctx context.Context, tx pgx.Tx, user, itemID uuid.UUID) (PlanProgress, error) {
@@ -419,22 +503,37 @@ func (s *PlanService) planScene(ctx context.Context, tx pgx.Tx, user uuid.UUID, 
 }
 
 func (s *PlanService) dueReview(ctx context.Context, tx pgx.Tx, user uuid.UUID, at time.Time) (*drillReview, error) {
-	var out drillReview
-	err := tx.QueryRow(ctx, `select d.activity_id,d.level_id,d.target_item
+	reviews, err := s.dueReviews(ctx, tx, user, at)
+	if err != nil || len(reviews) == 0 {
+		return nil, err
+	}
+	return &reviews[0], nil
+}
+
+// dueReviews returns every independently due, unclosed source in deadline
+// order. Existing plans must surface all of them, not just the earliest.
+func (s *PlanService) dueReviews(ctx context.Context, tx pgx.Tx, user uuid.UUID, at time.Time) ([]drillReview, error) {
+	rows, err := tx.Query(ctx, `select d.activity_id,d.level_id,d.target_item
 from growth_drill_schedules d join activities a on a.id=d.activity_id and a.kind='drill'
 where a.user_id=$1 and a.state='complete' and d.retry_at is not null and d.retry_at<=$2
   and d.closed_at is null
-order by d.retry_at,d.activity_id limit 1`, user, at).Scan(&out.ActivityID, &out.LevelID, &out.Focus)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
+order by d.retry_at,d.activity_id`, user, at)
 	if err != nil {
 		return nil, err
 	}
-	if out.ActivityID == uuid.Nil || out.LevelID == uuid.Nil || !validFocus(out.Focus) {
-		return nil, ErrInvalid
+	defer rows.Close()
+	var out []drillReview
+	for rows.Next() {
+		var v drillReview
+		if err := rows.Scan(&v.ActivityID, &v.LevelID, &v.Focus); err != nil {
+			return nil, err
+		}
+		if v.ActivityID == uuid.Nil || v.LevelID == uuid.Nil || !validFocus(v.Focus) {
+			return nil, ErrInvalid
+		}
+		out = append(out, v)
 	}
-	return &out, nil
+	return out, rows.Err()
 }
 
 func (s *PlanService) usedContent(ctx context.Context, tx pgx.Tx, user uuid.UUID, day string) (map[uuid.UUID]bool, map[uuid.UUID]bool, error) {

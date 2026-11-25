@@ -129,11 +129,26 @@ func (p *Plan) retractPractices(deleted map[uuid.UUID]bool, at *time.Time) (*tim
 		removedCheckIn = removedCheckIn || at != nil && at.Equal(v.At)
 		return true
 	})
+	// A review that replaced the plan's single-practice slot keeps the item and
+	// merely loses its link. An appended review was never an ordinary item, so
+	// deleting its source must remove it rather than leave a fake normal item.
+	firstLevel := -1
 	for i := range p.Items {
-		item := &p.Items[i]
+		if p.Items[i].Kind == KindLevel {
+			firstLevel = i
+			break
+		}
+	}
+	kept := p.Items[:0]
+	for i := range p.Items {
+		item := p.Items[i]
 		if item.ReviewActivityID != nil && deleted[*item.ReviewActivityID] {
-			item.Review, item.ReviewActivityID = false, nil
 			changed = true
+			if i == firstLevel {
+				item.Review, item.ReviewActivityID = false, nil
+			} else {
+				continue
+			}
 		}
 		if affectedItems[item.ID] {
 			item.Completed = slices.ContainsFunc(p.completion.Practices, func(v practiceCompletion) bool {
@@ -141,7 +156,9 @@ func (p *Plan) retractPractices(deleted map[uuid.UUID]bool, at *time.Time) (*tim
 			})
 			changed = true
 		}
+		kept = append(kept, item)
 	}
+	p.Items = kept
 	if len(affectedItems) != 0 && (at == nil || removedCheckIn || !p.hasCompletedItem()) {
 		at = p.completion.earliest()
 	}

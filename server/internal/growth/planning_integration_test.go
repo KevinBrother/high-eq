@@ -521,6 +521,145 @@ func TestOutOfOrderDrillCompletesOriginalDayWithoutReopeningSchedule(t *testing.
 	}
 }
 
+func TestTodayAttachesReviewAfterPlanOpenedBeforeDeadline(t *testing.T) {
+	f := setupPlanning(t, membership.ErrForbidden)
+	user := f.user()
+	assessmentID := f.assessment(user, time.Now().UTC().Add(-2*time.Hour), 80)
+
+	// The user opens today's ordinary plan before the retry is due.
+	first := f.today(user)
+	if first.AssessmentID == nil || *first.AssessmentID != assessmentID {
+		t.Fatalf("first plan=%+v", first)
+	}
+	if _, count := reviewItem(first); count != 0 {
+		t.Fatalf("first plan already has a review: %+v", first)
+	}
+	exercise := first.Items[0]
+	f.complete(user, exercise.ID)
+	checkin := f.planCompletedAt(user, first.Day)
+	if checkin == nil {
+		t.Fatal("exercise check-in did not complete the day")
+	}
+
+	level := uuid.New()
+	completedAt := time.Now().UTC().Add(-71 * time.Hour) // retry still ~1h away
+	source := f.createDrill(user, 10, completedAt.Add(-time.Hour), completedAt, level)
+	if err := f.publishDrill(user, source); err != nil {
+		t.Fatal(err)
+	}
+	if plan := f.today(user); len(plan.Items) != 4 {
+		t.Fatalf("plan changed before deadline: %+v", plan)
+	} else if _, count := reviewItem(plan); count != 0 {
+		t.Fatalf("review attached before deadline: %+v", plan)
+	}
+
+	// Same local day, exactly at the persisted deadline.
+	if _, err := f.db.Exec(f.ctx, `update growth_drill_schedules set retry_at=clock_timestamp() where activity_id=$1`, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	due := f.today(user)
+	review, count := reviewItem(due)
+	if count != 1 || review.Kind != KindLevel || review.ContentID != level || review.ReviewActivityID == nil || *review.ReviewActivityID != source.ID {
+		t.Fatalf("due plan review=%+v plan=%+v", review, due)
+	}
+	if due.Day != first.Day || due.AssessmentID == nil || *due.AssessmentID != assessmentID || len(due.Items) != 5 {
+		t.Fatalf("due plan lost identity: first=%+v due=%+v", first, due)
+	}
+	// The read exercise was completed after the first snapshot, so identity,
+	// content and review fields must match while its Completed flag is now true.
+	for i := range first.Items {
+		g, w := due.Items[i], first.Items[i]
+		if g.ID != w.ID || g.Kind != w.Kind || g.Title != w.Title || g.ContentID != w.ContentID || g.Review != w.Review || (g.ReviewActivityID == nil) != (w.ReviewActivityID == nil) {
+			t.Fatalf("ordinary item %d replaced: got=%+v want=%+v", i, g, w)
+		}
+		if i == 0 && !g.Completed {
+			t.Fatalf("completed exercise flag lost: %+v", g)
+		}
+		if i != 0 && g.Completed != w.Completed {
+			t.Fatalf("ordinary item %d completion changed: got=%+v want=%+v", i, g, w)
+		}
+	}
+	if got := f.planCompletedAt(user, due.Day); got == nil || !got.Equal(*checkin) {
+		t.Fatalf("check-in changed: got=%v want=%v", got, checkin)
+	}
+
+	// Repeated GET stays idempotent.
+	again := f.today(user)
+	againReview, againCount := reviewItem(again)
+	if againCount != 1 || againReview.ID != review.ID || *againReview.ReviewActivityID != *review.ReviewActivityID || len(again.Items) != 5 {
+		t.Fatalf("repeated GET changed review: %+v", again)
+	}
+	for i := range first.Items {
+		g, w := again.Items[i], due.Items[i]
+		if g.ID != w.ID || g.ContentID != w.ContentID || g.Review != w.Review || g.Completed != w.Completed {
+			t.Fatalf("repeated GET changed ordinary item %d: got=%+v want=%+v", i, g, w)
+		}
+	}
+	if got := f.planCompletedAt(user, again.Day); got == nil || !got.Equal(*checkin) {
+		t.Fatalf("repeated GET changed check-in: %v", got)
+	}
+
+	// A second distinct source whose deadline lands later the same local day
+	// must become visible on its own GET without hiding the first review.
+	laterLevel := uuid.New()
+	laterAt := time.Now().UTC().Add(-71 * time.Hour)
+	laterSource := f.createDrill(user, 10, laterAt.Add(-time.Hour), laterAt, laterLevel)
+	if err := f.publishDrill(user, laterSource); err != nil {
+		t.Fatal(err)
+	}
+	if plan := f.today(user); len(plan.Items) != 5 || len(reviewsOf(plan)) != 1 {
+		t.Fatalf("second source arrived early: %+v", plan)
+	}
+	if _, err := f.db.Exec(f.ctx, `update growth_drill_schedules set retry_at=clock_timestamp() where activity_id=$1`, laterSource.ID); err != nil {
+		t.Fatal(err)
+	}
+	both := f.today(user)
+	bothReviews := reviewsOf(both)
+	if len(both.Items) != 6 || len(bothReviews) != 2 {
+		t.Fatalf("second due source blocked: %+v", both)
+	}
+	if *bothReviews[0].ReviewActivityID != source.ID || *bothReviews[1].ReviewActivityID != laterSource.ID {
+		t.Fatalf("wrong due sources: %+v", bothReviews)
+	}
+	for i := range first.Items {
+		g, w := both.Items[i], due.Items[i]
+		if g.ID != w.ID || g.ContentID != w.ContentID || g.Review != w.Review || g.Completed != w.Completed {
+			t.Fatalf("later attachment changed ordinary item %d: got=%+v want=%+v", i, g, w)
+		}
+	}
+
+	// A real completion of the original level fulfills the review and keeps the
+	// source identity; later GETs do not resurrect or reset it.
+	newer := f.createDrill(user, 25, time.Now().UTC().Add(-2*time.Hour), time.Now().UTC().Add(-time.Hour), level)
+	newer.TargetItem = source.TargetItem
+	if err := f.publishDrill(user, newer); err != nil {
+		t.Fatal(err)
+	}
+	completed := f.today(user)
+	done, found := reviewFor(completed, source.ID)
+	if !found || done.ID != review.ID || !done.Completed {
+		t.Fatalf("review completion not reflected: %+v", completed)
+	}
+	otherReview, ok := reviewFor(completed, laterSource.ID)
+	if !ok || otherReview.Completed || len(reviewsOf(completed)) != 2 {
+		t.Fatalf("later review disturbed: %+v", completed)
+	}
+	if got := f.planCompletedAt(user, completed.Day); got == nil || !got.Equal(*checkin) {
+		t.Fatalf("review completion changed first check-in: %v", got)
+	}
+	for i := range first.Items {
+		g, w := completed.Items[i], due.Items[i]
+		if g.ID != w.ID || g.ContentID != w.ContentID || g.Review != w.Review || g.Completed != w.Completed {
+			t.Fatalf("review completion changed ordinary item %d: got=%+v want=%+v", i, g, w)
+		}
+	}
+
+	other := f.user()
+	if n := f.planCount(other); n != 0 {
+		t.Fatalf("cross-account plan leaked: %d", n)
+	}
+}
+
 func TestCompletePlanItemIsIdempotentAndConcurrent(t *testing.T) {
 	f := setupPlanning(t, membership.ErrForbidden)
 	user := f.user()
