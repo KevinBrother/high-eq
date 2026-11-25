@@ -61,3 +61,9 @@ jobs:
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$RUNNER_TEMP/t14-redis:$PATH"
           bash admin/tool/t14/verify.sh
+      - name: Verify /prompts rollback and the next App call
+        env:
+          T15_DISPOSABLE: yes
+        run: |
+          export PATH="/usr/lib/postgresql/17/bin:$RUNNER_TEMP/t14-redis:$PATH"
+          bash admin/tool/t15/verify_rollback.sh
