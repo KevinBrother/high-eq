@@ -1,9 +1,9 @@
 name: Contacts live contract
 on:
   push:
-    paths: ['server/internal/profile/**', 'server/internal/service/profile*', 'server/internal/service/runtime.go', 'server/internal/service/http.go', 'server/internal/membership/contacts.go', 'server/migrations/**', 'app/lib/features/contacts/**', 'app/test/contacts/t25_live_test.dart', 'server/tests/t25-t18.sh', '.github/workflows/t25-contacts.yml']
+    paths: ['server/**', 'docker-compose.yml', 'app/lib/**', 'app/assets/**', 'app/pubspec.yaml', 'app/pubspec.lock', 'app/test/contacts/t25_live_test.dart', 'app/tool/t18/**', 'app/tool/t27/**', '.github/workflows/t25-contacts.yml']
   pull_request:
-    paths: ['server/internal/profile/**', 'server/internal/service/profile*', 'server/internal/service/runtime.go', 'server/internal/service/http.go', 'server/internal/membership/contacts.go', 'server/migrations/**', 'app/lib/features/contacts/**', 'app/test/contacts/t25_live_test.dart', 'server/tests/t25-t18.sh', '.github/workflows/t25-contacts.yml']
+    paths: ['server/**', 'docker-compose.yml', 'app/lib/**', 'app/assets/**', 'app/pubspec.yaml', 'app/pubspec.lock', 'app/test/contacts/t25_live_test.dart', 'app/tool/t18/**', 'app/tool/t27/**', '.github/workflows/t25-contacts.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -19,3 +19,40 @@ jobs:
       - run: flutter pub get --enforce-lockfile
         working-directory: app
       - run: server/tests/t25-t18.sh
+  t18-selection:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with: {persist-credentials: false}
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with: {flutter-version: '3.38.10', cache: true}
+      - name: Install locked Flutter dependencies
+        working-directory: app
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter precache --linux
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Prepare Go modules for offline journey
+        working-directory: server
+        run: go mod download
+      - name: Install native PostgreSQL 17 and Redis binaries
+        run: |
+          sudo apt-get update
+          if ! apt-cache show postgresql-17 >/dev/null 2>&1; then
+            sudo install -d -m 0755 /usr/share/postgresql-common/pgdg
+            sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+              -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+            echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' \
+              | sudo tee /etc/apt/sources.list.d/t18-selection-pgdg.list >/dev/null
+            sudo apt-get update
+          fi
+          sudo apt-get install -y --no-install-recommends postgresql-17 build-essential
+          bash app/tool/t27/install_redis.sh "$RUNNER_TEMP/t18-redis"
+      - name: Real selection, expiry, reselect and renewal journey
+        run: |
+          PATH="/usr/lib/postgresql/17/bin:$RUNNER_TEMP/t18-redis:$PATH" \
+            bash app/tool/t18/verify_selection.sh
