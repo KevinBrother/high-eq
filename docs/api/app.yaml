@@ -818,6 +818,7 @@ paths:
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       x-example-request: GET /v1/assessments/instrument
   /v1/assessments:
     post:
@@ -899,6 +900,7 @@ paths:
                 message: 尚未到复测时间
                 retryable: false
                 retry_at: '2026-12-19T09:00:00+08:00'
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       x-example-request: POST /v1/assessments
     get:
       operationId: listAssessments
@@ -955,6 +957,7 @@ paths:
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       x-example-request: GET /v1/assessments?cursor=after-example&limit=20
   /v1/contacts:
     get:
