@@ -26,6 +26,10 @@ func (a appAPI) CreateReply(c *gin.Context) {
 		problem(c, 500, "internal_error", "此次未生成可用建议，未扣次。可重新发起请求", false)
 		return
 	}
+	if errors.Is(e, replies.ErrBoundConsentExpired) {
+		problem(c, 403, "reply_consent_expired", "原请求的授权已失效，请确认当前授权后重新开始分析", false)
+		return
+	}
 	if errors.Is(e, replies.ErrConsent) {
 		problem(c, 403, "forbidden", "请先确认聊天记录的使用及保留说明", false)
 		return

@@ -140,6 +140,43 @@ class Fixture extends DemoContacts {
       : const ProfileInferenceCompleted(_fixtureProfile);
 }
 
+class InferenceFixture extends Fixture {
+  bool pendingInference = true;
+  final inferenceCalls =
+      <({String contactId, String requestId, String text})>[];
+
+  @override
+  Future<Book> load() async => Book(
+    [
+      Contact.fromJson({
+        'id': 'synthetic-contact',
+        'nickname': '同事 A',
+        'scene': 'work',
+        'editable': true,
+        'profile': _fixtureProfile,
+      }),
+    ],
+    {'tier': 'free', 'max_active_contacts': 1},
+  );
+
+  @override
+  Future<ProfileInferenceResult> infer(
+    String contactId,
+    String requestId,
+    String text, {
+    required ContactInferenceGrant authorization,
+  }) async {
+    inferenceCalls.add((
+      contactId: contactId,
+      requestId: requestId,
+      text: text,
+    ));
+    return pendingInference
+        ? const ProfileInferenceProcessing()
+        : const ProfileInferenceCompleted(_fixtureProfile);
+  }
+}
+
 class FlowDeletion implements ContactDeletion {
   FlowDeletion(this.repo, this.prepare, this.confirm);
 
@@ -352,8 +389,11 @@ void main() {
     expect(f.saved, {'nickname': '小姨', 'scene': 'family'});
     await tap(t, '小姨');
     await tap(t, '导入聊天片段');
+    expect(find.textContaining('新提交只用于本次画像推断'), findsOneWidget);
+    expect(find.textContaining('既有导入记录满 24 小时后从导出中排除'), findsOneWidget);
     await tap(t, '同意并继续');
-    expect(find.textContaining('24 小时内删除'), findsOneWidget);
+    expect(find.textContaining('24 小时内删除'), findsNothing);
+    expect(find.textContaining('当前导出仅含未过期记录的定位信息'), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
     await tap(t, '我已了解，并有权分享这段内容');
     await t.enterText(find.byType(TextField), '仅供测试的内容');
@@ -369,6 +409,32 @@ void main() {
     await tap(t, '确认删除');
     expect(find.text('小姨'), findsNothing);
     expect((await f.load()).people, isEmpty);
+  });
+  testWidgets('画像同意不提交正文；明确提交后 202 只重试原请求', (t) async {
+    final f = InferenceFixture();
+    await f.grant(ContactPurpose.contacts);
+    await open(t, f);
+    await tap(t, '同事 A');
+    await tap(t, '导入聊天片段');
+    await tap(t, '同意并继续');
+    expect(f.inferenceCalls, isEmpty);
+    await tap(t, '我已了解，并有权分享这段内容');
+    await t.enterText(find.byType(TextField), '合成片段');
+    expect(f.inferenceCalls, isEmpty);
+    await tap(t, '提交片段');
+
+    expect(f.inferenceCalls, hasLength(1));
+    final original = f.inferenceCalls.single;
+    expect(original.text, '合成片段');
+    expect(find.text('画像仍在处理中，不是已更新。'), findsOneWidget);
+    expect(find.text('画像已更新，仅供参考。'), findsNothing);
+    f.pendingInference = false;
+    await tap(t, '重试获取结果');
+
+    expect(f.inferenceCalls, hasLength(2));
+    expect(f.inferenceCalls[1], original);
+    expect(find.text('画像已更新，仅供参考。'), findsOneWidget);
+    expect(find.text('重试获取结果'), findsNothing);
   });
   testWidgets('加载失败可重试；续费刷新解锁；编辑被 403 拒绝则不保留写权限', (t) async {
     final f = Fixture()..offline = true;

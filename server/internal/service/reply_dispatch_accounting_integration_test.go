@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"high-eq/server/internal/accounts"
 	"high-eq/server/internal/api/admin"
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/gateway"
@@ -57,14 +58,17 @@ func TestReplyRoutedDispatchOperationCancellationKeepsAttempt(t *testing.T) {
 	})
 	f := &profilePersistenceFixture{t: t, ctx: t.Context(), s: s, router: s.Router()}
 	a := f.login(s, uuid.NewString())
-	f.grant(a.AccessToken, "chat_import", true)
+	f.request(a.AccessToken, http.MethodPut, "me/consents/"+accounts.ReplyChatImportPurpose,
+		map[string]any{"version": accounts.ReplyChatImportVersion, "granted": true}, http.StatusOK, nil)
+	replyDecision := replyFixtureDecision(t, s, a, accounts.ReplyChatImportPurpose, accounts.ReplyChatImportVersion)
 	requestID := uuid.New()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		profilePersistenceRequest(t.Context(), f.router, a.AccessToken, http.MethodPost, "replies", app.CreateReplyInput{
-			RequestId: requestID,
-			ChatText:  "T35-SYNTHETIC-REPLY-CANCEL",
+			RequestId:      requestID,
+			ReplyConsentId: replyDecision,
+			ChatText:       "T35-SYNTHETIC-REPLY-CANCEL",
 		})
 	}()
 	cancel := awaitProfileStep(t, cancelExecution)

@@ -305,7 +305,9 @@ paths:
       tags:
       - me
       summary: 列出各用途当前的授权决定
-      description: 每个用途只返回最新决定（含已撤回）；按决定更新时间和唯一键降序游标分页。完整历史仅在本人导出中返回。
+      description: >-
+        每个用途只返回最新决定（含已撤回），按决定更新时间和唯一键降序游标分页。
+        reply_chat_import 和 contacts 项包含当前决定标识。完整历史仅在本人导出中返回。
       responses:
         '200':
           description: 成功
@@ -355,6 +357,7 @@ paths:
           - review
           - contacts
           - chat_import
+          - reply_chat_import
           - manual_mark
         example: terms
       requestBody:
@@ -379,7 +382,10 @@ paths:
         '400': {$ref: '#/components/responses/E400'}
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
-      description: 逐用途保存版本与授权/撤回时间；撤回相应采集用途立即拒绝后续窗口。客户端先清未发队列，不得恢复联网后补传。
+      description: >-
+        逐用途保存版本与授权/撤回时间。回复助手使用 reply_chat_import / 2026-11-reply，
+        关系人聊天推断使用 chat_import / 2026-11，两者独立授权与撤回。
+        撤回相应采集用途立即拒绝后续窗口。客户端先清未发队列，不得恢复联网后补传。
       x-example-request: PUT /v1/me/consents/terms
   /v1/me/export:
     get:
@@ -1203,7 +1209,7 @@ paths:
       operationId: inferProfile
       tags:
       - contacts
-      summary: 按导入文本推断关系人画像，原文 24 小时内删除
+      summary: 按用户主动提交的必要聊天片段推断关系人画像
       parameters:
       - in: path
         name: id
@@ -1265,7 +1271,12 @@ paths:
         '404': {$ref: '#/components/responses/E404'}
         '409': {$ref: '#/components/responses/E409'}
         '503': {$ref: '#/components/responses/E503'}
-      description: 同一 request_id 和相同材料在处理中返回 202，可重试失败后可对同一关系人提交原材料。执行时检测到用途授权记录变化会使在途请求失效。完成后仍须具备当前权限，重放只读当前画像、不再外发。已失效、同键不同材料或关系人，以及无法核对材料的历史请求均返回 409。
+      description: >-
+        同时要求 chat_import / 2026-11 和 contacts / 2026-11。新提交只用于本次推断，不另存原文。
+        既有导入记录满 24 小时后从导出中排除并尝试清除，故障时重试。
+        同键和相同材料在处理中返回 202。已结算为可重试失败时，同一关系人和原材料可在当前授权下沿用原键。
+        执行时检测到授权记录变化会使在途请求失效。完成后须具备当前权限，重放只读当前画像。
+        原授权变更的在途请求、已失效请求、同键换材料或关系人以及无法核对材料的历史请求返回 409。
       x-example-request: POST /v1/contacts/85b72033-9f07-4bbc-8567-fc31f26508ab/infer
   /v1/marks:
     get:
@@ -1899,6 +1910,8 @@ paths:
               chat_text: 沟通练习
               goal: 沟通练习
               contact_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+              reply_consent_id: 90ed4318-470a-4ec1-8da5-b4798ee63a75
+              contacts_consent_id: a0afb27f-12b7-4edc-a3a2-dddf1dfaae32
       responses:
         '200':
           description: 成功
@@ -1947,8 +1960,23 @@ paths:
               example:
                 request_id: 85b72033-9f07-4bbc-8567-fc31f26508ab
                 status: in_progress
-        '403': {$ref: '#/components/responses/E403'}
-      description: 同一 request_id 及相同内容返回已保存结果；仍在处理中返回 202，稍后用原请求重试；同键不同输入或对应回复已删除后重放为 409。审核故障可用原 ID 重试。每次外部发送前重新核验聊天导入同意与关系人权限。指定只读关系人不可用于新训练或画像反馈。
+        '403':
+          description: 缺少所需授权、新键的期望决定已失效，或未完成请求绑定的原授权已失效
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+              examples:
+                reply_consent_expired:
+                  value: {code: reply_consent_expired, message: 原请求的授权已失效，请确认当前授权后重新开始分析, retryable: false}
+      description: >-
+        新请求和未完成请求须有 reply_chat_import / 2026-11-reply。
+        选用了关系人时还须有 contacts / 2026-11 和关系人使用权。
+        新键须携带 reply_consent_id；关联关系人时还须携带 contacts_consent_id，不关联时省略后者。
+        服务端在建键事务中检查期望决定与当前决定及关系人使用权，拒绝时不建键、不派发且不扣次。
+        每次外部发送和最终保存前复核原授权；期望决定不匹配或未完成请求原授权过期返回 reply_consent_expired。
+        已有键不会重新绑定；既有键回放可省略期望决定字段。
+        同键同输入重放已完成结果，仍在处理时返回 202。审核故障可用原键重试。
+        同键不同输入或对应回复已删除后重放返回 409。同账号重放无新外发或扣次。
       x-example-request: POST /v1/replies
   /v1/replies/{id}/feedback:
     post:
@@ -2911,10 +2939,15 @@ components:
           - review
           - contacts
           - chat_import
+          - reply_chat_import
           - manual_mark
         version: {type: string}
         granted: {type: boolean}
         updated_at: {type: string, format: date-time}
+        decision_id:
+          type: string
+          format: uuid
+          description: 授权列表中回复聊天导入或关系人用途的决定标识。撤回后重新授权产生新标识。
     Account:
       type: object
       additionalProperties: false
@@ -3360,7 +3393,10 @@ components:
       - chat_text
       properties:
         request_id: {type: string, format: uuid}
-        chat_text: {type: string, minLength: 1}
+        chat_text:
+          type: string
+          minLength: 1
+          description: 用户主动提交且有权分享的必要片段，仅用于本次推断。
     Mark:
       type: object
       additionalProperties: false
@@ -3762,6 +3798,14 @@ components:
         chat_text: {type: string, minLength: 1}
         goal: {type: string, minLength: 1}
         contact_id: {type: string, format: uuid}
+        reply_consent_id:
+          type: string
+          format: uuid
+          description: 新键必填。明确提交时读取的 reply_chat_import / 2026-11-reply 决定 UUID。
+        contacts_consent_id:
+          type: string
+          format: uuid
+          description: 新键关联关系人时必填。明确提交时读取的 contacts / 2026-11 决定 UUID；不关联时省略。
     RateReplyInput:
       type: object
       additionalProperties: false

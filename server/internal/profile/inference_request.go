@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"high-eq/server/internal/accounts"
 	"high-eq/server/internal/gateway"
 	"high-eq/server/internal/membership"
 )
@@ -48,11 +49,11 @@ func activeConsentRead(ctx context.Context, tx pgx.Tx, u uuid.UUID, purpose stri
 
 func consentID(ctx context.Context, tx pgx.Tx, u uuid.UUID, purpose string, lock bool) (uuid.UUID, error) {
 	var id uuid.UUID
-	sql := `select id from consents where user_id=$1 and purpose=$2 and withdrawn_at is null order by granted_at desc,id desc limit 1`
+	sql := `select id from consents where user_id=$1 and purpose=$2 and version=$3 and withdrawn_at is null order by granted_at desc,id desc limit 1`
 	if lock {
 		sql += ` for share`
 	}
-	e := tx.QueryRow(ctx, sql, u, purpose).Scan(&id)
+	e := tx.QueryRow(ctx, sql, u, purpose, accounts.ContactNoticeVersion).Scan(&id)
 	if errors.Is(e, pgx.ErrNoRows) {
 		return uuid.Nil, membership.ErrForbidden
 	}

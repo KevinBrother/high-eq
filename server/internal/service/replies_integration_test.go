@@ -40,6 +40,17 @@ func (p *countingProfileProvider) ForModel(ctx context.Context, tx pgx.Tx, user,
 	return p.inner.ForModel(ctx, tx, user, contact)
 }
 
+func replyFixtureDecision(t *testing.T, s *Runtime, tok app.Tokens, purpose, version string) *uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := s.db.QueryRow(t.Context(), `select id from consents
+		where user_id=$1 and purpose=$2 and version=$3 and withdrawn_at is null`,
+		tok.UserId, purpose, version).Scan(&id); err != nil || id == uuid.Nil {
+		t.Fatalf("missing active fixture decision for %s: %v", purpose, err)
+	}
+	return &id
+}
+
 // Run only with runtime.sh's disposable DB and generated dev credentials.
 func TestReplyLifecycle(t *testing.T) {
 	ctx := context.Background()
@@ -155,8 +166,61 @@ func TestReplyLifecycle(t *testing.T) {
 	in := app.CreateReplyInput{RequestId: uuid.New(), ChatText: raw}
 	firstRequestID := in.RequestId
 	post := func() res { return request(ctx, "POST", "replies", a.AccessToken, in) }
-	check(post(), 403, nil)
-	check(request(ctx, "PUT", "me/consents/chat_import", a.AccessToken, map[string]any{"version": "v1", "granted": true}), 200, nil)
+	checkForbidden := func(r res, want string) {
+		t.Helper()
+		var body struct {
+			Code      string `json:"code"`
+			Retryable *bool  `json:"retryable"`
+		}
+		check(r, 403, &body)
+		if body.Code != want || body.Retryable == nil || *body.Retryable {
+			t.Fatalf("want reply rejection %q with retryable=false; got code %q", want, body.Code)
+		}
+	}
+	checkForbidden(post(), "forbidden")
+	check(request(ctx, "PUT", "me/consents/chat_import", a.AccessToken, map[string]any{"version": "2026-11", "granted": true}), 200, nil)
+	check(request(ctx, "PUT", "me/consents/reply_chat_import", a.AccessToken, map[string]any{"version": "2026-11", "granted": true}), 400, nil)
+	checkForbidden(post(), "forbidden")
+	type replyCounts struct{ requests, charges, holds int }
+	counts := func() (v replyCounts) {
+		t.Helper()
+		if err := s.db.QueryRow(ctx, `select
+			(select count(*) from reply_request_keys where user_id=$1),
+			(select count(*) from quota_ledger q join activities a on a.id=q.activity_id where a.user_id=$1 and a.kind='reply' and q.refunded_at is null),
+			(select count(*) from quota_attempts q join activities a on a.id=q.activity_id where a.user_id=$1 and a.kind='reply' and q.state='held')`,
+			a.UserId).Scan(&v.requests, &v.charges, &v.holds); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	before := counts()
+	if before != (replyCounts{}) || calls.Load() != 0 || profiles.calls.Load() != 0 {
+		t.Fatalf("contact-only grant reached reply processing: %+v", before)
+	}
+	check(request(ctx, "PUT", "me/consents/reply_chat_import", a.AccessToken, map[string]any{"version": "2026-11-reply", "granted": true}), 200, nil)
+	replyDecision := func(granted bool) uuid.UUID {
+		t.Helper()
+		var consent app.ListConsentsResult
+		check(request(ctx, "GET", "me/consents", a.AccessToken, nil), 200, &consent)
+		for _, row := range consent.Items {
+			if row.Purpose == app.ConsentPurposeReplyChatImport {
+				if row.Granted != granted || row.DecisionId == nil || *row.DecisionId == uuid.Nil ||
+					row.Version != accounts.ReplyChatImportVersion {
+					t.Fatal("incomplete reply consent decision")
+				}
+				return *row.DecisionId
+			}
+		}
+		t.Fatal("reply consent decision missing")
+		return uuid.Nil
+	}
+	firstDecision := replyDecision(true)
+	// Even when a current grant exists, a new key must not infer its UUID.
+	checkForbidden(post(), "forbidden")
+	if counts() != before || calls.Load() != 0 {
+		t.Fatal("missing reply decision reached processing")
+	}
+	in.ReplyConsentId = &firstDecision
 	// Disconnect after upstream entry; the same request polls instead of generating.
 	client, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -182,6 +246,16 @@ func TestReplyLifecycle(t *testing.T) {
 	r2 := post()
 	if !bytes.Equal(r.b, r2.b) || calls.Load() != 1 || profiles.calls.Load() != 0 {
 		t.Fatal("not original result or profile reread")
+	}
+	after := counts()
+	if after != (replyCounts{requests: 1, charges: 1}) {
+		t.Fatalf("reply completion and replay did not settle exactly once: %+v", after)
+	}
+	t.Logf("D13_CONTACT_FIRST requests=%d→%d net_charges=%d→%d holds=%d→%d", before.requests, after.requests, before.charges, after.charges, before.holds, after.holds)
+	// A request ID from another account is neither a result nor a grant.
+	checkForbidden(request(ctx, "POST", "replies", b.AccessToken, in), "forbidden")
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("foreign replay reached upstream: %d dispatches", n)
 	}
 	if bytes.Contains(r2.b, []byte(raw)) {
 		t.Fatal("replayed response contains the submitted chat")
@@ -211,12 +285,39 @@ func TestReplyLifecycle(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("authorization wait not reached")
 	}
-	check(request(ctx, "PUT", "me/consents/chat_import", a.AccessToken, map[string]any{"version": "v1", "granted": false}), 200, nil)
+	check(request(ctx, "PUT", "me/consents/reply_chat_import", a.AccessToken, map[string]any{"version": "2026-11-reply", "granted": false}), 200, nil)
+	if replyDecision(false) != firstDecision {
+		t.Fatal("withdrawal changed the identity of the existing consent decision")
+	}
 	close(consentRelease)
-	check(<-revoked, 403, nil)
+	checkForbidden(<-revoked, "reply_consent_expired")
 	used(1)
-	check(request(ctx, "PUT", "me/consents/chat_import", a.AccessToken, map[string]any{"version": "v1", "granted": true}), 200, nil)
+	check(request(ctx, "PUT", "me/consents/reply_chat_import", a.AccessToken, map[string]any{"version": "2026-11-reply", "granted": true}), 200, nil)
+	secondDecision := replyDecision(true)
+	if secondDecision == firstDecision {
+		t.Fatal("same-version regrant did not produce a new consent decision")
+	}
+	checkForbidden(post(), "reply_consent_expired")
+	used(1)
+	// The regrant happens after the client took its snapshot but before the
+	// first POST reached the server. This key has never existed.
 	in.RequestId = uuid.New()
+	before, beforeDispatches := counts(), calls.Load()
+	checkForbidden(post(), "reply_consent_expired")
+	if counts() != before || calls.Load() != beforeDispatches {
+		t.Fatal("stale decision created a key, quota hold, charge or dispatch")
+	}
+	used(1)
+	t.Log("D13_STALE_REPLY_DECISION rejected; keys/dispatches/charges/holds unchanged")
+	in.ReplyConsentId = &secondDecision
+	// Completed replay still returns the persisted result, not a new binding.
+	completed := in
+	completed.RequestId = firstRequestID
+	replayed := request(ctx, "POST", "replies", a.AccessToken, completed)
+	check(replayed, 200, nil)
+	if !bytes.Equal(r.b, replayed.b) || counts() != before || calls.Load() != beforeDispatches {
+		t.Fatal("completed request was rebound or regenerated")
+	}
 	mode.Store(1)
 	for range 2 {
 		var body map[string]any
@@ -499,7 +600,7 @@ func TestReplyLifecycle(t *testing.T) {
 	if _, e = s.db.Exec(ctx, `with o as (insert into orders(user_id,platform,transaction_hmac,product_code,amount_fen,state) values($1,'apple',$2,'fixture',1,'paid') returning id,user_id) insert into entitlements select id,user_id,now()-interval '2 days',now()+interval '1 day' from o`, a.UserId, []byte(uuid.NewString())); e != nil {
 		t.Fatal(e)
 	}
-	check(request(ctx, "PUT", "me/consents/contacts", a.AccessToken, map[string]any{"version": "v1", "granted": true}), 200, nil)
+	check(request(ctx, "PUT", "me/consents/contacts", a.AccessToken, map[string]any{"version": "2026-11", "granted": true}), 200, nil)
 	contactIn := map[string]any{"nickname": "合成联系人甲", "scene": "partner", "initial_context": "愿意尝试"}
 	var live, other app.Contact
 	check(request(ctx, "POST", "contacts", a.AccessToken, contactIn), 200, &live)
@@ -513,6 +614,7 @@ func TestReplyLifecycle(t *testing.T) {
 	mode.Store(0)
 	priorCalls, priorProfiles := calls.Load(), profiles.calls.Load()
 	in.RequestId = uuid.New()
+	in.ContactsConsentId = replyFixtureDecision(t, s, a, "contacts", accounts.ContactNoticeVersion)
 	in.ContactId = &other.Id
 	check(post(), 403, nil)
 	if calls.Load() != priorCalls || profiles.calls.Load() != priorProfiles {
@@ -584,7 +686,7 @@ func TestReplyLifecycle(t *testing.T) {
 	if e = s.db.QueryRow(ctx, `select feedback_id,user_id,source_id,source_kind,occurred_at from reply_outcome_receipts where source_id=(select source_id from activities where id=$1) and suggestion_index=0`, last.Id).Scan(&contactEvent.FeedbackID, &contactEvent.UserID, &contactEvent.SourceID, &contactEvent.SourceKind, &contactEvent.OccurredAt); e != nil {
 		t.Fatal(e)
 	}
-	in.ContactId = nil
+	in.ContactId, in.ContactsConsentId = nil, nil
 	in.RequestId = uuid.New()
 	priorCalls = calls.Load()
 	check(post(), 429, nil)
@@ -610,11 +712,15 @@ func TestReplyLifecycle(t *testing.T) {
 	}
 	// A separate account's live queue produces real receipts, then account
 	// deletion removes them and stale delivery cannot recreate them.
-	check(request(ctx, "PUT", "me/consents/chat_import", b.AccessToken, map[string]any{"version": "v1", "granted": true}), 200, nil)
+	check(request(ctx, "PUT", "me/consents/reply_chat_import", b.AccessToken, map[string]any{"version": "2026-11-reply", "granted": true}), 200, nil)
 	expectedSummary.Store("")
-	bIn := app.CreateReplyInput{RequestId: uuid.New(), ChatText: raw}
+	bIn := app.CreateReplyInput{RequestId: firstRequestID, ChatText: raw,
+		ReplyConsentId: replyFixtureDecision(t, s, b, accounts.ReplyChatImportPurpose, accounts.ReplyChatImportVersion)}
 	var bReply app.Reply
 	check(request(ctx, "POST", "replies", b.AccessToken, bIn), 200, &bReply)
+	if bReply.Id == answer.Id {
+		t.Fatal("request ID replay returned the other account's reply")
+	}
 	bFeedback := "replies/" + bReply.Id.String() + "/feedback"
 	check(request(ctx, "POST", bFeedback, b.AccessToken, map[string]any{"index": 0, "outcome": "账号删除前效果", "self_report": "not_overwhelmed"}), 200, nil)
 	if e = s.db.QueryRow(ctx, `select count(*) filter (where pending and self_report),count(*) filter (where outcome_pending) from reply_feedback where activity_id=$1`, bReply.Id).Scan(&pendingSelf, &pendingOutcome); e != nil || pendingSelf != 1 || pendingOutcome != 1 {
@@ -720,10 +826,11 @@ func TestReplyDispatchReusesSinglePoolConnection(t *testing.T) {
 	if e := json.Unmarshal(body, &tok); e != nil {
 		t.Fatal(e)
 	}
-	if code, _ = request("PUT", "me/consents/chat_import", tok.AccessToken, map[string]any{"version": "v1", "granted": true}); code != 200 {
+	if code, _ = request("PUT", "me/consents/reply_chat_import", tok.AccessToken, map[string]any{"version": "2026-11-reply", "granted": true}); code != 200 {
 		t.Fatalf("consent status %d", code)
 	}
-	if code, _ = request("POST", "replies", tok.AccessToken, app.CreateReplyInput{RequestId: uuid.New(), ChatText: raw}); code != 200 {
+	if code, _ = request("POST", "replies", tok.AccessToken, app.CreateReplyInput{RequestId: uuid.New(), ChatText: raw,
+		ReplyConsentId: replyFixtureDecision(t, s, tok, accounts.ReplyChatImportPurpose, accounts.ReplyChatImportVersion)}); code != 200 {
 		t.Fatalf("single-pool reply status %d", code)
 	}
 }
@@ -840,9 +947,9 @@ func TestReplyContactRegrantBlocksPendingDispatchAndSave(t *testing.T) {
 	if e := json.Unmarshal(login.b, &tok); e != nil {
 		t.Fatal(e)
 	}
-	check(request("PUT", "me/consents/chat_import", tok.AccessToken, map[string]any{"version": "v1", "granted": true}), 200)
+	check(request("PUT", "me/consents/reply_chat_import", tok.AccessToken, map[string]any{"version": "2026-11-reply", "granted": true}), 200)
 
-	check(request("PUT", "me/consents/contacts", tok.AccessToken, map[string]any{"version": "v1", "granted": true}), 200)
+	check(request("PUT", "me/consents/contacts", tok.AccessToken, map[string]any{"version": "2026-11", "granted": true}), 200)
 	var contact app.Contact
 	contactResult := request("POST", "contacts", tok.AccessToken, map[string]any{"nickname": "合成联系人", "scene": "partner", "initial_context": "愿意尝试"})
 	check(contactResult, 200)
@@ -857,10 +964,11 @@ func TestReplyContactRegrantBlocksPendingDispatchAndSave(t *testing.T) {
 		}
 		return id
 	}
-	chatConsent := activeConsent("chat_import")
+	chatConsent := activeConsent("reply_chat_import")
 	firstContactsConsent := activeConsent("contacts")
 
-	in := app.CreateReplyInput{RequestId: uuid.New(), ChatText: raw, ContactId: &contact.Id}
+	in := app.CreateReplyInput{RequestId: uuid.New(), ChatText: raw, ContactId: &contact.Id,
+		ReplyConsentId: &chatConsent, ContactsConsentId: &firstContactsConsent}
 	firstKey := in.RequestId
 	firstResult := make(chan res, 1)
 	go func() { firstResult <- request("POST", "replies", tok.AccessToken, in) }()
@@ -869,8 +977,8 @@ func TestReplyContactRegrantBlocksPendingDispatchAndSave(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("input review dispatch did not start")
 	}
-	check(request("PUT", "me/consents/contacts", tok.AccessToken, map[string]any{"version": "v1", "granted": false}), 200)
-	check(request("PUT", "me/consents/contacts", tok.AccessToken, map[string]any{"version": "v1", "granted": true}), 200)
+	check(request("PUT", "me/consents/contacts", tok.AccessToken, map[string]any{"version": "2026-11", "granted": false}), 200)
+	check(request("PUT", "me/consents/contacts", tok.AccessToken, map[string]any{"version": "2026-11", "granted": true}), 200)
 	secondContactsConsent := activeConsent("contacts")
 	if secondContactsConsent == firstContactsConsent {
 		t.Fatal("contacts regrant reused the old consent row")
@@ -882,6 +990,24 @@ func TestReplyContactRegrantBlocksPendingDispatchAndSave(t *testing.T) {
 	}
 
 	in.RequestId = uuid.New()
+	rejected := request("POST", "replies", tok.AccessToken, in)
+	check(rejected, 403)
+	var denial app.Error
+	if err := json.Unmarshal(rejected.b, &denial); err != nil || denial.Code != "reply_consent_expired" {
+		t.Fatalf("stale contacts decision: code=%q err=%v", denial.Code, err)
+	}
+	var keys, attempts, charges, used int
+	if err := s.db.QueryRow(ctx, `select
+		(select count(*) from reply_request_keys where user_id=$1),
+		(select count(*) from quota_attempts q join activities a on a.id=q.activity_id where a.user_id=$1 and a.kind='reply'),
+		(select count(*) from quota_ledger q join activities a on a.id=q.activity_id where a.user_id=$1 and a.kind='reply' and q.refunded_at is null),
+		(select coalesce(sum(used),0) from daily_quota_usage where user_id=$1 and feature='reply')`,
+		tok.UserId).Scan(&keys, &attempts, &charges, &used); err != nil || keys != 1 || attempts != 1 || charges != 0 || used != 0 ||
+		runs.Load() != 1 || sends.Load() != 1 || profiles.calls.Load() != 1 {
+		t.Fatalf("stale contacts decision reached processing: keys=%d attempts=%d charges=%d used=%d err=%v", keys, attempts, charges, used, err)
+	}
+	t.Log("D13_STALE_CONTACTS_DECISION rejected; keys/dispatches/charges/attempts unchanged")
+	in.ContactsConsentId = &secondContactsConsent
 	secondResult := make(chan res, 1)
 	go func() { secondResult <- request("POST", "replies", tok.AccessToken, in) }()
 	select {
@@ -889,8 +1015,8 @@ func TestReplyContactRegrantBlocksPendingDispatchAndSave(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("output review dispatch did not start")
 	}
-	check(request("PUT", "me/consents/contacts", tok.AccessToken, map[string]any{"version": "v1", "granted": false}), 200)
-	check(request("PUT", "me/consents/contacts", tok.AccessToken, map[string]any{"version": "v1", "granted": true}), 200)
+	check(request("PUT", "me/consents/contacts", tok.AccessToken, map[string]any{"version": "2026-11", "granted": false}), 200)
+	check(request("PUT", "me/consents/contacts", tok.AccessToken, map[string]any{"version": "2026-11", "granted": true}), 200)
 	thirdContactsConsent := activeConsent("contacts")
 	if thirdContactsConsent == secondContactsConsent {
 		t.Fatal("second contacts regrant reused the prior consent row")
@@ -900,8 +1026,8 @@ func TestReplyContactRegrantBlocksPendingDispatchAndSave(t *testing.T) {
 	if runs.Load() != 2 || sends.Load() != 4 || profiles.calls.Load() != 2 {
 		t.Fatalf("final-save regrant counts runs=%d sends=%d profiles=%d", runs.Load(), sends.Load(), profiles.calls.Load())
 	}
-	if activeConsent("chat_import") != chatConsent {
-		t.Fatal("chat_import grant changed during contacts regrant")
+	if activeConsent("reply_chat_import") != chatConsent {
+		t.Fatal("reply grant changed during contacts regrant")
 	}
 
 	for i, want := range []struct {
@@ -1027,8 +1153,9 @@ func TestReplyWithdrawalWaitsForInFlightDispatch(t *testing.T) {
 	if e := json.Unmarshal(login.b, &tok); e != nil {
 		t.Fatal(e)
 	}
-	check(request("PUT", "me/consents/chat_import", tok.AccessToken, map[string]any{"version": "v1", "granted": true}), 200)
-	in := app.CreateReplyInput{RequestId: uuid.New(), ChatText: raw}
+	check(request("PUT", "me/consents/reply_chat_import", tok.AccessToken, map[string]any{"version": "2026-11-reply", "granted": true}), 200)
+	in := app.CreateReplyInput{RequestId: uuid.New(), ChatText: raw,
+		ReplyConsentId: replyFixtureDecision(t, s, tok, accounts.ReplyChatImportPurpose, accounts.ReplyChatImportVersion)}
 	reply := make(chan res, 1)
 	replyDone := make(chan struct{})
 	go func() {
@@ -1071,7 +1198,7 @@ func TestReplyWithdrawalWaitsForInFlightDispatch(t *testing.T) {
 	withdrawCtx, withdrawCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer withdrawCancel()
 	go func() {
-		c, e := s.Accounts.Consent(withdrawCtx, principal, "chat_import", "v1", false)
+		c, e := s.Accounts.Consent(withdrawCtx, principal, "reply_chat_import", "2026-11-reply", false)
 		withdrawal <- consentResult{c, e}
 	}()
 	// Prove that the withdrawal backend itself is blocked by the exact backend

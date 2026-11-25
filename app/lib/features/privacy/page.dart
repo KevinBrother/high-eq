@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../core/session.dart';
 import '../onboarding/surface.dart';
 import 'account_access.dart';
+import 'chat_import_controls.dart';
 import 'export_card.dart';
 import 'export_delivery.dart';
 import 'export_flow.dart';
@@ -268,6 +269,7 @@ class _PrivacyPageState extends State<PrivacyPage> {
                       ),
                     Expanded(
                       child: ListView(
+                        key: const Key('privacy-account-list'),
                         padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
                         children: [
                           if (deadline != null) ...[
@@ -296,6 +298,12 @@ class _PrivacyPageState extends State<PrivacyPage> {
                                   _exportFlow.cancel,
                                 _ => null,
                               },
+                            ),
+                            const SizedBox(height: 24),
+                            ChatImportControls(
+                              key: ObjectKey(widget.store.scope),
+                              store: widget.store,
+                              enabled: _canEdit,
                             ),
                             const SizedBox(height: 24),
                             _closureForm(context, account.bindings),

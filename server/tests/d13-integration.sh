@@ -131,6 +131,8 @@ run_required_tests cmd/api '^TestChatImportCleanupProcess$' \
 run_required_tests internal/training \
   '^TestChatImportsExpireAtBoundaryAndRetryAcrossPoolRestart$' \
   TestChatImportsExpireAtBoundaryAndRetryAcrossPoolRestart
-run_required_tests internal/service '^TestReplyLifecycle$' TestReplyLifecycle
+run_required_tests internal/service \
+  '^Test(ReplyLifecycle|ProfileLifecycle|ReplyContactRegrantBlocksPendingDispatchAndSave|ProfileInferenceReviewRegressions)$' \
+  TestReplyLifecycle TestProfileLifecycle TestReplyContactRegrantBlocksPendingDispatchAndSave TestProfileInferenceReviewRegressions
 
 echo 'OK: all D13 integration tests produced exact PASS results; no SKIP or FAIL'

@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"high-eq/server/internal/accounts"
 	"high-eq/server/internal/api/admin"
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/gateway"
@@ -147,7 +148,7 @@ func (f *profilePersistenceFixture) login(s *Runtime, subject string) app.Tokens
 
 func (f *profilePersistenceFixture) grant(token, purpose string, granted bool) {
 	f.t.Helper()
-	f.request(token, "PUT", "me/consents/"+purpose, map[string]any{"version": "v1", "granted": granted}, 200, nil)
+	f.request(token, "PUT", "me/consents/"+purpose, map[string]any{"version": accounts.ContactNoticeVersion, "granted": granted}, 200, nil)
 }
 
 func (f *profilePersistenceFixture) contact(token string) string {

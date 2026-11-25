@@ -707,7 +707,9 @@ class _WorkspaceState extends State<ContactsWorkspace>
                             '模拟手记 · 不会发送数据',
                             style: Theme.of(context).textTheme.labelMedium,
                           ),
-                        if (busy) const LinearProgressIndicator(),
+                        busy
+                            ? const LinearProgressIndicator()
+                            : const SizedBox.shrink(),
                         if (message != null)
                           Semantics(
                             liveRegion: true,
@@ -715,7 +717,9 @@ class _WorkspaceState extends State<ContactsWorkspace>
                               padding: const EdgeInsets.symmetric(vertical: 12),
                               child: Text(message!),
                             ),
-                          ),
+                          )
+                        else
+                          const SizedBox.shrink(),
                         IgnorePointer(
                           ignoring: busy,
                           child: Column(
@@ -744,11 +748,10 @@ class _WorkspaceState extends State<ContactsWorkspace>
         style: Theme.of(context).textTheme.headlineSmall,
       ),
       const SizedBox(height: 12),
-      Text(
-        purpose == ContactPurpose.contacts
-            ? '称呼、交流场景和问答将用于建立关系人画像。$retention'
-            : '$chatRetention 不导入也可以继续使用已有手记。',
-      ),
+      if (purpose == ContactPurpose.contacts)
+        Text('称呼、交流场景和问答将用于建立关系人画像。$retention')
+      else
+        const ChatRetentionNotice(footer: '不导入也可以继续使用已有手记。'),
       const SizedBox(height: 16),
       FilledButton(
         onPressed: () => _run(() async {
@@ -786,6 +789,7 @@ class _WorkspaceState extends State<ContactsWorkspace>
         ),
       for (final p in b.people) ...[
         ListTile(
+          key: ValueKey('contact-list-row:${p.id}'),
           contentPadding: EdgeInsets.zero,
           title: Text(p.name),
           subtitle: Text('${p.scene.label} · ${b.usable(p) ? '可用' : '只读'}'),

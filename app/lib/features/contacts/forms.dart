@@ -4,8 +4,31 @@ import 'models.dart';
 import 'scene.dart';
 
 const retention = '请使用称呼，不必填写真名。问答和画像可能涉及他人信息，服务端加密保留至你删除关系人或注销账号。';
-const chatRetention =
-    '聊天片段可能含有他人信息。请隐去姓名、联系方式，只粘贴有权分享的必要片段。用于画像推断的聊天原文将在 24 小时内删除；画像保留至删除关系人或注销。';
+const chatRetentionPrimary =
+    '聊天片段可能含他人信息，请隐去姓名、联系方式，只提交有权分享的内容。新提交只用于本次画像推断，不另存原文。';
+const chatRetentionDetails =
+    '既有导入记录满 24 小时后从导出中排除并尝试清除。故障可能推迟清除，系统会重试。当前导出仅含未过期记录的定位信息，不含原文。供应商、日志、备份或物理介质副本不保证同期删除。画像保留至删除关系人或注销。';
+
+class ChatRetentionNotice extends StatelessWidget {
+  const ChatRetentionNotice({super.key, this.footer});
+  final String? footer;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Text(chatRetentionPrimary),
+      const SizedBox(height: 8),
+      Text(
+        chatRetentionDetails,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      ),
+      if (footer case final text?) ...[const SizedBox(height: 8), Text(text)],
+    ],
+  );
+}
 
 class ContactForm extends StatefulWidget {
   const ContactForm({
@@ -136,8 +159,15 @@ class _ContactFormState extends State<ContactForm> {
 }
 
 class ChatForm extends StatefulWidget {
-  const ChatForm({super.key, required this.onSubmit});
+  const ChatForm({
+    super.key,
+    required this.onSubmit,
+    this.retry = false,
+    this.onEdited,
+  });
   final ValueChanged<String> onSubmit;
+  final bool retry;
+  final VoidCallback? onEdited;
   @override
   State<ChatForm> createState() => _ChatFormState();
 }
@@ -157,12 +187,15 @@ class _ChatFormState extends State<ChatForm> {
     children: [
       Text('补充一次对话', style: Theme.of(context).textTheme.headlineSmall),
       const SizedBox(height: 12),
-      const Text(chatRetention),
+      const ChatRetentionNotice(),
       CheckboxListTile(
         value: consent,
         onChanged: (v) => setState(() {
           consent = v == true;
-          if (!consent) text.clear();
+          if (!consent) {
+            text.clear();
+            widget.onEdited?.call();
+          }
         }),
         title: const Text('我已了解，并有权分享这段内容'),
       ),
@@ -173,7 +206,10 @@ class _ChatFormState extends State<ChatForm> {
           maxLines: 6,
           enableSuggestions: false,
           autocorrect: false,
-          onChanged: (_) => setState(() {}),
+          onChanged: (_) {
+            widget.onEdited?.call();
+            setState(() {});
+          },
           decoration: const InputDecoration(
             labelText: '粘贴必要片段',
             border: OutlineInputBorder(),
@@ -182,13 +218,9 @@ class _ChatFormState extends State<ChatForm> {
       const SizedBox(height: 16),
       FilledButton(
         onPressed: consent && text.text.trim().isNotEmpty
-            ? () {
-                final value = text.text.trim();
-                text.clear();
-                widget.onSubmit(value);
-              }
+            ? () => widget.onSubmit(text.text.trim())
             : null,
-        child: const Text('提交片段'),
+        child: Text(widget.retry ? '重试原请求' : '提交片段'),
       ),
     ],
   );

@@ -104,7 +104,11 @@ func (s *Service) Create(ctx context.Context, p accounts.Principal, in app.Creat
 	var attempt membership.Attempt
 	var binding consentBinding
 	var result Response
-	fingerprint := s.mac(p.User, in)
+	// Only material participates in idempotency. Keep the original wire
+	// encoding (including field order) for all existing persisted MACs.
+	material := in
+	material.ReplyConsentId, material.ContactsConsentId = nil, nil
+	fingerprint := s.mac(p.User, material)
 	e := s.accounts.WithSession(ctx, p, false, func(tx pgx.Tx) error {
 		var mac, enc []byte
 		var state string
@@ -134,10 +138,13 @@ func (s *Service) Create(ctx context.Context, p accounts.Principal, in app.Creat
 				result = safety()
 				return nil
 			case "failed":
+				if e = s.requireBoundConsent(ctx, tx, p.User, in.ContactId, binding); e != nil {
+					return e
+				}
 				return ErrGeneration
 			}
 		case errors.Is(e, pgx.ErrNoRows):
-			binding, e = s.activeConsentBinding(ctx, tx, p.User, in.ContactId)
+			binding, e = s.bindNewConsent(ctx, tx, p.User, in.ContactId, in.ReplyConsentId, in.ContactsConsentId)
 			if e != nil {
 				return e
 			}
@@ -158,6 +165,13 @@ func (s *Service) Create(ctx context.Context, p accounts.Principal, in app.Creat
 			return e
 		}
 		if state != "" {
+			// A concurrent request may already have won this key. Never
+			// authorize work under a different binding than the caller saw.
+			if in.ReplyConsentId != nil || in.ContactsConsentId != nil {
+				if e = matchExpectedConsent(in.ReplyConsentId, in.ContactsConsentId, binding); e != nil {
+					return e
+				}
+			}
 			if e = s.allow(ctx, tx, p.User, in.ContactId, binding); e != nil {
 				return e
 			}

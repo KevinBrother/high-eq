@@ -1,0 +1,133 @@
+name: D13 dedicated integration
+
+on:
+  push:
+    paths:
+      - '.github/workflows/d13-dedicated.yml'
+      - 'app/assets/**'
+      - 'app/lib/**'
+      - 'app/pubspec.yaml'
+      - 'app/pubspec.lock'
+      - 'app/test/**'
+      - 'app/tool/d13/**'
+      - 'app/tool/t22/live_test.dart'
+      - 'app/tool/t29/**'
+      - 'app/tool/t35-privacy/**'
+      - 'docker-compose.yml'
+      - 'docs/api/app.yaml'
+      - 'docs/compliance/separate-consents.md'
+      - 'docs/tasks/D13.md'
+      - 'server/**'
+  pull_request:
+    paths:
+      - '.github/workflows/d13-dedicated.yml'
+      - 'app/assets/**'
+      - 'app/lib/**'
+      - 'app/pubspec.yaml'
+      - 'app/pubspec.lock'
+      - 'app/test/**'
+      - 'app/tool/d13/**'
+      - 'app/tool/t22/live_test.dart'
+      - 'app/tool/t29/**'
+      - 'app/tool/t35-privacy/**'
+      - 'docker-compose.yml'
+      - 'docs/api/app.yaml'
+      - 'docs/compliance/separate-consents.md'
+      - 'docs/tasks/D13.md'
+      - 'server/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: D13 ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - gate: strict
+            name: strict six-test integration
+            timeout: 30
+          - gate: d13flutter
+            name: Flutter to Go reply lifecycle and ledgers
+            timeout: 35
+          - gate: profile-fence
+            name: profile dispatch fences
+            timeout: 25
+          - gate: reply-cancellation
+            name: reply cancellation accounting
+            timeout: 25
+          - gate: t35-reentry
+            name: T35 active reentry race
+            timeout: 25
+          - gate: t35-service
+            name: T35 service receipts
+            timeout: 30
+          - gate: t35-export-ownership
+            name: T35 export ownership
+            timeout: 25
+    concurrency:
+      group: d13-dedicated-${{ github.workflow }}-${{ github.ref }}-${{ matrix.gate }}
+      cancel-in-progress: true
+    env:
+      FLUTTER_SUPPRESS_ANALYTICS: 'true'
+      DART_SUPPRESS_ANALYTICS: 'true'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/head', github.event.pull_request.number) || github.sha }}
+          persist-credentials: false
+
+      - name: Record source, checkout and tree identity
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          checkout_sha=$(git rev-parse HEAD)
+          tree_sha=$(git rev-parse 'HEAD^{tree}')
+          if [[ "$checkout_sha" != "$SOURCE_SHA" ]]; then
+            echo 'checkout HEAD does not equal the event source SHA' >&2
+            exit 1
+          fi
+          {
+            echo '### D13 source identity'
+            echo '```text'
+            printf 'source_sha=%s\n' "$SOURCE_SHA"
+            printf 'base_sha=%s\n' "$BASE_SHA"
+            printf 'workflow_sha=%s\n' "$WORKFLOW_SHA"
+            printf 'event_sha=%s\n' "$EVENT_SHA"
+            printf 'checkout_sha=%s\n' "$checkout_sha"
+            printf 'checkout_tree=%s\n' "$tree_sha"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        if: matrix.gate == 'd13flutter'
+        with:
+          flutter-version: '3.38.10'
+          cache: true
+
+      - name: Prepare locked Flutter dependencies
+        if: matrix.gate == 'd13flutter'
+        working-directory: app
+        run: |
+          flutter precache --linux
+          flutter pub get --enforce-lockfile
+
+      - name: Check gate prerequisites
+        run: bash app/tool/d13/ci-gate.sh --check-only '${{ matrix.gate }}'
+
+      - name: Execute required D13 gate
+        run: bash app/tool/d13/ci-gate.sh '${{ matrix.gate }}'

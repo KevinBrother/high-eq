@@ -39,17 +39,18 @@ const (
 
 // Defines values for ConsentPurpose.
 const (
-	ConsentPurposeAssessment     ConsentPurpose = "assessment"
-	ConsentPurposeAudioRetention ConsentPurpose = "audio_retention"
-	ConsentPurposeChatImport     ConsentPurpose = "chat_import"
-	ConsentPurposeContacts       ConsentPurpose = "contacts"
-	ConsentPurposeHealth         ConsentPurpose = "health"
-	ConsentPurposeManualMark     ConsentPurpose = "manual_mark"
-	ConsentPurposePractice       ConsentPurpose = "practice"
-	ConsentPurposePrivacy        ConsentPurpose = "privacy"
-	ConsentPurposeReview         ConsentPurpose = "review"
-	ConsentPurposeTerms          ConsentPurpose = "terms"
-	ConsentPurposeVoice          ConsentPurpose = "voice"
+	ConsentPurposeAssessment      ConsentPurpose = "assessment"
+	ConsentPurposeAudioRetention  ConsentPurpose = "audio_retention"
+	ConsentPurposeChatImport      ConsentPurpose = "chat_import"
+	ConsentPurposeContacts        ConsentPurpose = "contacts"
+	ConsentPurposeHealth          ConsentPurpose = "health"
+	ConsentPurposeManualMark      ConsentPurpose = "manual_mark"
+	ConsentPurposePractice        ConsentPurpose = "practice"
+	ConsentPurposePrivacy         ConsentPurpose = "privacy"
+	ConsentPurposeReplyChatImport ConsentPurpose = "reply_chat_import"
+	ConsentPurposeReview          ConsentPurpose = "review"
+	ConsentPurposeTerms           ConsentPurpose = "terms"
+	ConsentPurposeVoice           ConsentPurpose = "voice"
 )
 
 // Defines values for ContactScene.
@@ -380,17 +381,18 @@ const (
 
 // Defines values for SetConsentParamsPurpose.
 const (
-	SetConsentParamsPurposeAssessment     SetConsentParamsPurpose = "assessment"
-	SetConsentParamsPurposeAudioRetention SetConsentParamsPurpose = "audio_retention"
-	SetConsentParamsPurposeChatImport     SetConsentParamsPurpose = "chat_import"
-	SetConsentParamsPurposeContacts       SetConsentParamsPurpose = "contacts"
-	SetConsentParamsPurposeHealth         SetConsentParamsPurpose = "health"
-	SetConsentParamsPurposeManualMark     SetConsentParamsPurpose = "manual_mark"
-	SetConsentParamsPurposePractice       SetConsentParamsPurpose = "practice"
-	SetConsentParamsPurposePrivacy        SetConsentParamsPurpose = "privacy"
-	SetConsentParamsPurposeReview         SetConsentParamsPurpose = "review"
-	SetConsentParamsPurposeTerms          SetConsentParamsPurpose = "terms"
-	SetConsentParamsPurposeVoice          SetConsentParamsPurpose = "voice"
+	SetConsentParamsPurposeAssessment      SetConsentParamsPurpose = "assessment"
+	SetConsentParamsPurposeAudioRetention  SetConsentParamsPurpose = "audio_retention"
+	SetConsentParamsPurposeChatImport      SetConsentParamsPurpose = "chat_import"
+	SetConsentParamsPurposeContacts        SetConsentParamsPurpose = "contacts"
+	SetConsentParamsPurposeHealth          SetConsentParamsPurpose = "health"
+	SetConsentParamsPurposeManualMark      SetConsentParamsPurpose = "manual_mark"
+	SetConsentParamsPurposePractice        SetConsentParamsPurpose = "practice"
+	SetConsentParamsPurposePrivacy         SetConsentParamsPurpose = "privacy"
+	SetConsentParamsPurposeReplyChatImport SetConsentParamsPurpose = "reply_chat_import"
+	SetConsentParamsPurposeReview          SetConsentParamsPurpose = "review"
+	SetConsentParamsPurposeTerms           SetConsentParamsPurpose = "terms"
+	SetConsentParamsPurposeVoice           SetConsentParamsPurpose = "voice"
 )
 
 // Defines values for DeleteSourceParamsKind.
@@ -500,10 +502,12 @@ type CompletePlanItemResult struct {
 
 // Consent defines model for Consent.
 type Consent struct {
-	Granted   bool           `json:"granted"`
-	Purpose   ConsentPurpose `json:"purpose"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	Version   string         `json:"version"`
+	// DecisionId 授权列表中回复聊天导入或关系人用途的决定标识。撤回后重新授权产生新标识。
+	DecisionId *openapi_types.UUID `json:"decision_id,omitempty"`
+	Granted    bool                `json:"granted"`
+	Purpose    ConsentPurpose      `json:"purpose"`
+	UpdatedAt  time.Time           `json:"updated_at"`
+	Version    string              `json:"version"`
 }
 
 // ConsentPurpose defines model for Consent.Purpose.
@@ -566,8 +570,14 @@ type CreateOrderResult struct {
 type CreateReplyInput struct {
 	ChatText  string              `json:"chat_text"`
 	ContactId *openapi_types.UUID `json:"contact_id,omitempty"`
-	Goal      *string             `json:"goal,omitempty"`
-	RequestId openapi_types.UUID  `json:"request_id"`
+
+	// ContactsConsentId 新键关联关系人时必填。明确提交时读取的 contacts / 2026-11 决定 UUID；不关联时省略。
+	ContactsConsentId *openapi_types.UUID `json:"contacts_consent_id,omitempty"`
+	Goal              *string             `json:"goal,omitempty"`
+
+	// ReplyConsentId 新键必填。明确提交时读取的 reply_chat_import / 2026-11-reply 决定 UUID。
+	ReplyConsentId *openapi_types.UUID `json:"reply_consent_id,omitempty"`
+	RequestId      openapi_types.UUID  `json:"request_id"`
 }
 
 // CreateSessionInput defines model for CreateSessionInput.
@@ -878,6 +888,7 @@ type HrvStat struct {
 
 // InferProfileInput defines model for InferProfileInput.
 type InferProfileInput struct {
+	// ChatText 用户主动提交且有权分享的必要片段，仅用于本次推断。
 	ChatText  string             `json:"chat_text"`
 	RequestId openapi_types.UUID `json:"request_id"`
 }
@@ -2076,7 +2087,7 @@ type ServerInterface interface {
 	// 选为免费账号可用的一个关系人
 	// (POST /v1/contacts/{id}/activate)
 	ChooseContact(c *gin.Context, id openapi_types.UUID)
-	// 按导入文本推断关系人画像，原文 24 小时内删除
+	// 按用户主动提交的必要聊天片段推断关系人画像
 	// (POST /v1/contacts/{id}/infer)
 	InferProfile(c *gin.Context, id openapi_types.UUID)
 	// 按权限读取画像摘要

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"high-eq/server/internal/accounts"
 	"high-eq/server/internal/api/admin"
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/gateway"
@@ -135,8 +136,11 @@ where id in (select primary_model from model_routes where task='reply_suggestion
 		subject := uuid.NewString()
 		a := accountOperations{retried: retry, Tokens: login(subject)}
 		for _, purpose := range []string{"contacts", "chat_import", "review"} {
-			request(a.AccessToken, "PUT", "me/consents/"+purpose, map[string]any{"version": "v1", "granted": true}, 200, nil)
+			request(a.AccessToken, "PUT", "me/consents/"+purpose, map[string]any{"version": "2026-11", "granted": true}, 200, nil)
 		}
+		request(a.AccessToken, "PUT", "me/consents/"+accounts.ReplyChatImportPurpose, map[string]any{
+			"version": accounts.ReplyChatImportVersion, "granted": true,
+		}, 200, nil)
 		var contact app.Contact
 		request(a.AccessToken, "POST", "contacts", map[string]string{"nickname": "合成对象", "scene": "partner"}, 200, &contact)
 		a.contact = contact.Id
@@ -173,7 +177,8 @@ where id in (select primary_model from model_routes where task='reply_suggestion
 			request(a.AccessToken, "POST", path, app.InferProfileInput{RequestId: separate, ChatText: profileText}, 200, nil)
 		}
 		var reply app.Reply
-		replyInput := app.CreateReplyInput{RequestId: shared, ChatText: replyText}
+		replyInput := app.CreateReplyInput{RequestId: shared, ChatText: replyText,
+			ReplyConsentId: replyFixtureDecision(t, s, a.Tokens, accounts.ReplyChatImportPurpose, accounts.ReplyChatImportVersion)}
 		request(a.AccessToken, "POST", "replies", replyInput, 200, &reply)
 		a.reply = reply.Id
 		var review app.Review

@@ -71,16 +71,26 @@ Future<_EntrySessions> _entrySessions(WidgetTester t) async {
 }
 
 class _RouteApi extends AppApi {
-  _RouteApi(super.origin, super.transport, super.sessions, this.samples);
+  _RouteApi(
+    super.origin,
+    super.transport,
+    super.sessions,
+    this.samples, {
+    this.meUserId,
+  });
   final Json samples;
+  final String? meUserId;
   final ops = <AppOp>[];
   final analyzeBodies = <Json>[];
-  var chatImportGranted = false;
+  final consentPaths = <String>[];
+  final consentBodies = <Json>[];
+  var replyChatImportGranted = false;
 
   Json _consent() => {
-    'purpose': 'chat_import',
-    'version': '2026-11',
-    'granted': chatImportGranted,
+    'purpose': 'reply_chat_import',
+    'version': '2026-11-reply',
+    'granted': replyChatImportGranted,
+    'decision_id': '90ed4318-470a-4ec1-8da5-b4798ee63a75',
     'updated_at': '2026-11-21T09:00:00+08:00',
   };
 
@@ -95,14 +105,20 @@ class _RouteApi extends AppApi {
     ops.add(op);
     switch (op) {
       case AppOp.getMe:
-        return {...samples[op.name] as Json, 'user_id': scope!.account};
+        final account = scope?.account;
+        if (account == null) {
+          throw StateError('getMe requires an account scope');
+        }
+        return {...samples[op.name] as Json, 'user_id': meUserId ?? account};
       case AppOp.listConsents:
         return {
-          'items': chatImportGranted ? [_consent()] : <Json>[],
+          'items': replyChatImportGranted ? [_consent()] : <Json>[],
           'next_cursor': null,
         };
       case AppOp.setConsent:
-        chatImportGranted = body?['granted'] == true;
+        consentPaths.add(path['purpose'] ?? '');
+        consentBodies.add(body ?? const {});
+        replyChatImportGranted = body?['granted'] == true;
         return _consent();
       default:
         return samples[op.name] as Json;
@@ -110,34 +126,37 @@ class _RouteApi extends AppApi {
   }
 
   @override
-  Stream<List<int>> bytes(
+  Stream<List<int>> bytesGuarded(
     AppOp op, {
+    required Future<void> Function() beforeSend,
+    void Function()? checkBeforeSend,
+    bool preserveSessionOnUnconfirmedRefresh = false,
+    Future<void>? abortTrigger,
     AccountScope? scope,
     Map<String, String> path = const {},
     Map<String, String> query = const {},
     Json? body,
-    void Function()? beforeSend,
     void Function(int)? onStatus,
-  }) {
-    beforeSend?.call();
+  }) async* {
+    await beforeSend();
+    checkBeforeSend?.call();
     ops.add(op);
     if (op != AppOp.createReply || body == null) {
       throw StateError('unexpected streamed route: ${op.name}');
     }
     analyzeBodies.add(body);
     onStatus?.call(202);
-    return Stream.value(
-      utf8.encode(
-        jsonEncode({'request_id': body['request_id'], 'status': 'in_progress'}),
-      ),
+    yield utf8.encode(
+      jsonEncode({'request_id': body['request_id'], 'status': 'in_progress'}),
     );
   }
 }
 
 ({_RouteApi api, List<AppOp> ops, List<Json> analyzeBodies}) syntheticApi(
   Sessions sessions,
-  Json samples,
-) {
+  Json samples, {
+  String? meUserId,
+}) {
   final transport = Handler()
     ..handle = (op, _) async =>
         throw StateError('unexpected transport: ${op.name}');
@@ -146,6 +165,7 @@ class _RouteApi extends AppApi {
     transport,
     sessions,
     samples,
+    meUserId: meUserId,
   );
   return (api: api, ops: api.ops, analyzeBodies: api.analyzeBodies);
 }
@@ -182,10 +202,10 @@ void main() {
     await t.pumpAndSettle();
     expect(find.text('回复助手'), findsOneWidget);
     expect(find.text('合成分享文字'), findsOneWidget);
-    expect(find.text('首次导入说明'), findsOneWidget);
+    expect(find.text('本次回复说明'), findsOneWidget);
     expect(synthetic.ops, isNot(contains(AppOp.createReply)));
     expect(synthetic.analyzeBodies, isEmpty);
-    await t.tap(find.text('暂不导入'));
+    await t.tap(find.byKey(const ValueKey('reply-defer-import')));
     for (
       var i = 0;
       i < 20 && find.text('是否同意开始本次自评？').evaluate().isEmpty;
@@ -201,6 +221,40 @@ void main() {
     await t.pumpAndSettle();
     expect(find.text('合成分享文字'), findsNothing);
     expect(find.text('分享已暂存，登录后可编辑'), findsNothing);
+  });
+  testWidgets('真实路由：错号 /me 不能进入分享，也不自动分析', (t) async {
+    final sessions = await _entrySessions(t);
+    final samples = jsonDecode(
+      File('assets/contract_examples.json').readAsStringSync(),
+    );
+    final synthetic = syntheticApi(sessions, samples, meUserId: 'synthetic-B');
+    const channel = MethodChannel('cn.higheq/reply-share');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    String? next = '错号分享文字';
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      final value = next;
+      next = null;
+      return value;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    await t.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWith((ref) => synthetic.api)],
+        child: const HighEqApp(),
+      ),
+    );
+    await t.pumpAndSettle();
+    await t.runAsync(() => sessions.activate(tokens('synthetic-A')));
+    await t.pumpAndSettle();
+
+    expect(find.text('暂时无法完成，请检查连接后重试。'), findsOneWidget);
+    expect(find.byKey(const Key('account-entry-retry')), findsOneWidget);
+    expect(find.text('回复助手'), findsNothing);
+    expect(find.text('错号分享文字'), findsNothing);
+    expect(synthetic.ops, contains(AppOp.getMe));
+    expect(synthetic.ops, isNot(contains(AppOp.createReply)));
+    expect(synthetic.analyzeBodies, isEmpty);
   });
   testWidgets('登录后热分享压入新页面，关闭后保留原请求与 202 操作', (t) async {
     final sessions = await _entrySessions(t);
@@ -227,9 +281,13 @@ void main() {
     await t.pumpAndSettle();
     await t.runAsync(() => sessions.activate(tokens('synthetic-A')));
     await t.pumpAndSettle();
-    await t.tap(find.text('同意导入说明'));
+    await t.tap(find.byKey(const ValueKey('reply-accept-import')));
     await t.pumpAndSettle();
-    await t.tap(find.text('开始分析'));
+    expect(synthetic.api.consentPaths, ['reply_chat_import']);
+    expect(synthetic.api.consentBodies, [
+      {'granted': true, 'version': '2026-11-reply'},
+    ]);
+    await t.tap(find.byKey(const ValueKey('reply-analyze')));
     await t.pumpAndSettle();
     expect(synthetic.analyzeBodies, hasLength(1));
     final originalId = synthetic.analyzeBodies.single['request_id'];

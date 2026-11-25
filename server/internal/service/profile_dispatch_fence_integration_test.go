@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"high-eq/server/internal/accounts"
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/gateway"
 )
@@ -71,7 +72,7 @@ func checkProfileDispatchFence(t *testing.T, f *profilePersistenceFixture, state
 	switch state {
 	case "chat-withdrawal":
 		change = func() error {
-			w := profilePersistenceRequest(f.ctx, f.router, account.AccessToken, http.MethodPut, "me/consents/chat_import", map[string]any{"version": "v1", "granted": false})
+			w := profilePersistenceRequest(f.ctx, f.router, account.AccessToken, http.MethodPut, "me/consents/chat_import", map[string]any{"version": accounts.ContactNoticeVersion, "granted": false})
 			return profileDispatchStatus(w.Code, 200)
 		}
 	case "account-freeze":

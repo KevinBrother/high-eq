@@ -1,3 +1,4 @@
+import '../../core/chat_import_consent.dart';
 import '../../core/endpoints.g.dart';
 import '../../core/session.dart';
 
@@ -10,7 +11,7 @@ enum ContactPurpose {
 }
 
 // Version of the two purpose notices shown by this feature, not login consent.
-const contactNoticeVersion = '2026-11';
+const contactNoticeVersion = contactChatNoticeVersion;
 
 class ConsentUnconfirmed implements Exception {}
 
@@ -34,7 +35,9 @@ final class ContactConsentSnapshot {
 
   Set<ContactPurpose> get grants => Set.unmodifiable(_revisions.keys);
 
-  bool allows(ContactPurpose purpose) => _revisions.containsKey(purpose);
+  String? revisionFor(ContactPurpose purpose) => _revisions[purpose];
+
+  bool allows(ContactPurpose purpose) => revisionFor(purpose) != null;
 
   ContactInferenceGrant? get inferenceGrant {
     final contactsRevision = _revisions[ContactPurpose.contacts];

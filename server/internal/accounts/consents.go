@@ -13,7 +13,13 @@ import (
 	"high-eq/server/internal/api/app"
 )
 
-var purposes = map[string]bool{"terms": true, "privacy": true, "assessment": true, "health": true, "voice": true, "audio_retention": true, "practice": true, "review": true, "contacts": true, "chat_import": true, "manual_mark": true}
+const (
+	ContactNoticeVersion   = "2026-11"
+	ReplyChatImportPurpose = "reply_chat_import"
+	ReplyChatImportVersion = "2026-11-reply"
+)
+
+var purposes = map[string]bool{"terms": true, "privacy": true, "assessment": true, "health": true, "voice": true, "audio_retention": true, "practice": true, "review": true, "contacts": true, "chat_import": true, ReplyChatImportPurpose: true, "manual_mark": true}
 
 // Granted is a transaction-scoped check for modules that collect data. Use the
 // same authorized transaction for the subsequent write to serialize withdrawal.
@@ -25,13 +31,23 @@ func Granted(ctx context.Context, tx pgx.Tx, user uuid.UUID, purpose string) (bo
 	e := tx.QueryRow(ctx, "select exists(select from consents where user_id=$1 and purpose=$2 and withdrawn_at is null)", user, purpose).Scan(&ok)
 	return ok, e
 }
-func (s *Service) Consent(ctx context.Context, p Principal, purpose, version string, grant bool) (app.Consent, error) {
-	var out app.Consent
+func validateConsentRequest(purpose, version string, grant bool) error {
 	if !purposes[purpose] || !validText(version, 100) {
-		return out, ErrInvalid
+		return ErrInvalid
 	}
 	if grant && (purpose == "privacy" || purpose == "terms") && version != PolicyVersion {
-		return out, ErrInvalid
+		return ErrInvalid
+	}
+	if purpose == ReplyChatImportPurpose && version != ReplyChatImportVersion {
+		return ErrInvalid
+	}
+	return nil
+}
+
+func (s *Service) Consent(ctx context.Context, p Principal, purpose, version string, grant bool) (app.Consent, error) {
+	var out app.Consent
+	if err := validateConsentRequest(purpose, version, grant); err != nil {
+		return out, err
 	}
 	out.Purpose = app.ConsentPurpose(purpose)
 	out.Version = version
@@ -40,7 +56,7 @@ func (s *Service) Consent(ctx context.Context, p Principal, purpose, version str
 		var id uuid.UUID
 		var old string
 		var active bool
-		e := tx.QueryRow(ctx, `select id,version,withdrawn_at is null,coalesce(withdrawn_at,granted_at) from consents where user_id=$1 and purpose=$2 order by granted_at desc,id desc limit 1`, p.User, purpose).Scan(&id, &old, &active, &out.UpdatedAt)
+		e := tx.QueryRow(ctx, `select id,version,withdrawn_at is null,coalesce(withdrawn_at,granted_at) from consents where user_id=$1 and purpose=$2 order by (withdrawn_at is null) desc,granted_at desc,id desc limit 1`, p.User, purpose).Scan(&id, &old, &active, &out.UpdatedAt)
 		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
 			return e
 		}
@@ -88,7 +104,7 @@ func (s *Service) ListConsents(ctx context.Context, p Principal, params app.List
 		}
 	}
 	e := s.WithReadSession(ctx, p, false, func(tx pgx.Tx) error {
-		rows, e := tx.Query(ctx, `with current as (select distinct on (purpose) purpose,version,withdrawn_at is null as granted,coalesce(withdrawn_at,granted_at) as at,id from consents where user_id=$1 order by purpose,granted_at desc,id desc) select purpose,version,granted,at,id from current where $2 or (at,id)<($3,$4) order by at desc,id desc limit $5`, p.User, params.Cursor == nil, after.At, after.ID, limit+1)
+		rows, e := tx.Query(ctx, `with current as (select distinct on (purpose) purpose,version,withdrawn_at is null as granted,coalesce(withdrawn_at,granted_at) as at,id from consents where user_id=$1 order by purpose,(withdrawn_at is null) desc,granted_at desc,id desc) select purpose,version,granted,at,id from current where $2 or (at,id)<($3,$4) order by at desc,id desc limit $5`, p.User, params.Cursor == nil, after.At, after.ID, limit+1)
 		if e != nil {
 			return e
 		}
@@ -109,6 +125,10 @@ func (s *Service) ListConsents(ctx context.Context, p Principal, params app.List
 				return e
 			}
 			last.At = c.UpdatedAt
+			if c.Purpose == app.ConsentPurposeReplyChatImport || c.Purpose == app.ConsentPurposeContacts {
+				id := last.ID
+				c.DecisionId = &id
+			}
 			out.Items = append(out.Items, c)
 		}
 		return rows.Err()

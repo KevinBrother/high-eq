@@ -81,7 +81,11 @@ func TestProfileLifecycle(t *testing.T) {
 	u, tok := a.UserId, a.AccessToken
 	exec := func(sql string, args ...any) { t.Helper(); _, e := s.db.Exec(ctx, sql, args...); must(e) }
 	grant := func(p string, on bool) {
-		call("PUT", "me/consents/"+p, tok, map[string]any{"version": "v1", "granted": on}, 200, nil)
+		version := "2026-11"
+		if p == "reply_chat_import" {
+			version = "2026-11-reply"
+		}
+		call("PUT", "me/consents/"+p, tok, map[string]any{"version": version, "granted": on}, 200, nil)
 	}
 	call("GET", "contact-questions", "", nil, 401, nil)
 	var bank struct{ Items []profile.Question }
@@ -141,10 +145,11 @@ func TestProfileLifecycle(t *testing.T) {
 	call("POST", p+"/activate", tok, nil, 200, nil)
 	call("PATCH", p, tok, edit, 200, nil)
 	call("POST", p+"/infer", tok, material, 403, nil)
-	grant("chat_import", true)
 	var body app.Profile
 	mode := "ok"
+	var inferenceCalls int
 	s.Profiles.AI = profileRunner(func(_ context.Context, c gateway.Call) (gateway.Reply, error) {
+		inferenceCalls++
 		if c.User != u || c.Contact != one.Id || c.Task != gateway.ProfileInference || c.Messages[0].Content != raw {
 			t.Fatal("wrong inference scope")
 		}
@@ -158,7 +163,28 @@ func TestProfileLifecycle(t *testing.T) {
 		}
 		return gateway.Reply{Result: gateway.Result{Object: json.RawMessage(`{"choices":[1,1,2,1,0,0,0]}`)}}, nil
 	})
+	type profileCounts struct{ requests, imports int }
+	counts := func() (v profileCounts) {
+		t.Helper()
+		must(s.db.QueryRow(ctx, `select
+			(select count(*) from profile_inference_requests where user_id=$1),
+			(select count(*) from chat_imports c join activities a on a.id=c.activity_id where a.user_id=$1)`, u).Scan(&v.requests, &v.imports))
+		return v
+	}
+	grant("reply_chat_import", true)
+	call("POST", p+"/infer", tok, material, 403, nil)
+	before := counts()
+	if before != (profileCounts{}) || inferenceCalls != 0 {
+		t.Fatalf("reply-only grant reached profile inference: %+v, calls=%d", before, inferenceCalls)
+	}
+	grant("chat_import", true)
 	call("POST", p+"/infer", tok, material, 200, &body)
+	call("POST", p+"/infer", tok, material, 200, nil)
+	completed := counts()
+	if completed != (profileCounts{requests: 1}) || inferenceCalls != 1 {
+		t.Fatalf("profile inference or replay persisted chat or repeated model work: %+v, calls=%d", completed, inferenceCalls)
+	}
+	t.Logf("D13_REPLY_FIRST requests=%d→%d imports=%d→%d", before.requests, completed.requests, before.imports, completed.imports)
 	if body.Attachment != nil || body.BigFive[0].Confidence == 0 {
 		t.Fatal("bad inference")
 	}
@@ -174,6 +200,9 @@ func TestProfileLifecycle(t *testing.T) {
 	call("POST", p+"/infer", tok, downMaterial, 503, nil)
 	mode = "withdraw"
 	withdrawMaterial := app.InferProfileInput{RequestId: uuid.New(), ChatText: raw}
+	call("POST", p+"/infer", tok, withdrawMaterial, 409, nil)
+	call("POST", p+"/infer", tok, withdrawMaterial, 403, nil)
+	grant("chat_import", true)
 	call("POST", p+"/infer", tok, withdrawMaterial, 409, nil)
 	call("POST", "profiles/feedback", tok, feedback, 200, nil)
 	call("POST", "profiles/feedback", tok, feedback, 200, nil)
@@ -375,7 +404,7 @@ func TestProfileInferenceReviewRegressions(t *testing.T) {
 	}
 	grant := func(token, purpose string, on bool) {
 		t.Helper()
-		mustCall("PUT", "me/consents/"+purpose, token, map[string]any{"version": "v1", "granted": on}, 200, nil)
+		mustCall("PUT", "me/consents/"+purpose, token, map[string]any{"version": "2026-11", "granted": on}, 200, nil)
 	}
 	create := func(token string) app.Contact {
 		t.Helper()
