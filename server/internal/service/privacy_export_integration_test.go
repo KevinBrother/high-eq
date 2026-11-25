@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"high-eq/server/internal/api/app"
 )
@@ -36,10 +37,11 @@ func TestPrivacyRightsHTTP(t *testing.T) {
 	defer s.Close()
 	router := s.Router()
 
-	request := func(method, path, bearer string, body any) *httptest.ResponseRecorder {
+	request := func(t *testing.T, method, path, bearer string, body any) *httptest.ResponseRecorder {
 		t.Helper()
 		var raw []byte
 		if body != nil {
+			var err error
 			raw, err = json.Marshal(body)
 			if err != nil {
 				t.Fatal(err)
@@ -56,7 +58,7 @@ func TestPrivacyRightsHTTP(t *testing.T) {
 	}
 	expect := func(method, path, bearer string, body any, status int) *httptest.ResponseRecorder {
 		t.Helper()
-		w := request(method, path, bearer, body)
+		w := request(t, method, path, bearer, body)
 		if w.Code != status {
 			t.Fatalf("%s %s: got %d, want %d: %s", method, path, w.Code, status, w.Body.String())
 		}
@@ -161,47 +163,53 @@ func TestPrivacyRightsHTTP(t *testing.T) {
 	expect("PUT", "/v1/me/consents/manual_mark", a.AccessToken, map[string]any{"version": "v1", "granted": true}, 200)
 	markRequest := uuid.MustParse("35000000-0000-4000-8000-000000000001")
 	markScene := "partner"
+	siblingRequest := uuid.New()
+	owner, err := s.Accounts.Parse(a.AccessToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mark app.Mark
+	// Space the two marks using the service's clock input so the HTTP create
+	// does not coalesce them into one mark within the one-minute interval.
+	if err := s.Accounts.WithSession(ctx, owner, false, func(tx pgx.Tx) error {
+		var err error
+		mark, err = s.Marks.Create(ctx, tx, a.UserId, app.CreateMarkInput{
+			RequestId: markRequest, ContactId: &contact.Id, Scene: &markScene,
+		}, time.Now().Add(-2*time.Minute))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 	w = expect("POST", "/v1/marks", a.AccessToken, map[string]any{
-		"request_id": markRequest,
+		"request_id": siblingRequest,
 		"contact_id": contact.Id,
 		"scene":      markScene,
 	}, 200)
-	var mark app.Mark
-	if err := json.Unmarshal(w.Body.Bytes(), &mark); err != nil {
+	var sibling app.Mark
+	if err := json.Unmarshal(w.Body.Bytes(), &sibling); err != nil {
 		t.Fatal(err)
 	}
-	if mark.ContactId == nil || *mark.ContactId != contact.Id || mark.Scene == nil || *mark.Scene != markScene {
-		t.Fatalf("manual mark did not preserve object and scene: %+v", mark)
+	for _, m := range []app.Mark{mark, sibling} {
+		if m.ContactId == nil || *m.ContactId != contact.Id || m.Scene == nil || *m.Scene != markScene {
+			t.Fatalf("manual mark did not preserve object and scene: %+v", m)
+		}
 	}
-	t.Run("selected_record_delete_stays_unimplemented", func(t *testing.T) {
-		path := "/v1/me/data/manual_marks/" + mark.Id.String()
-		w := request("DELETE", path, "", nil)
-		if w.Code != 401 {
-			t.Fatalf("anonymous DELETE %s: got %d, want 401: %s", path, w.Code, w.Body)
-		}
-		w = request("DELETE", path, a.AccessToken, nil)
-		if w.Code != 501 {
-			t.Fatalf("authenticated DELETE %s: got %d, want 501: %s", path, w.Code, w.Body)
-		}
-		var response struct {
-			Code      string `json:"code"`
-			Retryable *bool  `json:"retryable"`
-		}
-		t35Decode(t, w.Body.Bytes(), &response)
-		if response.Code != "not_implemented" || response.Retryable == nil || *response.Retryable {
-			t.Fatalf("deferred deletion response: %s", w.Body)
-		}
-	})
-	// The owner's mark must still be present in the subsequent export.
 	expect("PUT", "/v1/me/consents/manual_mark", b.AccessToken, map[string]any{"version": "v1", "granted": true}, 200)
 	foreignMarkRequest := uuid.New()
 	w = expect("POST", "/v1/marks", b.AccessToken, map[string]any{"request_id": foreignMarkRequest}, 200)
 	var foreignMark app.Mark
 	t35Decode(t, w.Body.Bytes(), &foreignMark)
+	if mark.Id == uuid.Nil || sibling.Id == uuid.Nil || foreignMark.Id == uuid.Nil ||
+		mark.Id == sibling.Id || mark.Id == foreignMark.Id || sibling.Id == foreignMark.Id {
+		t.Fatal("expected three distinct public mark IDs")
+	}
 
-	export := func(token string) map[string][]byte {
+	export := func(t *testing.T, token string) map[string][]byte {
 		t.Helper()
-		w := expect("GET", "/v1/me/export", token, nil, 200)
+		w := request(t, "GET", "/v1/me/export", token, nil)
+		if w.Code != 200 {
+			t.Fatalf("GET /v1/me/export: got %d, want 200: %s", w.Code, w.Body)
+		}
 		if got := w.Header().Get("Content-Type"); got != "application/zip" {
 			t.Fatalf("export content type = %q", got)
 		}
@@ -246,7 +254,7 @@ func TestPrivacyRightsHTTP(t *testing.T) {
 		}
 		return files
 	}
-	manualMarks := func(files map[string][]byte) []app.Mark {
+	manualMarks := func(t *testing.T, files map[string][]byte) []app.Mark {
 		t.Helper()
 		var marks []app.Mark
 		if err := json.Unmarshal(files["manual_marks.json"], &marks); err != nil {
@@ -255,7 +263,7 @@ func TestPrivacyRightsHTTP(t *testing.T) {
 		return marks
 	}
 
-	files := export(a.AccessToken)
+	files := export(t, a.AccessToken)
 	var manifest struct {
 		Modules []string `json:"modules"`
 		Files   []string `json:"files"`
@@ -332,28 +340,159 @@ func TestPrivacyRightsHTTP(t *testing.T) {
 			t.Fatalf("A export leaked %q", secret)
 		}
 	}
-	marks := manualMarks(files)
-	if len(marks) != 1 || marks[0].Id != mark.Id || !marks[0].MarkedAt.Equal(mark.MarkedAt) || marks[0].ContactId == nil || *marks[0].ContactId != contact.Id || marks[0].Scene == nil || *marks[0].Scene != markScene {
+	marks := manualMarks(t, files)
+	if len(marks) != 2 || marks[0].Id != sibling.Id ||
+		marks[1].Id != mark.Id || !marks[1].MarkedAt.Equal(mark.MarkedAt) ||
+		marks[1].ContactId == nil || *marks[1].ContactId != contact.Id ||
+		marks[1].Scene == nil || *marks[1].Scene != markScene {
 		t.Fatalf("manual mark export = %+v, want time/object/scene from %+v", marks, mark)
 	}
 	t35Exclude(t, files["manual_marks.json"], foreignMark.Id.String(), markRequest.String(),
-		foreignMarkRequest.String(), `"request_id":`, `"input_mac":`)
-	if other := manualMarks(export(b.AccessToken)); len(other) != 1 || other[0].Id != foreignMark.Id {
+		siblingRequest.String(), foreignMarkRequest.String(), `"request_id":`, `"input_mac":`)
+	if other := manualMarks(t, export(t, b.AccessToken)); len(other) != 1 || other[0].Id != foreignMark.Id {
 		t.Fatal("the other account did not get exactly its own mark")
 	}
 
+	if !t.Run("selected_record_delete_removes_only_the_listed_owned_mark", func(t *testing.T) {
+		const listPath = "/v1/me/data/manual_marks"
+		call := func(method, path, token string, status int) []byte {
+			t.Helper()
+			w := request(t, method, path, token, nil)
+			if w.Code != status {
+				t.Fatalf("%s %s: got %d, want %d: %s", method, path, w.Code, status, w.Body)
+			}
+			return w.Body.Bytes()
+		}
+		assertMarks := func(token string, want ...app.Mark) []wireRecordLocator {
+			t.Helper()
+			body := call("GET", listPath, token, 200)
+			var page wireRecordLocatorPage
+			decoder := json.NewDecoder(bytes.NewReader(body))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&page); err != nil {
+				t.Fatalf("decode mark locators: %v: %s", err, body)
+			}
+			t35Exclude(t, body, contact.Id.String(), markScene, markRequest.String(),
+				siblingRequest.String(), foreignMarkRequest.String(), `"channel":`)
+			archive := export(t, token)
+			got := manualMarks(t, archive)
+			if page.NextCursor != nil || len(page.Items) != len(want) || len(got) != len(want) {
+				t.Fatalf("got %d locators and %d exported marks, want %d of each (cursor %v)", len(page.Items), len(got), len(want), page.NextCursor)
+			}
+			for i, expected := range want {
+				item, exported := page.Items[i], got[i]
+				if item.Kind != "manual_marks" || item.Id == nil || *item.Id != expected.Id ||
+					item.Label != "手动标记" || item.RecordedAt == nil || !item.RecordedAt.Equal(expected.MarkedAt) {
+					t.Fatalf("locator %d does not match mark %s: %+v", i, expected.Id, item)
+				}
+				if exported.Id != expected.Id || !exported.MarkedAt.Equal(expected.MarkedAt) ||
+					!reflect.DeepEqual(exported.ContactId, expected.ContactId) || !reflect.DeepEqual(exported.Scene, expected.Scene) {
+					t.Fatalf("exported mark %d = %+v, want %+v", i, exported, expected)
+				}
+			}
+			for _, part := range archive {
+				t35Exclude(t, part, markRequest.String(), siblingRequest.String(), foreignMarkRequest.String(), `"input_mac":`)
+				for _, candidate := range []app.Mark{mark, sibling, foreignMark} {
+					if !slices.ContainsFunc(want, func(m app.Mark) bool { return m.Id == candidate.Id }) {
+						t35Exclude(t, part, candidate.Id.String())
+					}
+				}
+			}
+			return page.Items
+		}
+		assertErasure := func(userID, markID uuid.UUID, erased bool) {
+			t.Helper()
+			var source, alias bool
+			if err := s.db.QueryRow(ctx, `select
+				exists(select 1 from manual_marks where user_id=$1 and id=$2),
+				exists(select 1 from mark_requests where user_id=$1 and mark_id=$2)`,
+				userID, markID).Scan(&source, &alias); err != nil {
+				t.Fatal(err)
+			}
+			key := "deleted:" + markID.String()
+			ttl, err := s.registryRedis.PTTL(ctx, key).Result()
+			if err != nil {
+				t.Fatal(err)
+			}
+			registered, err := s.registryRedis.Exists(ctx, key).Result()
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantPresent := !erased
+			if source != wantPresent || alias != wantPresent ||
+				(erased && (registered != 1 || ttl <= 0)) || (!erased && registered != 0) {
+				t.Fatalf("mark %s: erased=%t, source=%t, alias=%t, ledger keys=%d, ttl=%v", markID, erased, source, alias, registered, ttl)
+			}
+		}
+
+		locators := assertMarks(a.AccessToken, sibling, mark)
+		assertMarks(b.AccessToken, foreignMark)
+		// Select the older row so deleting the first result cannot satisfy the test.
+		selected := *locators[1].Id
+		path := listPath + "/" + selected.String()
+		call("GET", listPath, "", 401)
+		call("DELETE", path, "", 401)
+		call("DELETE", path, revoked.AccessToken, 401)
+		w := invokeWithoutGate("DELETE", path, func(c *gin.Context) {
+			business.DeleteSource(c, app.DeleteSourceParamsKindManualMarks, selected)
+		})
+		if w.Code != 401 {
+			t.Fatalf("revoked delete handler: got %d, want 401: %s", w.Code, w.Body)
+		}
+		missing := call("DELETE", listPath+"/"+uuid.NewString(), a.AccessToken, 404)
+		var problem struct {
+			Code      string `json:"code"`
+			Retryable *bool  `json:"retryable"`
+		}
+		t35Decode(t, missing, &problem)
+		if problem.Code != "not_found" || problem.Retryable == nil || *problem.Retryable {
+			t.Fatalf("unknown mark response: %s", missing)
+		}
+		for _, body := range [][]byte{
+			call("DELETE", path, b.AccessToken, 404),
+			call("DELETE", listPath+"/"+foreignMark.Id.String(), a.AccessToken, 404),
+			call("DELETE", "/v1/me/data/contacts/"+selected.String(), a.AccessToken, 404),
+		} {
+			if !bytes.Equal(body, missing) {
+				t.Fatalf("foreign or wrong-kind mark differs from an unknown ID: %s vs %s", body, missing)
+			}
+		}
+		assertMarks(a.AccessToken, sibling, mark)
+		assertMarks(b.AccessToken, foreignMark)
+		assertErasure(a.UserId, mark.Id, false)
+		assertErasure(a.UserId, sibling.Id, false)
+		assertErasure(b.UserId, foreignMark.Id, false)
+
+		var receipt app.Ack
+		t35Decode(t, call("DELETE", path, a.AccessToken, 200), &receipt)
+		if !receipt.Ok {
+			t.Fatal("selected deletion did not acknowledge success")
+		}
+		call("DELETE", path, a.AccessToken, 404)
+		if w := request(t, "POST", "/v1/marks", a.AccessToken, map[string]any{"request_id": markRequest}); w.Code != 409 {
+			t.Fatalf("deleted mark request replay: got %d, want 409: %s", w.Code, w.Body)
+		}
+		assertMarks(a.AccessToken, sibling)
+		assertMarks(b.AccessToken, foreignMark)
+		assertErasure(a.UserId, mark.Id, true)
+		assertErasure(a.UserId, sibling.Id, false)
+		assertErasure(b.UserId, foreignMark.Id, false)
+	}) {
+		return
+	}
+
 	// An existing pending intent must hide the archive before any bytes are sent.
-	if _, err := s.db.Exec(ctx, `insert into pending_erasure(root_id) values($1)`, mark.Id); err != nil {
+	if _, err := s.db.Exec(ctx, `insert into pending_erasure(root_id) values($1)`, sibling.Id); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
-		if _, err := s.db.Exec(ctx, `delete from pending_erasure where root_id=$1`, mark.Id); err != nil {
+		if _, err := s.db.Exec(ctx, `delete from pending_erasure where root_id=$1`, sibling.Id); err != nil {
 			t.Error(err)
 		}
 	}()
 	blocked := expect("GET", "/v1/me/export", a.AccessToken, nil, 503)
 	assertNoArchive(blocked)
-	t35Exclude(t, blocked.Body.Bytes(), a.UserId.String(), mark.Id.String())
+	t35Exclude(t, blocked.Body.Bytes(), a.UserId.String(), mark.Id.String(), sibling.Id.String())
 	var barrier struct {
 		Code      string `json:"code"`
 		Retryable bool   `json:"retryable"`
@@ -362,9 +501,9 @@ func TestPrivacyRightsHTTP(t *testing.T) {
 	if barrier.Code != "service_unavailable" || !barrier.Retryable {
 		t.Fatalf("export barrier response: %s", blocked.Body)
 	}
-	export(b.AccessToken)
-	expect("DELETE", "/v1/marks/"+mark.Id.String(), a.AccessToken, nil, 200)
-	if marks = manualMarks(export(a.AccessToken)); len(marks) != 0 {
+	export(t, b.AccessToken)
+	expect("DELETE", "/v1/marks/"+sibling.Id.String(), a.AccessToken, nil, 200)
+	if marks = manualMarks(t, export(t, a.AccessToken)); len(marks) != 0 {
 		t.Fatal("deleted manual mark remained exportable")
 	}
 
@@ -383,5 +522,5 @@ func TestPrivacyRightsHTTP(t *testing.T) {
 		assertNoArchive(w)
 	}
 	expect("DELETE", "/v1/me/closure", recovery.AccessToken, nil, 200)
-	export(recovery.AccessToken)
+	export(t, recovery.AccessToken)
 }

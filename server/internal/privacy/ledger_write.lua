@@ -31,7 +31,7 @@ end
 if ttl == 0 then return 1 end
 
 local now = redis.call('time')
-local deadline = now[1] * 1000 + math.floor(now[2] / 1000) + ttl
+local deadline = math.max(now[1] * 1000 + math.floor(now[2] / 1000) + ttl, tonumber(ARGV[4]) or 0)
 for i = first, #KEYS do
     local expiry = math.max(deadline, redis.call('pexpiretime', KEYS[i]))
     redis.call('set', KEYS[i], '', 'PXAT', string.format('%.0f', expiry))

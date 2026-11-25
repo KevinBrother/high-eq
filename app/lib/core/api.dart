@@ -139,6 +139,11 @@ class AppApi {
       await response.stream.listen(null).cancel();
       throw const FormatException('导出响应状态异常');
     }
+    if (op.exactSuccessStatus case final status?
+        when response.statusCode != status) {
+      await response.stream.listen(null).cancel();
+      throw const FormatException('服务响应状态异常');
+    }
     if (response.headers['content-type']?.split(';').first.trim() !=
         op.accept) {
       await response.stream.listen(null).cancel();
@@ -436,21 +441,20 @@ class AppApi {
     _UnauthorizedPolicy unauthorizedPolicy = _UnauthorizedPolicy.standard,
   }) async {
     if (op.accept != 'application/json') throw ArgumentError('请使用流式接口');
-    final result =
-        jsonDecode(
-              await _bytes(
-                op,
-                scope: scope,
-                path: path,
-                query: query,
-                body: body,
-                beforeSend: beforeSend,
-                checkBeforeSend: checkBeforeSend,
-                unauthorizedPolicy: unauthorizedPolicy,
-              ).transform(utf8.decoder).join(),
-            )
-            as Json;
+    final result = jsonDecode(
+      await _bytes(
+        op,
+        scope: scope,
+        path: path,
+        query: query,
+        body: body,
+        beforeSend: beforeSend,
+        checkBeforeSend: checkBeforeSend,
+        unauthorizedPolicy: unauthorizedPolicy,
+      ).transform(utf8.decoder).join(),
+    );
     if (scope != null) sessions.require(scope);
+    if (result is! Json) throw const FormatException('服务响应格式异常');
     return result;
   }
 

@@ -2,6 +2,7 @@ package training
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -14,15 +15,22 @@ func (s *Service) ActivityLevel(ctx context.Context, tx pgx.Tx, user, activityID
 	if s == nil || tx == nil || user == uuid.Nil || activityID == uuid.Nil {
 		return uuid.Nil, ErrMissing
 	}
-	r, err := s.load(ctx, tx, user, activityID)
+	var sealed []byte
+	err := tx.QueryRow(ctx, `select a.content_enc
+from activities a join practice_work w on w.activity_id=a.id
+where a.user_id=$1 and a.id=$2 and a.kind='practice' and a.state='complete'`, user, activityID).Scan(&sealed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrMissing
+	}
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if r.kind != "practice" {
-		return uuid.Nil, ErrMissing
+	var setup setupSnapshot
+	if err := s.open(user, activityID, "setup", sealed, &setup); err != nil {
+		return uuid.Nil, err
 	}
-	if r.Level == nil {
+	if setup.Input.Level == nil {
 		return uuid.Nil, nil
 	}
-	return *r.Level, nil
+	return *setup.Input.Level, nil
 }

@@ -75,7 +75,7 @@ var accountRoutes = map[string]bool{
 	"POST /v1/auth/sms": false, "POST /v1/auth/login": false, "POST /v1/auth/refresh": false,
 	"POST /v1/auth/logout": true, "POST /v1/auth/switch": false, "GET /v1/me": true, "PATCH /v1/me": false,
 	"POST /v1/me/bindings": false, "POST /v1/me/closure": false, "DELETE /v1/me/closure": true,
-	"GET /v1/me/export":        false,
+	"GET /v1/me/export": false, "GET /v1/me/data/:kind": false, "DELETE /v1/me/data/:kind/:id": false,
 	"POST /v1/purchases/token": false, "POST /v1/purchases": false, "POST /v1/purchases/restore": false,
 	"POST /v1/payment-notifications/apple": false, "POST /v1/payment-notifications/wechat": false, "POST /v1/payment-notifications/alipay": false,
 	"GET /v1/contact-questions": false, "GET /v1/contacts": false, "POST /v1/contacts": false,
@@ -93,10 +93,12 @@ var accountRoutes = map[string]bool{
 // lock. The generic preflight must not hide an exact pending deletion from its
 // retry transaction.
 var deferredSessionRoutes = map[string]bool{
-	"GET /v1/me/consents":         true,
-	"DELETE /v1/marks/:id":        true,
-	"DELETE /v1/contacts/:id":     true,
-	"POST /v1/contacts/:id/infer": true,
+	"GET /v1/me/consents":          true,
+	"DELETE /v1/marks/:id":         true,
+	"DELETE /v1/contacts/:id":      true,
+	"POST /v1/contacts/:id/infer":  true,
+	"DELETE /v1/me/data/:kind/:id": true,
+	"DELETE /v1/signal-windows":    true,
 }
 
 func gate(auth *accounts.Service) func(*gin.Context) {

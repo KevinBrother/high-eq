@@ -14,11 +14,12 @@ import (
 // Hooks registers the growth projection partition. Source deletes cascade
 // through scores and activities into the derived tables; the delete hook
 // verifies those boundaries before the coordinated transaction commits.
-func Hooks(fields *fieldcrypt.Cipher) privacy.Module {
+func Hooks(fields *fieldcrypt.Cipher, activities ActivityLevelReader) privacy.Module {
 	scores := Service{Fields: fields}
-	plans := PlanService{Fields: fields}
+	plans := PlanService{Fields: fields, Activities: activities}
 	return privacy.Module{
-		Name: "growth",
+		Name:         "growth",
+		BeforeDelete: plans.erasePracticeContributions,
 		Delete: func(ctx context.Context, tx pgx.Tx, d privacy.Deletion) error {
 			return verifyDeletion(ctx, tx, d)
 		},

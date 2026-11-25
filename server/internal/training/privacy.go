@@ -56,6 +56,11 @@ func Hooks(f *fieldcrypt.Cipher) privacy.Module {
 				if e != nil {
 					return e
 				}
+				detail, e := s.publicDetail(ctx, tx, q.UserID, r)
+				if e != nil {
+					return e
+				}
+				setup := detail.Setup
 				messages := make([]exportMessage, 0, len(r.Messages))
 				for _, m := range r.Messages {
 					messages = append(messages, exportMessage{ID: m.Id, Role: string(m.Role), Seq: m.Seq, Text: m.Text})
@@ -66,9 +71,9 @@ func Hooks(f *fieldcrypt.Cipher) privacy.Module {
 					Messages []exportMessage `json:"messages"`
 					Source   uuid.UUID       `json:"source_id"`
 				}{
-					SessionSummary: r.summary(),
-					Setup: exportSetup{Level: r.input.Level, Contact: r.input.Contact, Scene: r.input.Scene,
-						Scenario: r.input.Scenario, Previous: r.input.Previous},
+					SessionSummary: detail.SessionSummary,
+					Setup: exportSetup{Level: setup.Level, Contact: setup.Contact, Scene: setup.Scene,
+						Scenario: setup.Scenario, Previous: setup.Previous},
 					Messages: messages,
 					Source:   r.source,
 				}); e != nil {

@@ -54,7 +54,7 @@ func setupProjection(t *testing.T) *projectionFixture {
 		t.Fatal(err)
 	}
 	fields := testCipher(t)
-	registry, err := privacy.NewRegistry([]string{"growth"}, Hooks(fields))
+	registry, err := privacy.NewRegistry([]string{"growth"}, Hooks(fields, &training.Service{Fields: fields}))
 	if err != nil {
 		t.Fatal(err)
 	}

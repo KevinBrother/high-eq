@@ -37,6 +37,10 @@ class ProfileView extends StatelessWidget {
           style: theme.textTheme.labelLarge,
         ),
         Text(contact.name, style: theme.textTheme.headlineMedium),
+        ContactReference(
+          id: contact.id,
+          key: const Key('contact-profile-reference'),
+        ),
         const SizedBox(height: 16),
         Text('交流线索 · 仅供参考', style: theme.textTheme.titleLarge),
         const Text('这些是从有限描述中得到的印象，不是对一个人的定论。'),
@@ -50,4 +54,21 @@ class ProfileView extends StatelessWidget {
       ],
     );
   }
+}
+
+/// A stable, user-comparable identifier. Names, scenes and visible notes may
+/// collide, so selection and deletion never rely on them for identity.
+class ContactReference extends StatelessWidget {
+  const ContactReference({required this.id, super.key});
+
+  final String id;
+
+  @override
+  Widget build(BuildContext context) => Text(
+    '关系人编号：$id',
+    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    ),
+  );
 }

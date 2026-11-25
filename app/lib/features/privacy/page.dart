@@ -9,6 +9,7 @@ import 'chat_import_controls.dart';
 import 'export_card.dart';
 import 'export_delivery.dart';
 import 'export_flow.dart';
+import 'records_page.dart';
 import 'store.dart';
 
 class PrivacyPage extends StatefulWidget {
@@ -45,6 +46,7 @@ class _PrivacyPageState extends State<PrivacyPage> {
   bool _busy = false;
   bool _ready = false;
   bool _departed = false;
+  bool _browsingRecords = false;
   PrivacyExportPhase? _exportPhase;
   late final PrivacyExportFlow _exportFlow;
 
@@ -131,6 +133,25 @@ class _PrivacyPageState extends State<PrivacyPage> {
     _showAccount(account);
     widget.onClosureUnconfirmed(false);
     if (recovering && !account.isFrozen) widget.onClosureCancelled();
+  }
+
+  Future<void> _browseRecords() async {
+    if (!_current || !_canEdit || _browsingRecords) return;
+    _browsingRecords = true;
+    OwnedDataDeleteResult? result;
+    try {
+      result = await Navigator.of(context).push<OwnedDataDeleteResult>(
+        MaterialPageRoute(builder: (_) => OwnedDataRecordsPage(widget.store)),
+      );
+    } finally {
+      _browsingRecords = false;
+    }
+    if (result == null || !_current) return;
+    final label = result.kind.label;
+    await _run(() async {
+      setState(() => _message = '已删除所选$label记录。记录列表已刷新。');
+      await _read();
+    });
   }
 
   void _showAccount(PrivacyAccount account) {
@@ -298,6 +319,13 @@ class _PrivacyPageState extends State<PrivacyPage> {
                                   _exportFlow.cancel,
                                 _ => null,
                               },
+                            ),
+                            const SizedBox(height: 12),
+                            FilledButton.icon(
+                              key: const Key('privacy-browse-records'),
+                              onPressed: _canEdit ? _browseRecords : null,
+                              icon: const Icon(Icons.manage_search),
+                              label: const Text('浏览并选择我的记录'),
                             ),
                             const SizedBox(height: 24),
                             ChatImportControls(

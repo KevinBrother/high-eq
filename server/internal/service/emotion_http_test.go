@@ -2,11 +2,33 @@ package service
 
 import (
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+func TestParseWindowQueryRejectsTimestampPrecisionThatWouldBeLost(t *testing.T) {
+	raw := "channel=health&starts_at=" + url.QueryEscape("2026-11-21T01:00:00.0000000001Z")
+	if _, err := parseWindowQuery(raw); err == nil {
+		t.Fatal("accepted a timestamp whose non-zero precision would be truncated")
+	}
+}
+
+func TestParseWindowQueryRequiresOneExactPublicKey(t *testing.T) {
+	const raw = "channel=voice&starts_at=2026-11-21T09:00:30.000000%2B08:00"
+	p, err := parseWindowQuery(raw)
+	want := time.Date(2026, 11, 21, 1, 0, 30, 0, time.UTC)
+	if err != nil || p.StartsAt != want || p.Channel != "voice" {
+		t.Fatalf("decoded public key = %v, %v, want voice at %v", p, err, want)
+	}
+	for _, suffix := range []string{"&starts_at=%ZZ", "&starts_at=2026-11-21T01:00:30Z", "&channel=health", "&channel=%ZZ"} {
+		if _, err := parseWindowQuery(raw + suffix); err == nil {
+			t.Errorf("accepted ambiguous key with suffix %q", suffix)
+		}
+	}
+}
 
 func TestEmotionRequiresAuthenticatedSession(t *testing.T) {
 	r := (&Runtime{}).Router()

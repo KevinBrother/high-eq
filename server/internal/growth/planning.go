@@ -194,17 +194,19 @@ func (s *PlanService) CompleteItem(ctx context.Context, tx pgx.Tx, user, itemID 
 		}
 		return s.progress(ctx, tx, user, day)
 	}
-	if !item.Completed || completedAt == nil {
-		item.Completed = true
-		sealed, err = s.sealPlan(plan, user, day)
-		if err != nil {
+	if !item.Completed {
+		if err := s.attributePlan(ctx, tx, user, zone, &plan, completedAt); err != nil {
 			return PlanProgress{}, err
 		}
-		if completedAt == nil {
-			t := now.UTC()
-			completedAt = &t
+		item.Completed = true
+		now = now.UTC()
+		if plan.completion.ManualAt == nil {
+			plan.completion.ManualAt = &now
 		}
-		if _, err = tx.Exec(ctx, `update daily_plans set plan_enc=$3,completed_at=$4 where user_id=$1 and plan_day=$2`, user, day, sealed, completedAt); err != nil {
+		if completedAt == nil {
+			completedAt = &now
+		}
+		if err = s.savePlanCompletion(ctx, tx, user, plan, completedAt); err != nil {
 			return PlanProgress{}, err
 		}
 	}
@@ -371,6 +373,7 @@ func (s *PlanService) generatePlan(ctx context.Context, tx pgx.Tx, user, assessm
 	if err != nil {
 		return Plan{}, fmt.Errorf("build growth plan: %w", err)
 	}
+	plan.completion = &planCompletion{}
 	sealed, err := s.sealPlan(plan, user, day)
 	if err != nil {
 		return Plan{}, err
@@ -493,7 +496,8 @@ func (s *PlanService) progress(ctx context.Context, tx pgx.Tx, user uuid.UUID, d
 }
 
 func (s *PlanService) achievements(ctx context.Context, tx pgx.Tx, user uuid.UUID, day string) (int, []int, error) {
-	rows, err := tx.Query(ctx, `select plan_day::text from daily_plans where user_id=$1 and completed_at is not null order by plan_day`, user)
+	rows, err := tx.Query(ctx, `select plan_day::text from daily_plans where user_id=$1
+and (completed_at is not null or completed_without_timestamp) order by plan_day`, user)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -552,8 +556,13 @@ func planAAD(user uuid.UUID, day string) []byte {
 	return []byte("daily_plans:plan_enc:" + user.String() + ":" + day)
 }
 
+type storedPlan struct {
+	Plan
+	Completion *planCompletion `json:"completion,omitempty"`
+}
+
 func (s *PlanService) sealPlan(plan Plan, user uuid.UUID, day string) ([]byte, error) {
-	plain, err := json.Marshal(plan)
+	plain, err := json.Marshal(storedPlan{Plan: plan, Completion: plan.completion})
 	if err != nil {
 		return nil, err
 	}
@@ -565,10 +574,12 @@ func (s *PlanService) openPlan(sealed []byte, user uuid.UUID, day string) (Plan,
 	if err != nil {
 		return Plan{}, err
 	}
-	var plan Plan
-	if err := json.Unmarshal(plain, &plan); err != nil {
+	var stored storedPlan
+	if err := json.Unmarshal(plain, &stored); err != nil {
 		return Plan{}, err
 	}
+	plan := stored.Plan
+	plan.completion = stored.Completion
 	if plan.Day != day || len(plan.Items) == 0 {
 		return Plan{}, ErrInvalid
 	}

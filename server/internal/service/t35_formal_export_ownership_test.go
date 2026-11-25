@@ -143,5 +143,5 @@ func t35WriteOwnershipFixture(t *testing.T, scratch string, owner t35ExportOwner
 	}
 	// Model the digest of the response that actually carried this archive.
 	// A server can send the wrong row while the receiver gets every byte intact.
-	return t35ExportObservation{account: owner.account, valid: true, digest: sha256.Sum256(body.Bytes())}
+	return t35ExportObservation{account: owner.account, valid: true, digest: sha256.Sum256(body.Bytes()), size: body.Len()}
 }

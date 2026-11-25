@@ -516,7 +516,7 @@ func t26CheckPractice(ctx context.Context, tx pgx.Tx, h *practiceWire, owner pri
 
 func t26CheckPlan(ctx context.Context, tx pgx.Tx, s *Runtime, owner privacy.ExportRequest, assessmentID uuid.UUID, practice t26PracticeRecord) error {
 	var completedLevel, projectedScore int
-	err := growth.Hooks(s.Fields).Export(ctx, tx, owner, func(record any) error {
+	err := growth.Hooks(s.Fields, s.Practice).Export(ctx, tx, owner, func(record any) error {
 		var entry struct {
 			RecordType   string                        `json:"record_type"`
 			AssessmentID *uuid.UUID                    `json:"assessment_id"`

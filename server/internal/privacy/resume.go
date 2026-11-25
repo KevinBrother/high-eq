@@ -3,6 +3,7 @@ package privacy
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -25,34 +26,56 @@ func (c *Coordinator) Resume(ctx context.Context) error {
 		user, id uuid.UUID
 		scope    string
 		pending  bool
+		channel  *string
+		at       *time.Time
+		replay   int
 	}
 	var after *uuid.UUID
 	for {
-		rows, err := c.db.Query(ctx, `select user_id,root_id,scope,p.root_id is not null from erasure_roots left join pending_erasure p using(root_id) where $1::uuid is null or root_id>$1 order by root_id limit 256`, after)
+		rows, err := c.db.Query(ctx, `
+			select r.user_id,r.root_id,r.scope,p.root_id is not null,w.channel,w.starts_at
+			from erasure_roots r left join pending_erasure p on p.root_id=r.root_id
+			left join signal_windows w on r.scope='signal_windows' and w.purge_id=r.root_id and w.user_id=r.user_id
+			where $1::uuid is null or r.root_id>$1 order by r.root_id limit 256`, after)
 		if err != nil {
 			return err
 		}
 		items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (work, error) {
 			var w work
-			err := row.Scan(&w.user, &w.id, &w.scope, &w.pending)
+			err := row.Scan(&w.user, &w.id, &w.scope, &w.pending, &w.channel, &w.at)
 			return w, err
 		})
 		if err != nil || len(items) == 0 {
 			return err
 		}
-		ids := make([]uuid.UUID, len(items))
-		for i, w := range items {
+		ids := make([]uuid.UUID, len(items), 2*len(items))
+		// A snapshot can contain an older random root for the same logical
+		// window. Look up its replay key alongside the physical root.
+		for i := range items {
+			w := &items[i]
 			ids[i] = w.id
+			if w.scope != "signal_windows" {
+				continue
+			}
+			if w.channel == nil || w.at == nil {
+				return ErrUnavailable
+			}
+			id, err := c.signalWindowReplayID(w.user, *w.channel, *w.at)
+			if err != nil {
+				return err
+			}
+			w.replay = len(ids)
+			ids = append(ids, id)
 		}
 		hits, err := c.ledger.lookup(ctx, ids)
 		if err != nil {
 			return err
 		}
-		if len(hits) != len(items) {
+		if len(hits) != len(ids) {
 			return ErrUnavailable
 		}
 		for i, w := range items {
-			if !w.pending && hits[i] == 0 {
+			if !w.pending && hits[i] == 0 && (w.replay == 0 || hits[w.replay] == 0) {
 				continue
 			}
 			d := Deletion{UserID: w.user, Scope: w.scope, OperationID: uuid.New()}
@@ -63,7 +86,7 @@ func (c *Coordinator) Resume(ctx context.Context) error {
 				return err
 			}
 		}
-		after = &ids[len(ids)-1]
+		after = &items[len(items)-1].id
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -47,27 +48,49 @@ func t35RunExportFlutter(t *testing.T, ctx context.Context, origin, scratch stri
 		"T35_EXPORT_ORIGIN="+origin, "T35_EXPORT_SCRATCH="+scratch,
 		"T35_EXPORT_TICKET_A="+a.ticket, "T35_EXPORT_TICKET_B="+b.ticket,
 		"T35_EXPORT_ACCOUNT_A="+a.account.String(), "T35_EXPORT_ACCOUNT_B="+b.account.String(),
+		"T35_EXPORT_MARK_A_KEEP="+a.mark.String(), "T35_EXPORT_MARK_A_DELETE="+a.deleteMark.String(),
+		"T35_EXPORT_MARK_B="+b.mark.String(),
 	)
 	receipt, err := os.CreateTemp(scratch, "flutter-*.jsonl")
 	if err != nil {
 		t.Fatal("could not open private Flutter receipt stream")
 	}
-	defer receipt.Close()
+	receiptPath := receipt.Name()
+	defer os.Remove(receiptPath)
+	var stderr bytes.Buffer
 	cmd.Stdout = receipt
+	cmd.Stderr = &stderr
 	runErr := cmd.Run()
-	if _, err := receipt.Seek(0, io.SeekStart); err != nil {
-		t.Fatal("could not rewind Flutter receipt stream")
+	if err := receipt.Close(); err != nil {
+		t.Fatal("could not close private Flutter receipt stream")
 	}
+	if receiptDir := t35ExportReceiptDir(t); receiptDir != "" {
+		t35CopyReceipt(t, receiptPath, filepath.Join(receiptDir, "flutter.jsonl"))
+		if err := os.WriteFile(filepath.Join(receiptDir, "flutter.stderr.log"), stderr.Bytes(), 0o600); err != nil {
+			t.Fatal("could not preserve Flutter stderr receipt")
+		}
+	}
+	receipt, err = os.Open(receiptPath)
+	if err != nil {
+		t.Fatal("could not reopen private Flutter receipt stream")
+	}
+	defer receipt.Close()
 	confirmed := t35RequireFlutterReceipt(t, receipt)
 	if runErr != nil || !confirmed {
-		t.Fatal("Flutter did not complete the exact export test and handoff receipts")
+		t.Fatal("Flutter did not complete the exact selected-mark export journey and handoff receipts")
 	}
 }
 
 func t35RequireFlutterReceipt(t *testing.T, stream io.Reader) bool {
 	t.Helper()
 	const name = "T35 formal account export over real HTTP (variant: TargetPlatform.iOS)"
-	var required = []string{"BEGIN(page.account-a)", "PASS(page.account-a)", "BEGIN(page.account-b)", "PASS(page.account-b)"}
+	required := []string{
+		"BEGIN(page.account-a.before)", "PASS(page.account-a.before)",
+		"BEGIN(page.account-a.delete)", "PASS(page.account-a.delete)",
+		"BEGIN(page.account-a.after)", "PASS(page.account-a.after)",
+		"BEGIN(page.account-b.before)", "PASS(page.account-b.before)",
+		"BEGIN(page.account-b.after)", "PASS(page.account-b.after)",
+	}
 	decoder := json.NewDecoder(stream)
 	testID, phase := -1, 0
 	testDone, runDone := false, false
@@ -124,13 +147,15 @@ func t35ReadDeliveredZIP(t *testing.T, scratch, label string, owner uuid.UUID, o
 	t.Helper()
 	const manifest = "manifest.json"
 	const maxSyntheticBytes = 2 << 20
-	file, err := os.Open(filepath.Join(scratch, "accepted-"+label+".zip"))
+	path := filepath.Join(scratch, "accepted-"+label+".zip")
+	file, err := os.Open(path)
 	if err != nil {
 		t.Fatal("synthetic receiver did not capture a ZIP")
 	}
 	defer file.Close()
 	raw, err := io.ReadAll(io.LimitReader(file, maxSyntheticBytes+1))
-	if err != nil || len(raw) > maxSyntheticBytes || !observed.valid || observed.account != owner || sha256.Sum256(raw) != observed.digest {
+	if err != nil || len(raw) > maxSyntheticBytes || !observed.valid || observed.account != owner ||
+		sha256.Sum256(raw) != observed.digest || len(raw) != observed.size {
 		t.Fatal("receiver ZIP must match the owner's authenticated HTTP 200 ZIP response byte for byte")
 	}
 	archive, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
@@ -172,6 +197,21 @@ func t35ReadDeliveredZIP(t *testing.T, scratch, label string, owner uuid.UUID, o
 	if !slices.Equal(inventory.Modules, t35ExportModules) || !slices.Equal(inventory.Files, expectedFiles) {
 		t.Fatal("delivered manifest and actual runtime partitions must match the complete contract")
 	}
+	if receiptDir := t35ExportReceiptDir(t); receiptDir != "" {
+		t35CopyReceipt(t, path, filepath.Join(receiptDir, "accepted-"+label+".zip"))
+		t35WriteJSONReceipt(t, filepath.Join(receiptDir, "wire."+label+".json"), map[string]any{
+			"schema": "t35-formal-export-wire-v1", "label": label, "account": owner,
+			"method": "GET", "path": "/v1/me/export", "query": "", "accept": "application/zip",
+			"status": 200, "content_type": "application/zip",
+			"content_disposition": `attachment; filename="high-eq-export.zip"`,
+			"validated":           true, "archive_bytes": len(raw), "archive_sha256": hex.EncodeToString(observed.digest[:]),
+		})
+		t35WriteJSONReceipt(t, filepath.Join(receiptDir, "archive."+label+".json"), map[string]any{
+			"schema": "t35-formal-export-archive-v1", "label": label, "account": owner,
+			"archive_bytes": len(raw), "archive_sha256": hex.EncodeToString(observed.digest[:]),
+			"entries": t35PartitionReceipt(parts),
+		})
+	}
 	return parts
 }
 
@@ -188,17 +228,71 @@ func t35CheckExportOwner(t *testing.T, parts map[string][]byte, owner, foreign t
 	}
 }
 
+func t35CheckExportOwnerBeforeDelete(t *testing.T, parts map[string][]byte, owner, foreign t35ExportOwner) {
+	t.Helper()
+	if err := t35VerifyExportOwnerBeforeDelete(parts, owner, foreign); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func t35CheckSelectedMarkDeletion(t *testing.T, before, after map[string][]byte, owner t35ExportOwner) {
+	t.Helper()
+	if err := t35VerifySelectedMarkDeletion(before, after, owner); err != nil {
+		t.Fatal(err)
+	}
+	t35WriteSelectedMarkDiffReceipt(t, before, after, owner)
+}
+
+func t35CheckPartitionsIdentical(t *testing.T, before, after map[string][]byte) {
+	t.Helper()
+	if err := t35VerifyPartitionsIdentical(before, after); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func t35VerifyExportOwner(parts map[string][]byte, owner, foreign t35ExportOwner) error {
+	if err := t35VerifyExportOwnerEnvelope(parts, owner, foreign); err != nil {
+		return err
+	}
+	var marks []app.Mark
+	if json.Unmarshal(parts["manual_marks.json"], &marks) != nil || len(marks) != 1 ||
+		marks[0].Id != owner.mark || marks[0].Scene == nil || *marks[0].Scene != owner.scene {
+		return errors.New("delivered ZIP must contain the authenticated owner's persisted account and manual mark")
+	}
+	return nil
+}
+
+func t35VerifyExportOwnerBeforeDelete(parts map[string][]byte, owner, foreign t35ExportOwner) error {
+	if err := t35VerifyExportOwnerEnvelope(parts, owner, foreign); err != nil {
+		return err
+	}
+	var marks []app.Mark
+	if json.Unmarshal(parts["manual_marks.json"], &marks) != nil || len(marks) != len(owner.marks) {
+		return errors.New("pre-delete ZIP must contain exactly both seeded manual marks")
+	}
+	got := make(map[uuid.UUID]string, len(marks))
+	for _, mark := range marks {
+		if mark.Scene == nil {
+			return errors.New("pre-delete ZIP manual mark is missing its scene")
+		}
+		got[mark.Id] = *mark.Scene
+	}
+	for _, expected := range owner.marks {
+		if scene, ok := got[expected.Id]; !ok || scene != owner.scene {
+			return errors.New("pre-delete ZIP manual marks do not match the authenticated owner's fixtures")
+		}
+	}
+	return nil
+}
+
+func t35VerifyExportOwnerEnvelope(parts map[string][]byte, owner, foreign t35ExportOwner) error {
 	var accounts []struct {
 		Kind   string
 		UserID uuid.UUID `json:"user_id"`
 	}
-	var marks []app.Mark
 	if json.Unmarshal(parts["accounts.json"], &accounts) != nil || len(accounts) == 0 ||
-		accounts[0].Kind != "account" || accounts[0].UserID != owner.account ||
-		json.Unmarshal(parts["manual_marks.json"], &marks) != nil || len(marks) != 1 ||
-		marks[0].Id != owner.mark || marks[0].Scene == nil || *marks[0].Scene != owner.scene {
-		return errors.New("delivered ZIP must contain the authenticated owner's persisted account and manual mark")
+		accounts[0].Kind != "account" || accounts[0].UserID != owner.account {
+		return errors.New("delivered ZIP must contain the authenticated owner's persisted account")
 	}
 	if !t35MatchesAssessment(parts["assessments.json"], owner.assessment) {
 		return errors.New("delivered assessments must contain exactly the owner's seeded assessment and content")
@@ -206,7 +300,10 @@ func t35VerifyExportOwner(parts map[string][]byte, owner, foreign t35ExportOwner
 	if !t35MatchesPlanOwnership(parts["growth.json"], owner) {
 		return errors.New("delivered growth plans must reference the owner's assessment and include its seeded plan")
 	}
-	foreignIDs := []uuid.UUID{foreign.account, foreign.mark, foreign.assessment.ID}
+	foreignIDs := []uuid.UUID{foreign.account, foreign.assessment.ID}
+	for _, mark := range foreign.marks {
+		foreignIDs = append(foreignIDs, mark.Id)
+	}
 	for _, body := range parts {
 		for _, id := range foreignIDs {
 			if bytes.Contains(body, []byte(id.String())) {
@@ -215,6 +312,142 @@ func t35VerifyExportOwner(parts map[string][]byte, owner, foreign t35ExportOwner
 		}
 	}
 	return nil
+}
+
+func t35VerifySelectedMarkDeletion(before, after map[string][]byte, owner t35ExportOwner) error {
+	if owner.deleteMark == uuid.Nil || len(owner.marks) != 2 {
+		return errors.New("selected-mark deletion requires exactly two seeded owner marks")
+	}
+	if len(before) != len(after) || len(after) != len(t35ExportModules)+1 {
+		return errors.New("before and after exports must retain the complete archive inventory")
+	}
+	for name, body := range before {
+		changed, ok := after[name]
+		if !ok {
+			return errors.New("post-delete export omitted a partition")
+		}
+		if name != "manual_marks.json" && !bytes.Equal(body, changed) {
+			return errors.New("selected-mark deletion changed an unrelated export partition")
+		}
+	}
+	beforeMarks, err := t35DecodeExportMarks(before["manual_marks.json"])
+	if err != nil || len(beforeMarks) != len(owner.marks) {
+		return errors.New("pre-delete manual mark partition does not contain exactly the seeded marks")
+	}
+	afterMarks, err := t35DecodeExportMarks(after["manual_marks.json"])
+	if err != nil || len(afterMarks) != 1 {
+		return errors.New("post-delete manual mark partition must contain exactly the retained mark")
+	}
+	for _, mark := range owner.marks {
+		if _, ok := beforeMarks[mark.Id.String()]; !ok {
+			return errors.New("pre-delete manual mark partition is missing a seeded mark")
+		}
+	}
+	retained, ok := afterMarks[owner.mark.String()]
+	if !ok {
+		return errors.New("post-delete manual mark partition omitted the retained mark")
+	}
+	if !reflect.DeepEqual(beforeMarks[owner.mark.String()], retained) {
+		return errors.New("selected-mark deletion changed the retained mark")
+	}
+	if _, ok := afterMarks[owner.deleteMark.String()]; ok {
+		return errors.New("post-delete manual mark partition still contains the selected mark")
+	}
+	for _, body := range after {
+		if bytes.Contains(body, []byte(owner.deleteMark.String())) {
+			return errors.New("post-delete export contains the selected mark identifier")
+		}
+	}
+	return nil
+}
+
+func t35VerifyPartitionsIdentical(before, after map[string][]byte) error {
+	if len(before) != len(after) {
+		return errors.New("export partition count changed")
+	}
+	for name, body := range before {
+		changed, ok := after[name]
+		if !ok || !bytes.Equal(body, changed) {
+			return errors.New("export partition changed for the unaffected account")
+		}
+	}
+	return nil
+}
+
+func t35WriteSelectedMarkDiffReceipt(t *testing.T, before, after map[string][]byte, owner t35ExportOwner) {
+	t.Helper()
+	directory := t35ExportReceiptDir(t)
+	if directory == "" {
+		return
+	}
+	beforeMarks, err := t35DecodeExportMarks(before["manual_marks.json"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterMarks, err := t35DecodeExportMarks(after["manual_marks.json"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := make([]string, 0, 1)
+	for name, body := range before {
+		if !bytes.Equal(body, after[name]) {
+			changed = append(changed, name)
+		}
+	}
+	slices.Sort(changed)
+	retainedBefore := sha256.Sum256(beforeMarks[owner.mark.String()])
+	retainedAfter := sha256.Sum256(afterMarks[owner.mark.String()])
+	removed := sha256.Sum256(beforeMarks[owner.deleteMark.String()])
+	t35WriteJSONReceipt(t, filepath.Join(directory, "diff.selected-mark.json"), map[string]any{
+		"schema":                                "t35-formal-selected-mark-diff-v1",
+		"changed_partitions":                    changed,
+		"all_other_partitions_identical":        len(changed) == 1 && changed[0] == "manual_marks.json",
+		"archive_entry_count_before":            len(before),
+		"archive_entry_count_after":             len(after),
+		"retained_mark_id":                      owner.mark,
+		"removed_mark_id":                       owner.deleteMark,
+		"retained_mark_sha256_before":           hex.EncodeToString(retainedBefore[:]),
+		"retained_mark_sha256_after":            hex.EncodeToString(retainedAfter[:]),
+		"removed_mark_sha256_before_deletion":   hex.EncodeToString(removed[:]),
+		"removed_mark_absent_from_after_export": true,
+	})
+}
+
+func t35DecodeExportMarks(body []byte) (map[string]json.RawMessage, error) {
+	var rows []json.RawMessage
+	if json.Unmarshal(body, &rows) != nil || rows == nil {
+		return nil, errors.New("manual mark partition is not valid JSON")
+	}
+	marks := make(map[string]json.RawMessage, len(rows))
+	for _, row := range rows {
+		var identity struct {
+			ID uuid.UUID `json:"id"`
+		}
+		if json.Unmarshal(row, &identity) != nil || identity.ID == uuid.Nil {
+			return nil, errors.New("manual mark partition row has no valid identifier")
+		}
+		if _, duplicate := marks[identity.ID.String()]; duplicate {
+			return nil, errors.New("manual mark partition contains a duplicate identifier")
+		}
+		marks[identity.ID.String()] = row
+	}
+	return marks, nil
+}
+
+func t35PartitionReceipt(parts map[string][]byte) []map[string]any {
+	names := make([]string, 0, len(parts))
+	for name := range parts {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	entries := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		digest := sha256.Sum256(parts[name])
+		entries = append(entries, map[string]any{
+			"name": name, "bytes": len(parts[name]), "sha256": hex.EncodeToString(digest[:]),
+		})
+	}
+	return entries
 }
 
 func t35MatchesAssessment(body []byte, expected t35ExportAssessment) bool {
@@ -247,4 +480,33 @@ func t35MatchesPlanOwnership(body []byte, owner t35ExportOwner) bool {
 		}
 	}
 	return seeded == 1
+}
+
+func t35ExportReceiptDir(t *testing.T) string {
+	t.Helper()
+	value := os.Getenv("T35_EXPORT_RECEIPT_DIR")
+	if value == "" {
+		return ""
+	}
+	directory, err := filepath.Abs(value)
+	if err != nil || os.MkdirAll(directory, 0o700) != nil {
+		t.Fatal("could not prepare the private export receipt directory")
+	}
+	return directory
+}
+
+func t35CopyReceipt(t *testing.T, source, target string) {
+	t.Helper()
+	body, err := os.ReadFile(source)
+	if err != nil || os.WriteFile(target, body, 0o600) != nil {
+		t.Fatal("could not preserve an export receipt")
+	}
+}
+
+func t35WriteJSONReceipt(t *testing.T, path string, value any) {
+	t.Helper()
+	body, err := json.MarshalIndent(value, "", "  ")
+	if err != nil || os.WriteFile(path, append(body, '\n'), 0o600) != nil {
+		t.Fatal("could not write an export receipt")
+	}
 }

@@ -14,7 +14,8 @@ enum AppOp {
   listConsents('GET', '/v1/me/consents', 'application/json', true, false, ['cursor', 'limit'], []),
   setConsent('PUT', '/v1/me/consents/{purpose}', 'application/json', true, true, [], []),
   exportData('GET', '/v1/me/export', 'application/zip', true, false, [], []),
-  deleteSource('DELETE', '/v1/me/data/{kind}/{id}', 'application/json', true, false, [], []),
+  listDataRecords('GET', '/v1/me/data/{kind}', 'application/json', true, false, ['cursor', 'limit'], []),
+  deleteSource('DELETE', '/v1/me/data/{kind}/{id}', 'application/json', true, false, [], [], exactSuccessStatus: 200),
   getEntitlements('GET', '/v1/entitlements', 'application/json', true, false, [], []),
   getPurchaseToken('POST', '/v1/purchases/token', 'application/json', true, false, [], []),
   createOrder('POST', '/v1/purchases', 'application/json', true, true, [], []),
@@ -59,14 +60,15 @@ enum AppOp {
   listCards('GET', '/v1/cards', 'application/json', true, false, ['cursor', 'limit', 'scene'], []),
   checkHealth('GET', '/v1/health', 'application/json', false, false, [], []),
   uploadWindow('POST', '/v1/signal-windows', 'application/json', true, true, [], []),
-  deleteWindow('DELETE', '/v1/signal-windows', 'application/json', true, false, ['starts_at', 'channel'], ['starts_at', 'channel']),
+  deleteWindow('DELETE', '/v1/signal-windows', 'application/json', true, false, ['starts_at', 'channel'], ['starts_at', 'channel'], exactSuccessStatus: 200),
   getBaselines('GET', '/v1/signal-baselines', 'application/json', true, false, ['for_window'], []),
   reportSignalEvent('POST', '/v1/signal-events', 'application/json', true, true, [], []),
   listSignalEvents('GET', '/v1/signal-events', 'application/json', true, false, ['cursor', 'limit'], []),
   annotateSignalEvent('PATCH', '/v1/signal-events/{id}', 'application/json', true, true, [], []);
 
-  const AppOp(this.method, this.path, this.accept, this.secured, this.hasBody, this.queryKeys, this.requiredQuery);
+  const AppOp(this.method, this.path, this.accept, this.secured, this.hasBody, this.queryKeys, this.requiredQuery, {this.exactSuccessStatus});
   final String method, path, accept;
   final bool secured, hasBody;
   final List<String> queryKeys, requiredQuery;
+  final int? exactSuccessStatus;
 }

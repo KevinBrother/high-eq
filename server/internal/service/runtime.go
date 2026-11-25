@@ -126,12 +126,13 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	hooks, e := privacy.NewRegistry(
 		[]string{"training", "chat_imports", "profiles", "assessments", "payments", "membership", "accounts", "replies", "ai_calls", "emotion", "manual_marks", "reviews", "growth"},
 		payments.Hooks(), s.Membership.Hooks(), assessment.Hooks(c.Fields), accounts.Hooks(c.Fields),
-		training.Hooks(c.Fields), training.ChatImportHooks(), s.Profiles.Hooks(), replies.Hooks(c.Fields), gateway.Hooks(c.authMaster), emotion.Hooks(c.Fields), marks.Hooks(c.Fields), reviews.Hooks(c.Fields), growth.Hooks(c.Fields),
+		training.Hooks(c.Fields), training.ChatImportHooks(), s.Profiles.Hooks(), replies.Hooks(c.Fields), gateway.Hooks(c.authMaster), emotion.Hooks(c.Fields), marks.Hooks(c.Fields), reviews.Hooks(c.Fields),
+		growth.Hooks(c.Fields, &training.Service{Fields: c.Fields}),
 	)
 	if e != nil {
 		return nil, e
 	}
-	s.Data = privacy.NewCoordinator(db, s.ledger, hooks)
+	s.Data = privacy.NewCoordinator(db, s.ledger, hooks, privacy.WithWindowReplayKey(c.authMaster))
 	s.Payments, e = payments.New(db, s.Data, c.authMaster, c.PaymentChannels)
 	if e != nil {
 		return nil, e

@@ -16,8 +16,11 @@ PACKAGE = "high-eq/server/internal/service"
 TEST = "TestT35FormalAccountExportJourney"
 PRIVATE = "synthetic-private-output-must-not-escape"
 PHASES = (
-    "service.runtime", "service.seed", "page.account-a", "page.account-b",
-    "receive.wire-and-inventory", "receive.account-isolation",
+    "service.runtime", "service.seed",
+    "page.account-a.before", "page.account-a.delete", "page.account-a.after",
+    "page.account-b.before", "page.account-b.after",
+    "receive.wire-and-inventory", "receive.selected-mark-diff",
+    "receive.account-isolation",
 )
 
 

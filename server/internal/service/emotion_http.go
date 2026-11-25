@@ -3,7 +3,6 @@ package service
 import (
 	"errors"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -27,7 +26,9 @@ func signalReply(c *gin.Context, v any, e error) {
 		problem(c, 403, "forbidden", "需要相应会员权益和单独授权", false)
 	case errors.Is(e, emotion.Conflict):
 		problem(c, 409, "conflict", "记录已存在或仍在提醒冷却期", false)
-	case errors.Is(e, pgx.ErrNoRows):
+	case errors.Is(e, emotion.WindowDeleted):
+		problem(c, 409, "conflict", "该窗口已删除，无法重新上传", false)
+	case errors.Is(e, pgx.ErrNoRows), errors.Is(e, privacy.ErrNotFound):
 		problem(c, 404, "not_found", "未找到这条记录", false)
 	default:
 		accountError(c, e)
@@ -47,9 +48,6 @@ func (a appAPI) UploadWindow(c *gin.Context) {
 	signalReply(c, ack, e)
 }
 
-// Check the original precision before time.Parse can truncate a fractional second.
-var alignedBaselineWindow = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:(00|30)(\.0+)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$`)
-
 func parseBaselineWindow(rawQuery string, value *string) (*time.Time, error) {
 	// The generated binder uses URL.Query(), which drops malformed values.
 	if _, err := url.ParseQuery(rawQuery); err != nil {
@@ -63,15 +61,11 @@ func parseBaselineWindow(rawQuery string, value *string) (*time.Time, error) {
 	if value == nil {
 		return nil, nil
 	}
-	if !alignedBaselineWindow.MatchString(*value) {
-		return nil, emotion.Invalid
+	at, err := emotion.ParseWindowStart(*value)
+	if err != nil {
+		return nil, err
 	}
-	at, err := time.Parse(time.RFC3339, strings.ToUpper(*value))
-	if err != nil || at.IsZero() {
-		return nil, emotion.Invalid
-	}
-	utc := at.UTC()
-	return &utc, nil
+	return &at, nil
 }
 
 func (a appAPI) GetBaselines(c *gin.Context, p app.GetBaselinesParams) {
@@ -150,17 +144,32 @@ func (a appAPI) AnnotateSignalEvent(c *gin.Context, id uuid.UUID) {
 	})
 	signalReply(c, v, e)
 }
-func (a appAPI) DeleteWindow(c *gin.Context, p app.DeleteWindowParams) {
-	ctx := c.Request.Context()
-	u := principal(c).User
-	var id uuid.UUID
-	e := a.withRights(c, "", func(tx pgx.Tx) error {
-		var e error
-		id, e = emotion.WindowKey(ctx, tx, u, string(p.Channel), p.StartsAt)
-		return e
-	})
-	if e == nil {
-		e = a.signals.Data.Delete(ctx, privacy.Deletion{OperationID: uuid.New(), UserID: u, SourceID: id, Scope: "signal_windows"})
+func parseWindowQuery(raw string) (app.DeleteWindowParams, error) {
+	var p app.DeleteWindowParams
+	query, err := url.ParseQuery(raw)
+	if err != nil || len(query["starts_at"]) != 1 || len(query["channel"]) != 1 {
+		return p, emotion.Invalid
 	}
+	channel := query.Get("channel")
+	if channel != "health" && channel != "voice" {
+		return p, emotion.Invalid
+	}
+	p.Channel = app.DeleteWindowParamsChannel(channel)
+	p.StartsAt, err = emotion.ParseWindowStart(query.Get("starts_at"))
+	return p, err
+}
+
+func (a appAPI) DeleteWindow(c *gin.Context, _ app.DeleteWindowParams) {
+	// The generated binder has already converted starts_at to time.Time.
+	p, e := parseWindowQuery(c.Request.URL.RawQuery)
+	if e != nil {
+		signalReply(c, nil, e)
+		return
+	}
+	ctx := c.Request.Context()
+	owner := principal(c)
+	e = a.data.DeleteSignalWindowAuthorized(ctx, owner.User, string(p.Channel), p.StartsAt, func(tx pgx.Tx) error {
+		return a.accounts.ValidateSessionTx(ctx, tx, owner, false)
+	})
 	signalReply(c, ack, e)
 }

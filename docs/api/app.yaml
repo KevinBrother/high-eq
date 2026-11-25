@@ -429,12 +429,61 @@ paths:
         '401': {$ref: '#/components/responses/E401'}
         '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
       x-example-request: GET /v1/me/export
+  /v1/me/data/{kind}:
+    get:
+      operationId: listDataRecords
+      tags:
+      - me
+      summary: 分页定位本人可删除记录，不返回正文或内部键
+      parameters:
+      - in: path
+        name: kind
+        required: true
+        schema:
+          type: string
+          enum:
+          - assessments
+          - sessions
+          - reviews
+          - replies
+          - contacts
+          - manual_marks
+          - signal_events
+          - signal_windows
+        example: assessments
+      - in: query
+        name: cursor
+        schema: {type: string, minLength: 1, maxLength: 300}
+        example: eyJ2IjoxLCJrIjoiYXNzZXNzbWVudHMiLCJpZCI6Ijg1YjcyMDMzLTlmMDctNGJiYy04NTY3LWZjMzFmMjY1MDhhYiIsImF0IjoiMjAyNi0xMS0yMVQwOTowMDowMCswODowMCJ9
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+        example: 20
+      responses:
+        '200':
+          description: 本人记录定位页；空页 items 为 []
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DataRecordPage'}
+              example:
+                items:
+                - kind: assessments
+                  id: 85b72033-9f07-4bbc-8567-fc31f26508ab
+                  label: 测评
+                  recorded_at: '2026-11-21T09:00:00+08:00'
+                next_cursor: null
+        '400': {$ref: '#/components/responses/E400'}
+        '401': {$ref: '#/components/responses/E401'}
+        '500': {$ref: '#/components/responses/E500'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
+      description: 只返回当前会话本人行和删除所需公开定位键；signal_windows 使用 recorded_at+channel 删除，其余 kind 的 id 可复用通用删除。不读取或返回正文、音频、转写、昵称、source_id、purge_id。
+      x-example-request: GET /v1/me/data/assessments?limit=20
   /v1/me/data/{kind}/{id}:
     delete:
       operationId: deleteSource
       tags:
       - me
-      summary: 计划中的单条记录删除（当前候选未开放）
+      summary: 删除源及副本，重算成长分
       parameters:
       - in: path
         name: kind
@@ -457,7 +506,7 @@ paths:
         example: 85b72033-9f07-4bbc-8567-fc31f26508ab
       responses:
         '200':
-          description: 未来接线后的成功回执
+          description: 成功
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Ack'}
@@ -467,19 +516,9 @@ paths:
         '500': {$ref: '#/components/responses/E500'}
         '401': {$ref: '#/components/responses/E401'}
         '404': {$ref: '#/components/responses/E404'}
-        '501':
-          description: 当前候选对有效会话和格式正确的请求返回未实现
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/Error'}
-              example:
-                code: not_implemented
-                message: 此功能尚未开放
-                retryable: false
-      description: >-
-        当前候选未开放此操作。以下是未来接线的设计：删除源及副本并重算成长分；id 为该类别的外部资源 ID，
-        会话、复盘和回复使用活动 ID。服务端验证归属并解析独立清理用的 source_id。
-        窗口继续按 starts_at 和 channel 走专用删除入口。
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
+      description: id 为本人资源的公开 UUID。sessions（对练及专项练习）、reviews、replies 使用活动 ID，由服务端解析清理用的内部源 ID。其余类别使用各自记录的 ID。冻结期间返回 401。删除屏障生效时仅允许在同一账号下重试精确待办，并须通过独立登记校验。采集窗口使用 DELETE /v1/signal-windows，参数为 starts_at 和 channel。
+      x-mobile-exact-success-status: 200
       x-example-request: DELETE /v1/me/data/assessments/85b72033-9f07-4bbc-8567-fc31f26508ab
   /v1/entitlements:
     get:
@@ -2556,7 +2595,7 @@ paths:
     post:
       operationId: uploadWindow
       summary: 提交一个已授权渠道的 30 秒统计窗口
-      description: UTC 30 秒对齐；账号、starts_at、channel 幂等。同键不同值 409。缺失特征省略；有效秒不超过覆盖时长或该窗人声秒数，静音为 0。心率 bpm、HRV ms、步频步/分、语速为辨认得到的 Unicode 字母/数字 grapheme 数每秒、音量 dB、音调 Hz。语音窗口含 speech_rate 时必须同时提交 speech_rate_unit=characters_per_second；不得把旧声学代理值换算后冒充新单位。旧无单位窗口只为读取兼容，不能作为新窗口上传。会员到期或相应用途同意撤回后拒收，不补传。
+      description: UTC 30 秒对齐；账号、starts_at、channel 幂等。同键不同值或重传已删除窗口返回 409。缺失特征省略；有效秒不超过覆盖时长或该窗人声秒数，静音为 0。心率 bpm、HRV ms、步频步/分、语速为辨认得到的 Unicode 字母/数字 grapheme 数每秒、音量 dB、音调 Hz。语音窗口含 speech_rate 时必须同时提交 speech_rate_unit=characters_per_second；不得把旧声学代理值换算后冒充新单位。旧无单位窗口只为读取兼容，不能作为新窗口上传。会员到期或相应用途同意撤回后拒收，不补传。
       requestBody:
         required: true
         content:
@@ -2626,7 +2665,11 @@ paths:
       summary: 删除自己指定渠道的窗口并重算基线
       parameters:
       - name: starts_at
-        schema: {type: string, format: date-time}
+        schema:
+          type: string
+          format: date-time
+          pattern: '^(?:[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:00|0[48]|[2468][048]|[13579][26])00)-02-29)T(?:[01][0-9]|2[0-3]):[0-5][0-9]:(?:00|30)(?:\.0{1,9})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$'
+          description: 带时区且对齐到整分钟或 30 秒的窗口起点。
         example: '2026-11-21T09:00:00+08:00'
         in: query
         required: true
@@ -2647,6 +2690,8 @@ paths:
         '401': {$ref: '#/components/responses/E401'}
         '500': {$ref: '#/components/responses/E500'}
         '404': {$ref: '#/components/responses/E404'}
+        '503': {$ref: '#/components/responses/E503ServiceUnavailable'}
+      x-mobile-exact-success-status: 200
       x-example-request: DELETE /v1/signal-windows?starts_at=2026-11-21T09%3A00%3A00%2B08%3A00&channel=health
   /v1/signal-baselines:
     get:
@@ -2891,6 +2936,74 @@ components:
           enum:
           - true
           description: 仅接受 true。
+    DataRecord:
+      oneOf:
+      - {$ref: '#/components/schemas/TimedDataRecord'}
+      - {$ref: '#/components/schemas/ContactDataRecord'}
+      - {$ref: '#/components/schemas/WindowDataRecord'}
+    TimedDataRecord:
+      type: object
+      additionalProperties: false
+      required: [kind, id, label, recorded_at]
+      properties:
+        kind:
+          type: string
+          enum: [assessments, sessions, reviews, replies, manual_marks, signal_events]
+        id: &dataRecordID
+          type: string
+          format: uuid
+          pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        label: &dataRecordLabel
+          type: string
+          pattern: '[^ \t\n\r\f]'
+          description: 服务端静态非敏感展示标签。
+        recorded_at:
+          type: string
+          format: date-time
+          pattern: '^(?:[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:00|0[48]|[2468][048]|[13579][26])00)-02-29)T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]{1,9})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$'
+          description: 带时区的记录时间，保留至多九位小数秒。
+    ContactDataRecord:
+      type: object
+      additionalProperties: false
+      required: [kind, id, label, recorded_at]
+      properties:
+        kind: {type: string, enum: [contacts]}
+        id: *dataRecordID
+        label: *dataRecordLabel
+        recorded_at:
+          type: string
+          format: date-time
+          nullable: true
+          enum: [null]
+          x-go-type: time.Time
+          description: 关系人没有可用于定位的记录时间，固定为 null。
+    WindowDataRecord:
+      type: object
+      additionalProperties: false
+      required: [kind, channel, label, recorded_at]
+      properties:
+        kind: {type: string, enum: [signal_windows]}
+        channel: {type: string, enum: [health, voice]}
+        label: *dataRecordLabel
+        recorded_at:
+          type: string
+          format: date-time
+          pattern: '^(?:[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:00|0[48]|[2468][048]|[13579][26])00)-02-29)T(?:[01][0-9]|2[0-3]):[0-5][0-9]:(?:00|30)(?:\.0{1,9})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$'
+          description: 带时区的 30 秒对齐窗口起点，原样用于 starts_at。
+    DataRecordPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/DataRecord'}
+          description: OAS 3.0 的静态响应 schema 无法表达 items[].kind 与请求路径 kind 的跨消息关联；服务端在运行时逐条校验并要求所有 item.kind 与请求路径 kind 一致，错 kind 或混合 kind 均拒绝。
+        next_cursor:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 300
     Safety:
       type: object
       additionalProperties: false

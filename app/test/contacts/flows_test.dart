@@ -236,7 +236,10 @@ Future<void> tap(WidgetTester t, String label) async {
   await t.pump();
   final w = find.text(label).last;
   await t.ensureVisible(w);
-  await t.tap(w);
+  await t.pumpAndSettle();
+  final visible = w.hitTestable();
+  expect(visible, findsOneWidget);
+  await t.tap(visible);
   await t.pumpAndSettle();
 }
 
@@ -357,6 +360,10 @@ void main() {
   });
 
   testWidgets('远端题目→创建→详情→修改→可选导入→确认删除', (t) async {
+    t.view.devicePixelRatio = 1;
+    t.view.physicalSize = const Size(320, 568);
+    addTearDown(t.view.resetPhysicalSize);
+    addTearDown(t.view.resetDevicePixelRatio);
     final f = Fixture();
     for (final c in (await f.load()).people) {
       await f.remove(c.id);

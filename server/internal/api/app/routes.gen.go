@@ -62,6 +62,11 @@ const (
 	ContactSceneWork    ContactScene = "work"
 )
 
+// Defines values for ContactDataRecordKind.
+const (
+	ContactDataRecordKindContacts ContactDataRecordKind = "contacts"
+)
+
 // Defines values for CreateContactInputScene.
 const (
 	CreateContactInputSceneFamily  CreateContactInputScene = "family"
@@ -346,6 +351,16 @@ const (
 	SignalEventKindSelfFluctuation    SignalEventKind = "self_fluctuation"
 )
 
+// Defines values for TimedDataRecordKind.
+const (
+	TimedDataRecordKindAssessments  TimedDataRecordKind = "assessments"
+	TimedDataRecordKindManualMarks  TimedDataRecordKind = "manual_marks"
+	TimedDataRecordKindReplies      TimedDataRecordKind = "replies"
+	TimedDataRecordKindReviews      TimedDataRecordKind = "reviews"
+	TimedDataRecordKindSessions     TimedDataRecordKind = "sessions"
+	TimedDataRecordKindSignalEvents TimedDataRecordKind = "signal_events"
+)
+
 // Defines values for VoiceWindowChannel.
 const (
 	VoiceWindowChannelVoice VoiceWindowChannel = "voice"
@@ -359,6 +374,17 @@ const (
 // Defines values for VoiceWindowSpeechRateUnit.
 const (
 	VoiceWindowSpeechRateUnitCharactersPerSecond VoiceWindowSpeechRateUnit = "characters_per_second"
+)
+
+// Defines values for WindowDataRecordChannel.
+const (
+	WindowDataRecordChannelHealth WindowDataRecordChannel = "health"
+	WindowDataRecordChannelVoice  WindowDataRecordChannel = "voice"
+)
+
+// Defines values for WindowDataRecordKind.
+const (
+	WindowDataRecordKindSignalWindows WindowDataRecordKind = "signal_windows"
 )
 
 // Defines values for ListCardsParamsScene.
@@ -393,6 +419,18 @@ const (
 	SetConsentParamsPurposeReview          SetConsentParamsPurpose = "review"
 	SetConsentParamsPurposeTerms           SetConsentParamsPurpose = "terms"
 	SetConsentParamsPurposeVoice           SetConsentParamsPurpose = "voice"
+)
+
+// Defines values for ListDataRecordsParamsKind.
+const (
+	ListDataRecordsParamsKindAssessments   ListDataRecordsParamsKind = "assessments"
+	ListDataRecordsParamsKindContacts      ListDataRecordsParamsKind = "contacts"
+	ListDataRecordsParamsKindManualMarks   ListDataRecordsParamsKind = "manual_marks"
+	ListDataRecordsParamsKindReplies       ListDataRecordsParamsKind = "replies"
+	ListDataRecordsParamsKindReviews       ListDataRecordsParamsKind = "reviews"
+	ListDataRecordsParamsKindSessions      ListDataRecordsParamsKind = "sessions"
+	ListDataRecordsParamsKindSignalEvents  ListDataRecordsParamsKind = "signal_events"
+	ListDataRecordsParamsKindSignalWindows ListDataRecordsParamsKind = "signal_windows"
 )
 
 // Defines values for DeleteSourceParamsKind.
@@ -525,6 +563,21 @@ type Contact struct {
 // ContactScene defines model for Contact.Scene.
 type ContactScene string
 
+// ContactDataRecord defines model for ContactDataRecord.
+type ContactDataRecord struct {
+	Id   openapi_types.UUID    `json:"id"`
+	Kind ContactDataRecordKind `json:"kind"`
+
+	// Label 服务端静态非敏感展示标签。
+	Label string `json:"label"`
+
+	// RecordedAt 关系人没有可用于定位的记录时间，固定为 null。
+	RecordedAt *time.Time `json:"recorded_at"`
+}
+
+// ContactDataRecordKind defines model for ContactDataRecord.Kind.
+type ContactDataRecordKind string
+
 // CreateContactInput defines model for CreateContactInput.
 type CreateContactInput struct {
 	Answers *[]struct {
@@ -620,6 +673,18 @@ type Credential struct {
 
 // CredentialProvider defines model for Credential.Provider.
 type CredentialProvider string
+
+// DataRecord defines model for DataRecord.
+type DataRecord struct {
+	union json.RawMessage
+}
+
+// DataRecordPage defines model for DataRecordPage.
+type DataRecordPage struct {
+	// Items OAS 3.0 的静态响应 schema 无法表达 items[].kind 与请求路径 kind 的跨消息关联；服务端在运行时逐条校验并要求所有 item.kind 与请求路径 kind 一致，错 kind 或混合 kind 均拒绝。
+	Items      []DataRecord `json:"items"`
+	NextCursor *string      `json:"next_cursor"`
+}
 
 // Dimension defines model for Dimension.
 type Dimension struct {
@@ -1239,6 +1304,21 @@ type SwitchIdentityInput struct {
 	Credential Credential `json:"credential"`
 }
 
+// TimedDataRecord defines model for TimedDataRecord.
+type TimedDataRecord struct {
+	Id   openapi_types.UUID  `json:"id"`
+	Kind TimedDataRecordKind `json:"kind"`
+
+	// Label 服务端静态非敏感展示标签。
+	Label string `json:"label"`
+
+	// RecordedAt 带时区的记录时间，保留至多九位小数秒。
+	RecordedAt time.Time `json:"recorded_at"`
+}
+
+// TimedDataRecordKind defines model for TimedDataRecord.Kind.
+type TimedDataRecordKind string
+
 // Tokens defines model for Tokens.
 type Tokens struct {
 	AccessToken  string             `json:"access_token"`
@@ -1275,6 +1355,24 @@ type VoiceWindowDurationSeconds int
 
 // VoiceWindowSpeechRateUnit 语速单位为辨认得到的 Unicode 字母/数字 grapheme 数每秒；存在 speech_rate 时必填，旧无单位窗口不得作为新上传。
 type VoiceWindowSpeechRateUnit string
+
+// WindowDataRecord defines model for WindowDataRecord.
+type WindowDataRecord struct {
+	Channel WindowDataRecordChannel `json:"channel"`
+	Kind    WindowDataRecordKind    `json:"kind"`
+
+	// Label 服务端静态非敏感展示标签。
+	Label string `json:"label"`
+
+	// RecordedAt 带时区的 30 秒对齐窗口起点，原样用于 starts_at。
+	RecordedAt time.Time `json:"recorded_at"`
+}
+
+// WindowDataRecordChannel defines model for WindowDataRecord.Channel.
+type WindowDataRecordChannel string
+
+// WindowDataRecordKind defines model for WindowDataRecord.Kind.
+type WindowDataRecordKind string
 
 // WindowStat defines model for WindowStat.
 type WindowStat struct {
@@ -1363,6 +1461,15 @@ type ListConsentsParams struct {
 
 // SetConsentParamsPurpose defines parameters for SetConsent.
 type SetConsentParamsPurpose string
+
+// ListDataRecordsParams defines parameters for ListDataRecords.
+type ListDataRecordsParams struct {
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListDataRecordsParamsKind defines parameters for ListDataRecords.
+type ListDataRecordsParamsKind string
 
 // DeleteSourceParamsKind defines parameters for DeleteSource.
 type DeleteSourceParamsKind string
@@ -1913,6 +2020,94 @@ func (t *CreateSessionInput) UnmarshalJSON(b []byte) error {
 	return err
 }
 
+// AsTimedDataRecord returns the union data inside the DataRecord as a TimedDataRecord
+func (t DataRecord) AsTimedDataRecord() (TimedDataRecord, error) {
+	var body TimedDataRecord
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromTimedDataRecord overwrites any union data inside the DataRecord as the provided TimedDataRecord
+func (t *DataRecord) FromTimedDataRecord(v TimedDataRecord) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeTimedDataRecord performs a merge with any union data inside the DataRecord, using the provided TimedDataRecord
+func (t *DataRecord) MergeTimedDataRecord(v TimedDataRecord) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsContactDataRecord returns the union data inside the DataRecord as a ContactDataRecord
+func (t DataRecord) AsContactDataRecord() (ContactDataRecord, error) {
+	var body ContactDataRecord
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromContactDataRecord overwrites any union data inside the DataRecord as the provided ContactDataRecord
+func (t *DataRecord) FromContactDataRecord(v ContactDataRecord) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeContactDataRecord performs a merge with any union data inside the DataRecord, using the provided ContactDataRecord
+func (t *DataRecord) MergeContactDataRecord(v ContactDataRecord) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWindowDataRecord returns the union data inside the DataRecord as a WindowDataRecord
+func (t DataRecord) AsWindowDataRecord() (WindowDataRecord, error) {
+	var body WindowDataRecord
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWindowDataRecord overwrites any union data inside the DataRecord as the provided WindowDataRecord
+func (t *DataRecord) FromWindowDataRecord(v WindowDataRecord) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeWindowDataRecord performs a merge with any union data inside the DataRecord, using the provided WindowDataRecord
+func (t *DataRecord) MergeWindowDataRecord(v WindowDataRecord) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t DataRecord) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *DataRecord) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // AsFinishSessionResult0 returns the union data inside the FinishSessionResult as a FinishSessionResult0
 func (t FinishSessionResult) AsFinishSessionResult0() (FinishSessionResult0, error) {
 	var body FinishSessionResult0
@@ -2147,7 +2342,10 @@ type ServerInterface interface {
 	// 按用途授权或立即撤回
 	// (PUT /v1/me/consents/{purpose})
 	SetConsent(c *gin.Context, purpose SetConsentParamsPurpose)
-	// 计划中的单条记录删除（当前候选未开放）
+	// 分页定位本人可删除记录，不返回正文或内部键
+	// (GET /v1/me/data/{kind})
+	ListDataRecords(c *gin.Context, kind ListDataRecordsParamsKind, params ListDataRecordsParams)
+	// 删除源及副本，重算成长分
 	// (DELETE /v1/me/data/{kind}/{id})
 	DeleteSource(c *gin.Context, kind DeleteSourceParamsKind, id openapi_types.UUID)
 	// 流式生成当前账号 JSON 压缩包，不落盘
@@ -3051,6 +3249,51 @@ func (siw *ServerInterfaceWrapper) SetConsent(c *gin.Context) {
 	siw.Handler.SetConsent(c, purpose)
 }
 
+// ListDataRecords operation middleware
+func (siw *ServerInterfaceWrapper) ListDataRecords(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "kind" -------------
+	var kind ListDataRecordsParamsKind
+
+	err = runtime.BindStyledParameterWithOptions("simple", "kind", c.Param("kind"), &kind, runtime.BindStyledParameterOptions{Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter kind: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(BearerScopes, []string{})
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListDataRecordsParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "cursor", c.Request.URL.Query(), &params.Cursor)
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter cursor: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", c.Request.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ListDataRecords(c, kind, params)
+}
+
 // DeleteSource operation middleware
 func (siw *ServerInterfaceWrapper) DeleteSource(c *gin.Context) {
 
@@ -3899,6 +4142,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.POST(options.BaseURL+"/v1/me/closure", wrapper.FreezeAccount)
 	router.GET(options.BaseURL+"/v1/me/consents", wrapper.ListConsents)
 	router.PUT(options.BaseURL+"/v1/me/consents/:purpose", wrapper.SetConsent)
+	router.GET(options.BaseURL+"/v1/me/data/:kind", wrapper.ListDataRecords)
 	router.DELETE(options.BaseURL+"/v1/me/data/:kind/:id", wrapper.DeleteSource)
 	router.GET(options.BaseURL+"/v1/me/export", wrapper.ExportData)
 	router.GET(options.BaseURL+"/v1/me/profile", wrapper.GetProfile)

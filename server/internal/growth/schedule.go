@@ -68,6 +68,7 @@ type Plan struct {
 	Personalized bool       `json:"personalized"`
 	Items        []PlanItem `json:"items"`
 	AssessmentID *uuid.UUID `json:"assessment_id,omitempty"`
+	completion   *planCompletion
 }
 
 func Weakest(w WLEIS) string {

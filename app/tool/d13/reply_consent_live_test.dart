@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -550,6 +551,12 @@ void main() {
     expect(tester.widget<ProfileView>(detail).contact.id == contactId, isTrue);
     probe.contactSubmission = null;
 
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 568);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pump();
+
     final freshTrace = _ContactSubmissionTrace();
     probe.contactSubmission = freshTrace;
     await _tapLabel(tester, '导入聊天片段');
@@ -578,14 +585,16 @@ void main() {
       ),
     );
 
-    await _waitFor(tester, success);
-    await tester.scrollUntilVisible(
-      success,
-      -240,
-      scrollable: find.byType(Scrollable),
-    );
-    await _waitFor(tester, success.hitTestable());
     await _waitFor(tester, detail);
+    debugPrintSynchronously(
+      'D13_REPAIR_FRESH response=${freshTrace.inference.name} '
+      'exchanges=${freshTrace.describe()} '
+      'notice_mounted=${success.evaluate().length} '
+      'notice_visible=${success.hitTestable().evaluate().length}',
+    );
+    // The return from import must show the result without another swipe.
+    await _waitFor(tester, success.hitTestable());
+    expect(success, findsOneWidget);
     expect(probe.profileStatuses, [409, 409, 200]);
     expect(probe.profileRequestIds.length, 3);
     expect(probe.profileRequestIds.last == oldContactKey, isFalse);
@@ -604,6 +613,10 @@ void main() {
     );
     probe.contactSubmission = null;
     stage('contact_fresh_key', 'pass');
+
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+    await tester.pump();
     stage('account_switch', 'start');
 
     await _tapLabel(tester, '导入聊天片段');

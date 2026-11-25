@@ -297,6 +297,14 @@ func (s *Service) Create(ctx context.Context, p accounts.Principal, in Input) (o
 		if err := s.allowed(ctx, tx, p.User, in); err != nil {
 			return err
 		}
+		var deleted bool
+		if err := tx.QueryRow(ctx, `select exists(select 1 from practice_request_tombstones
+where user_id=$1 and request_digest=sha256(uuid_send($1) || uuid_send($2)))`, p.User, in.ID).Scan(&deleted); err != nil {
+			return err
+		}
+		if deleted {
+			return membership.ErrConflict
+		}
 		b, err := s.seal(p.User, in.ID, "setup", setupSnapshot{in, scene, mode, kind, target})
 		if err != nil {
 			return err
@@ -325,21 +333,30 @@ func (s *Service) Create(ctx context.Context, p accounts.Principal, in Input) (o
 func (s *Service) Get(ctx context.Context, p accounts.Principal, id uuid.UUID) (out Session, e error) {
 	e = s.Accounts.WithSession(ctx, p, false, func(tx pgx.Tx) error {
 		r, e := s.load(ctx, tx, p.User, id)
-		if e == nil {
-			out = r.detail()
-			if prior := out.Setup.Previous; prior != nil {
-				var live bool
-				if err := tx.QueryRow(ctx, `select exists(select from activities where user_id=$1 and id=$2 and state='complete')`, p.User, *prior).Scan(&live); err != nil {
-					return err
-				}
-				if !live {
-					out.Setup.Previous = nil
-				}
-			}
+		if e != nil {
+			return e
 		}
+		out, e = s.publicDetail(ctx, tx, p.User, r)
 		return e
 	})
 	return
+}
+
+func (s *Service) publicDetail(ctx context.Context, tx pgx.Tx, user uuid.UUID, r record) (Session, error) {
+	out := r.detail()
+	if prior := out.Setup.Previous; prior != nil {
+		var live bool
+		err := tx.QueryRow(ctx, `select exists(
+select 1 from activities a join practice_work w on w.activity_id=a.id
+where a.user_id=$1 and a.id=$2 and a.state='complete' and a.kind in ('practice','drill'))`, user, *prior).Scan(&live)
+		if err != nil {
+			return Session{}, err
+		}
+		if !live {
+			out.Setup.Previous = nil
+		}
+	}
+	return out, nil
 }
 
 type Page struct {

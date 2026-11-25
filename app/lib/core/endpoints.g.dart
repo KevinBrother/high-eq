@@ -21,6 +21,7 @@ class MobileEndpoints {
   Future<Json> listConsents({required AccountScope scope, String? cursor, int? limit}) => api.json(AppOp.listConsents, scope: scope, query: {'cursor': ?cursor, 'limit': ?limit?.toString()});
   Future<Json> setConsent({required AccountScope scope, required String purpose, required Json body}) => api.json(AppOp.setConsent, scope: scope, path: {'purpose': purpose}, body: body);
   Stream<List<int>> exportData({required AccountScope scope}) => api.bytes(AppOp.exportData, scope: scope);
+  Future<Json> listDataRecords({required AccountScope scope, required String kind, String? cursor, int? limit}) => api.json(AppOp.listDataRecords, scope: scope, path: {'kind': kind}, query: {'cursor': ?cursor, 'limit': ?limit?.toString()});
   Future<Json> deleteSource({required AccountScope scope, required String kind, required String id}) => api.json(AppOp.deleteSource, scope: scope, path: {'kind': kind, 'id': id});
   Future<Json> getEntitlements({required AccountScope scope}) => api.json(AppOp.getEntitlements, scope: scope);
   Future<Json> getPurchaseToken({required AccountScope scope}) => api.json(AppOp.getPurchaseToken, scope: scope);

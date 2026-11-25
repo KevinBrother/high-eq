@@ -112,7 +112,7 @@ where a.id=d.activity_id
 	// Closing an out-of-order schedule must not swallow the real completion.
 	// Completion is keyed by the source occurrence day and is idempotent, so
 	// both delayed first delivery and duplicate replay can safely reach it.
-	return s.completeLevelForActivity(ctx, tx, v.UserID, occurredAt, v.LevelID)
+	return s.completeLevelForActivity(ctx, tx, v.UserID, v.ActivityID, occurredAt, v.LevelID)
 }
 
 // ConsumeScore only advances plans for a genuinely completed full practice
@@ -136,7 +136,7 @@ func (s *PlanService) ConsumeScore(ctx context.Context, tx pgx.Tx, v events.Scor
 		// A custom-scene practice has no catalog level and therefore no plan item.
 		return nil
 	}
-	return s.completeLevelForActivity(ctx, tx, v.UserID, occurredAt, levelID)
+	return s.completeLevelForActivity(ctx, tx, v.UserID, v.ActivityID, occurredAt, levelID)
 }
 
 func scheduleLockKey(user, level uuid.UUID, target string) int64 {
@@ -149,7 +149,7 @@ func scheduleLockKey(user, level uuid.UUID, target string) int64 {
 	return int64(h.Sum64())
 }
 
-func (s *PlanService) completeLevelForActivity(ctx context.Context, tx pgx.Tx, user uuid.UUID, at time.Time, levelID uuid.UUID) error {
+func (s *PlanService) completeLevelForActivity(ctx context.Context, tx pgx.Tx, user, activityID uuid.UUID, at time.Time, levelID uuid.UUID) error {
 	zone, err := s.timezone(ctx, tx, user)
 	if err != nil {
 		return err
@@ -158,15 +158,11 @@ func (s *PlanService) completeLevelForActivity(ctx context.Context, tx pgx.Tx, u
 	if err != nil {
 		return err
 	}
-	return s.completeLevelItem(ctx, tx, user, day, levelID, at)
-}
-
-func (s *PlanService) completeLevelItem(ctx context.Context, tx pgx.Tx, user uuid.UUID, day string, levelID uuid.UUID, at time.Time) error {
 	var (
 		sealed      []byte
 		completedAt *time.Time
 	)
-	err := tx.QueryRow(ctx, `select plan_enc,completed_at from daily_plans where user_id=$1 and plan_day=$2 for update`, user, day).Scan(&sealed, &completedAt)
+	err = tx.QueryRow(ctx, `select plan_enc,completed_at from daily_plans where user_id=$1 and plan_day=$2 for update`, user, day).Scan(&sealed, &completedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -177,30 +173,23 @@ func (s *PlanService) completeLevelItem(ctx context.Context, tx pgx.Tx, user uui
 	if err != nil {
 		return err
 	}
-	found, changed := false, false
 	for i := range plan.Items {
 		item := &plan.Items[i]
 		if item.Kind != KindLevel || item.ContentID != levelID {
 			continue
 		}
-		found = true
-		if !item.Completed {
-			item.Completed = true
-			changed = true
+		legacy := plan.completion == nil
+		if err := s.attributePlan(ctx, tx, user, zone, &plan, completedAt); err != nil {
+			return err
 		}
-		break
+		if !plan.completion.addPractice(practiceCompletion{ActivityID: activityID, ItemID: item.ID, At: at}) && !legacy {
+			return nil
+		}
+		item.Completed = true
+		if completedAt == nil {
+			completedAt = &at
+		}
+		return s.savePlanCompletion(ctx, tx, user, plan, completedAt)
 	}
-	if !found || !changed && completedAt != nil {
-		return nil
-	}
-	sealed, err = s.sealPlan(plan, user, day)
-	if err != nil {
-		return err
-	}
-	if completedAt == nil {
-		t := at.UTC()
-		completedAt = &t
-	}
-	_, err = tx.Exec(ctx, `update daily_plans set plan_enc=$3,completed_at=$4 where user_id=$1 and plan_day=$2`, user, day, sealed, completedAt)
-	return err
+	return nil
 }

@@ -16,6 +16,8 @@
 
 ## 2. 逐项 QA
 
+各模块 QA 行保留对应交付时点的接口状态。通用导出与选删的后续变化见 [T35 候选发布核对](#t35-候选发布核对)。
+
 | ID | 检查项 | 证据路径 | 当前结果 | 状态 | 上线门槛/负责人 |
 | --- | --- | --- | --- | --- | --- |
 | QA-01 | 官方法规/平台入口是否取得一手正文、版本和日期 | `docs/compliance/official-source-register.md` | 已读取 PIPL、生成式 AI 办法、Apple 审核指南、Android Health Connect 和 MIIT 同文政策库的部分官方正文；已登记 URL 与两份正文哈希。其他来源、版本日期和业务适用性仍待补 | `部分通过` | 运营/律师补齐正文、抓取日期、证据编号和适用性意见 |
@@ -36,7 +38,7 @@
 | QA-16 | 注销冻结、撤销注销和清理协调器是否保留 | `server/internal/accounts/`、`server/internal/privacy/`、`docs/schema.md` | 冻结 15 天、撤销注销、按根清理和删除协调器均有静态路径 | `通过（静态）` | T35/T34 做端到端注销、恢复和重放测试 |
 | QA-17 | 固定基线的通用导出与单条删除是否可调用 | `f60ace3:server/internal/service/http.go` | `GET /v1/me/export` 和 `DELETE /v1/me/data/:kind/:id` 在固定基线均未进入实现白名单，对有效会话返回 `501 not_implemented` | `未通过（固定基线）` | 当前候选见 [T35 候选发布核对](#t35-候选发布核对) |
 | QA-18 | 关系人推断的 1 天留存边界是什么？ | `gateway/store.go`、`TestRoutingStore` | T25 在 `profile_inference` 路由排除登记留存超过 1 天的主、备、灰度与审核端点；备用/灰度仍不得弱于主线路。此检查约束配置选择，不证明供应商实际留存或删除；供应商合同、执行记录仍待验收。 | 配置校验通过；供应商待验收 | 运营取得供应商合同与删除证据后再放行 |
-| QA-19 | 用户权利能力是否已闭环 | `data-inventory.md`、`privacy-policy-draft.md`、[T35 候选发布核对](#t35-候选发布核对) | 当前候选已接线 `GET /v1/me/export`，通用 `DELETE /v1/me/data/:kind/:id` 仍返回 `501 not_implemented`；注销冻结/撤销注销与窗口专用删除独立验收 | `阻断` | T35 全量覆盖、通用删除、重算、防重放和恢复证明 |
+| QA-19 | 用户权利能力是否已闭环 | `data-inventory.md`、`privacy-policy-draft.md`、[T35 候选发布核对](#t35-候选发布核对) | 当前选删后端候选已接线导出、本人定位列表和通用单条删除。注销冻结、撤销注销与窗口专用删除分别有独立证据 | `阻断` | 选删 Flutter 旅程、目标环境复验、生产签收和 T34 恢复后重删 |
 | QA-20 | 用户权利是否已在客户端闭环 | [T35 iOS 导出交接](../tasks/T35-export-ios-handoff.md)、`privacy-policy-draft.md` | 当前候选有隐私页导出入口；签名安装和真机交付、设置页逐项撤回、全量导出/删除及注销整体验收待完成 | `阻断` | T35 客户端和真机验收 |
 | QA-21 | 官方来源、文号、版本、日期和适用性是否完整 | `official-source-register.md` | 部分正文与 URL/哈希已取得；平台规则版本、其余法规正文、适用性和律师意见仍待补 | `部分通过` | 律师与运营按来源登记逐项关闭 |
 | QA-22 | 主模型、备用/灰度模型和审核服务是否有真实证据 | `sdk-model-review-checklist.md`、`server/migrations/20261121000600_gateway_admission.up.sql` | 准入字段存在，但仓库没有真实供应商、合同、DPA、处理地、留存或删除证据 | `阻断` | 逐槽位归档合同、DPA、后台和调用证据 |
@@ -77,29 +79,23 @@ T29 归档已有静态实现，但未合入固定基线、真机待验。不得�
 | 核对范围 | 通用导出 | 通用单条删除 |
 | --- | --- | --- |
 | 固定 T33 基线 `f60ace3` | `GET /v1/me/export` 返回 `501 not_implemented` | `DELETE /v1/me/data/:kind/:id` 返回 `501 not_implemented` |
-| 当前 T35 独立候选 | 已接通实际 HTTP 路由。有效、未冻结的账号可流式取得 ZIP；删除屏障返回可重试的 `503`。ZIP 中央目录在事务提交成功后写入 | 仍由路由门禁拦截。有效会话发出格式正确的请求时返回 `501 not_implemented` |
-| 未来验收 | 在发布目标复核当前账号隔离、字段排除、ZIP 完整性和客户端交付 | 另行接线后验收归属、级联、重算、不可回填、再导出及恢复后重删 |
+| T35 独立导出候选 | 有效、未冻结的账号可流式取得 ZIP。删除屏障返回可重试的 `503`，ZIP 中央目录在事务提交成功后写入 | 有效会话的合法请求由路由门禁返回 `501 not_implemented` |
+| T35 当前选删后端候选 | 沿用独立导出候选的 ZIP、事务提交与删除屏障 | `GET /v1/me/data/{kind}` 分页定位本人，`DELETE /v1/me/data/{kind}/{id}` 按本人记录的种类和公开 UUID 定点删除。窗口按 30 秒起点和渠道走 `DELETE /v1/signal-windows` |
 
 候选的 `manifest.json` 为首条，后接 13 个 JSON 分区：`accounts`、`ai_calls`、`assessments`、`chat_imports`、`emotion`、`growth`、`manual_marks`、`membership`、`payments`、`profiles`、`replies`、`reviews`、`training`。源代码与回归核对的排除项包括其他账号记录、密钥和会话凭据、HMAC/防重放键、平台收据原文、聊天原文与设备录音，以及训练工作令牌、请求键和成长计划的 `review_activity_id`。保留关系人、标记与窗口专用删除以及注销各自的证据。
 
-截至评审对照点 `7332045`，此前主线的通用导出仍未实现。评审记录当前独立切片在一次性 PG17、普通 Redis 和独立登记 Redis 环境中已有 8 个顶级集成用例、2 个对练子例，以及 5 个提交/HTTP 中断用例的通过回执。该记录属于此前的隔离验证。本轮新增的通用删除拒绝回归待宿主复跑。生产发布、物理清除、真机和 T34 备份恢复/重删仍待各自的证据。
+截至评审对照点 `7332045`，此前主线的通用导出仍未实现。独立导出切片在一次性 PG17、普通 Redis 和独立登记 Redis 环境中记录了 8 个顶级集成用例、2 个对练子例及 5 个提交/HTTP 中断用例的通过回执。该切片保留 `TestPrivacyRightsHTTP/selected_record_delete_stays_unimplemented`，断言匿名 `401`、有效会话 `501 not_implemented` 且 `retryable: false`，并核对标记仍在本人 ZIP 中且与另一账号隔离。该子例待用[独立导出候选的代码](../tasks/T35-export-ios-handoff.md#独立导出后端复验)单列回执。
 
-本归档已运行 Python 合规套件，并核对 OpenAPI 中的 13 分区样例和 `501` 响应。完整 OpenAPI 校验因缺少 PyYAML 未进入断言。Go 回归因本机 Go 1.22.6 低于模块要求的 1.26.0，在编译前停止。
+当前选删候选的列表只提供静态标签、时间与公开删除键，活动类记录返回活动 ID，内部清理源由服务端解析。删除在账号锁内复核会话、归属和种类，写入清理意图和独立账本。删除屏障生效时，本人的有效会话只能重试精确待办。匿名或失效会话被拒绝，越权、种类不符与未知记录均返回 `404`。
 
-宿主用 Go 1.26 和一次性合成 PG17、普通 Redis、独立 AOF Redis，按[删除恢复交接的测试环境配置](../tasks/T35-deletion-recovery.md#宿主回执与复跑)，从 `server/` 复跑：
+当前归档新增 `TestPrivacyRightsHTTP/selected_record_delete_removes_only_the_listed_owned_mark`，以两个合成账号的真实 HTTP 列表和 ZIP、SQL 源行及独立账本核对拒绝请求无副作用、本人的选中项消失、同组与另一账号的记录保留。既有四项宿主实库回执覆盖定位与窗口、精确恢复、反序重放和对练清理。覆盖范围、已验与未验及复跑命令见[选删后端候选交接](../tasks/T35-selected-record-handoff.md)。
 
-```sh
-go test -count=1 -v -tags integration \
-  -run '^(TestPrivacyRightsHTTP|TestAssessmentLifecycle|TestEmotionFeedbackIsExplicit|TestPaymentLifecycle|TestProfileLifecycle|TestReplyLifecycle|TestReviewLifecycle|TestPracticeWire|TestExportCommitFailureDoesNotRevealArchive|TestExportStreamsLargeIncompressibleEntryBeforeCommit|TestStreamingExport.*|TestExportLate.*)$' \
-  ./internal/service
-```
-
-回执需单列 `TestPrivacyRightsHTTP/selected_record_delete_stays_unimplemented`。该子例检查匿名请求返回 `401`，有效会话返回 `501 not_implemented` 且 `retryable: false`，随后父用例核对该标记仍存在于本人 ZIP 并对其他账号隔离。完整 OpenAPI 校验在具备仓库校验依赖的环境运行 `python3 -B scripts/check_contracts.py`。
+生产发布、物理清除、Flutter 选删、真机及 T34 备份恢复与重删仍各自待验。完整 OpenAPI 校验在具备仓库校验依赖的环境运行 `python3 -B scripts/check_contracts.py`。
 
 ### 完整用户权利验收
 
 1. 设置页逐项展示并撤回 `health`、`voice`、`audio_retention`、`practice`、`review`、`contacts`、`chat_import`、`manual_mark`，撤回后立即停采。`[待 T35 对表]`
-2. 查阅、复制/导出、更正、删除和注销的实际入口及错误处理；当前候选 `GET /v1/me/export` 继续做目标环境交付验收，`DELETE /v1/me/data/:kind/:id` 留待未来接线。`[待 T35 对表]`
+2. 查阅、复制/导出、更正、删除和注销的实际入口及错误处理。当前后端候选继续做目标环境交付验收，并补齐 Flutter 定位、选择、确认、删除后读回的全链路回执。`[待 T35 对表]`
 3. 从源消息、带引用评分追到数值副本、画像、计划和可关联日志；导出包含用户仍有的数据，排除密钥、HMAC、他人数据和平台收据原文。`[待 T35 对表]`
 4. 删除后重算、不可回填、不可再导出；防重放记录只保留不含身份信息的源 ID 并覆盖规定期限。`[待 T35 对表]`
 5. 注销冻结 15 天、撤销注销、按根清理、订单脱敏、支付明细/通知清理及清理证明。`[待 T35 对表]`

@@ -31,10 +31,11 @@ import (
 )
 
 type t35ExportOwner struct {
-	account, mark uuid.UUID
-	ticket, scene string
-	assessment    t35ExportAssessment
-	seedPlanDay   string
+	account, mark, deleteMark uuid.UUID
+	marks                     []app.Mark
+	ticket, scene             string
+	assessment                t35ExportAssessment
+	seedPlanDay               string
 }
 
 func TestT35FormalAccountExportJourney(t *testing.T) {
@@ -81,10 +82,13 @@ func TestT35FormalAccountExportJourney(t *testing.T) {
 	t.Log("PASS(service.runtime)")
 
 	t.Log("BEGIN(service.seed)")
-	a := t35SeedExportOwner(t, ctx, s, router, "work", []int{1, 1, 1, 1, 7, 7, 7, 7, 5, 6, 5, 6, 1, 1, 1, 2})
-	b := t35SeedExportOwner(t, ctx, s, router, "partner", []int{6, 6, 6, 6, 2, 2, 2, 2, 3, 3, 3, 3, 7, 7, 7, 7})
-	if a.account == b.account || a.mark == b.mark {
-		t.Fatal("expected independent accounts and marks")
+	a := t35SeedExportOwner(t, ctx, s, router, "work", []string{"work", "work"}, []int{1, 1, 1, 1, 7, 7, 7, 7, 5, 6, 5, 6, 1, 1, 1, 2})
+	b := t35SeedExportOwner(t, ctx, s, router, "partner", []string{"partner"}, []int{6, 6, 6, 6, 2, 2, 2, 2, 3, 3, 3, 3, 7, 7, 7, 7})
+	if a.account == b.account || a.mark == b.mark || a.mark == a.deleteMark || a.deleteMark == b.mark {
+		t.Fatal("expected independent accounts and three distinct marks")
+	}
+	if len(a.marks) != 2 || len(b.marks) != 1 {
+		t.Fatal("expected account A to own two marks and account B to own one")
 	}
 	if a.assessment.ID == b.assessment.ID || slices.Equal(a.assessment.Answers, b.assessment.Answers) || a.assessment.Total == b.assessment.Total {
 		t.Fatal("expected independent assessments with different answers and scores")
@@ -101,20 +105,29 @@ func TestT35FormalAccountExportJourney(t *testing.T) {
 
 	t.Log("BEGIN(receive.wire-and-inventory)")
 	observed := observer.snapshot()
-	if len(observed) != 2 {
-		t.Fatal("expected exactly two real export responses")
+	if len(observed) != 4 {
+		t.Fatal("expected exactly four real export responses")
 	}
-	first := t35ReadDeliveredZIP(t, scratch, "a", a.account, observed[0])
-	second := t35ReadDeliveredZIP(t, scratch, "b", b.account, observed[1])
+	aBefore := t35ReadDeliveredZIP(t, scratch, "a-before", a.account, observed[0])
+	aAfter := t35ReadDeliveredZIP(t, scratch, "a-after", a.account, observed[1])
+	bBefore := t35ReadDeliveredZIP(t, scratch, "b-before", b.account, observed[2])
+	bAfter := t35ReadDeliveredZIP(t, scratch, "b-after", b.account, observed[3])
 	t.Log("PASS(receive.wire-and-inventory)")
 
+	t.Log("BEGIN(receive.selected-mark-diff)")
+	t35CheckExportOwnerBeforeDelete(t, aBefore, a, b)
+	t35CheckExportOwner(t, aAfter, a, b)
+	t35CheckSelectedMarkDeletion(t, aBefore, aAfter, a)
+	t.Log("PASS(receive.selected-mark-diff)")
+
 	t.Log("BEGIN(receive.account-isolation)")
-	t35CheckExportOwner(t, first, a, b)
-	t35CheckExportOwner(t, second, b, a)
+	t35CheckExportOwner(t, bBefore, b, a)
+	t35CheckExportOwner(t, bAfter, b, a)
+	t35CheckPartitionsIdentical(t, bBefore, bAfter)
 	t.Log("PASS(receive.account-isolation)")
 }
 
-func t35SeedExportOwner(t *testing.T, ctx context.Context, s *Runtime, router http.Handler, scene string, answers []int) t35ExportOwner {
+func t35SeedExportOwner(t *testing.T, ctx context.Context, s *Runtime, router http.Handler, scene string, markScenes []string, answers []int) t35ExportOwner {
 	t.Helper()
 	request := func(method, path, token string, input, output any) {
 		t.Helper()
@@ -173,25 +186,46 @@ func t35SeedExportOwner(t *testing.T, ctx context.Context, s *Runtime, router ht
 	if s.db.QueryRow(ctx, `select plan_day::text from daily_plans where user_id=$1 and assessment_id=$2`, session.UserId, submitted.ID).Scan(&seedPlanDay) != nil || seedPlanDay == "" {
 		t.Fatal("expected a persisted plan derived from the owner's assessment")
 	}
-	var mark app.Mark
-	request(http.MethodPost, "marks", session.AccessToken, map[string]any{
-		"request_id": uuid.New(), "scene": scene,
-	}, &mark)
-	var persisted bool
-	if session.UserId == uuid.Nil || mark.Id == uuid.Nil || mark.Scene == nil || *mark.Scene != scene ||
-		s.db.QueryRow(ctx, `select exists(select from manual_marks where user_id=$1 and id=$2)`, session.UserId, mark.Id).Scan(&persisted) != nil || !persisted {
-		t.Fatal("public marks API did not persist the owner's synthetic mark")
+	marks := make([]app.Mark, 0, len(markScenes))
+	seen := make(map[uuid.UUID]bool, len(markScenes))
+	for _, markScene := range markScenes {
+		var mark app.Mark
+		request(http.MethodPost, "marks", session.AccessToken, map[string]any{
+			"request_id": uuid.New(), "scene": markScene,
+		}, &mark)
+		var persisted bool
+		if mark.Id == uuid.Nil || seen[mark.Id] || mark.Scene == nil || *mark.Scene != markScene ||
+			s.db.QueryRow(ctx, `select exists(select from manual_marks where user_id=$1 and id=$2)`, session.UserId, mark.Id).Scan(&persisted) != nil || !persisted {
+			t.Fatal("public marks API did not persist the owner's synthetic mark")
+		}
+		seen[mark.Id] = true
+		marks = append(marks, mark)
+		// The public API coalesces marks created within one minute. Keep both
+		// creations real while placing the prior mark outside that dedupe window.
+		if len(marks) < len(markScenes) {
+			if _, err := s.db.Exec(ctx, `update manual_marks set accepted_at=clock_timestamp()-interval '2 minutes' where user_id=$1`, session.UserId); err != nil {
+				t.Fatal("could not age the prior synthetic mark outside the public dedupe window")
+			}
+		}
 	}
-	return t35ExportOwner{
-		account: session.UserId, mark: mark.Id, scene: scene, ticket: issueTicket(), seedPlanDay: seedPlanDay,
+	if session.UserId == uuid.Nil || len(marks) == 0 {
+		t.Fatal("synthetic owner does not have a persisted account and mark")
+	}
+	owner := t35ExportOwner{
+		account: session.UserId, mark: marks[0].Id, marks: marks, scene: scene, ticket: issueTicket(), seedPlanDay: seedPlanDay,
 		assessment: t35ExportAssessment{Result: history.Items[0], Version: bank.Version, Answers: answers},
 	}
+	if len(marks) > 1 {
+		owner.deleteMark = marks[1].Id
+	}
+	return owner
 }
 
 type t35ExportObservation struct {
 	account uuid.UUID
 	valid   bool
 	digest  [sha256.Size]byte
+	size    int
 }
 
 // Observe the real response without buffering it or modifying request headers,
@@ -218,7 +252,7 @@ func (o *t35ExportObserver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Get("Content-Type") == "application/zip" &&
 			w.Header().Get("Content-Disposition") == `attachment; filename="high-eq-export.zip"`
 		o.mu.Lock()
-		o.observed = append(o.observed, t35ExportObservation{p.User, valid, [sha256.Size]byte(writer.digest.Sum(nil))})
+		o.observed = append(o.observed, t35ExportObservation{p.User, valid, [sha256.Size]byte(writer.digest.Sum(nil)), writer.size})
 		o.mu.Unlock()
 	}()
 	o.router.ServeHTTP(writer, r)
@@ -235,6 +269,7 @@ type t35ExportWriter struct {
 	http.ResponseWriter
 	digest hash.Hash
 	status int
+	size   int
 }
 
 func (w *t35ExportWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
@@ -249,5 +284,6 @@ func (w *t35ExportWriter) WriteHeader(status int) {
 func (w *t35ExportWriter) Write(body []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(body)
 	_, _ = w.digest.Write(body[:n])
+	w.size += n
 	return n, err
 }

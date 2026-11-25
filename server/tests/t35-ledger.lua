@@ -38,9 +38,9 @@ redis = {
     end,
 }
 
-local function run(duration, rootIndex, keys, identity)
+local function run(duration, rootIndex, keys, identity, windowUntil)
     KEYS = { "ledger:identity", table.unpack(keys) }
-    ARGV = { identity or seal, tostring(duration), tostring(rootIndex) }
+    ARGV = { identity or seal, tostring(duration), tostring(rootIndex), windowUntil }
     return write()
 end
 
@@ -104,4 +104,19 @@ assert(not get(parent) and not get(child) and not get(other))
 assert(run(ttl, 2, { parent, child }) == 1)
 check(parent, now + ttl)
 check(child, now + ttl)
+-- A window replay key and its physical root stay opaque through admission,
+-- even when the backup floor alone would expire earlier. Neither survives
+-- forever, and a short-lived window still receives the backup floor.
+local windowRoot, replay = "deleted:window-root", "deleted:window-replay"
+local windowUntil = now + 179 * day
+assert(run(ttl, 0, { windowRoot, replay }, nil, windowUntil) == 1)
+check(windowRoot, windowUntil)
+check(replay, windowUntil)
+now = now + ttl + day
+assert(get(windowRoot) and get(replay))
+now = windowUntil
+assert(not get(windowRoot) and not get(replay))
+assert(run(ttl, 0, { windowRoot, replay }, nil, now + day) == 1)
+check(windowRoot, now + ttl)
+check(replay, now + ttl)
 print("T35 ledger Lua regression passed")

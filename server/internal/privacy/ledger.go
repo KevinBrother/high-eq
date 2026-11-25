@@ -130,22 +130,26 @@ func checkedCascade(n int, err error) error {
 }
 
 func (l *Ledger) mark(ctx context.Context, ids []uuid.UUID) error {
-	return l.write(ctx, l.keys(ids), 0)
+	return l.write(ctx, l.keys(ids), 0, 0)
+}
+
+func (l *Ledger) markWindow(ctx context.Context, root, replay uuid.UUID, uploadUntil time.Time) error {
+	return l.write(ctx, l.keys([]uuid.UUID{root, replay}), 0, uploadUntil.UnixMilli())
 }
 
 // cascade starts with the contact root, followed by its currently locked children.
 func (l *Ledger) markCascade(ctx context.Context, other, cascade []uuid.UUID) error {
 	keys := append(l.keys(other), l.keys(cascade)[1:]...)
-	return l.write(ctx, keys, len(other)+2)
+	return l.write(ctx, keys, len(other)+2, 0)
 }
 
-func (l *Ledger) write(ctx context.Context, keys []string, parent int) error {
+func (l *Ledger) write(ctx context.Context, keys []string, parent int, keepUntil int64) error {
 	if e := l.settings(ctx); e != nil {
 		return e
 	}
 	conn := l.r.Conn()
 	defer conn.Close()
-	num, e := conn.Eval(ctx, ledgerWrite, keys, l.seal(), l.ttl.Milliseconds(), parent).Int()
+	num, e := conn.Eval(ctx, ledgerWrite, keys, l.seal(), l.ttl.Milliseconds(), parent, keepUntil).Int()
 	if e := checkedCascade(num, e); e != nil {
 		return e
 	}

@@ -89,6 +89,14 @@ func TestWindowUnmarshalResetsPresenceState(t *testing.T) {
 	}
 }
 
+func TestWindowRejectsTimestampPrecisionThatWouldBeLost(t *testing.T) {
+	raw := `{"starts_at":"2026-11-21T12:00:00.0000000001Z","duration_seconds":30,"exercise":false,"channel":"health","source":"watch_live","heart_rate":{"mean":72,"maximum":78,"sample_count":5,"valid_seconds":24}}`
+	var w Window
+	if err := json.Unmarshal([]byte(raw), &w); err == nil {
+		t.Fatalf("accepted timestamp after truncating a non-zero fractional second: %v", w.At)
+	}
+}
+
 func TestAggregateAllowlist(t *testing.T) {
 	base := `{"starts_at":"2026-11-21T12:00:00Z","duration_seconds":30,"exercise":false,"channel":"voice","voiced_seconds":1,"volume":{"mean":-40,"maximum":-20,"sample_count":2,"valid_seconds":1}}`
 	for i, s := range []string{base, strings.Replace(base, `"exercise":false,`, "", 1), strings.Replace(base, `"sample_count":2`, `"readings":[1,2]`, 1), strings.Replace(base, `"valid_seconds":1`, `"valid_seconds":2`, 1), strings.Replace(base, `"volume":`, `"audio":"x","volume":`, 1), strings.Replace(base, `"mean":-40,`, "", 1)} {

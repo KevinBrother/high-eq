@@ -15,9 +15,12 @@ import (
 type ExportRequest struct{ OperationID, UserID uuid.UUID }
 type Emit func(any) error
 type Module struct {
-	Name   string
-	Delete func(context.Context, pgx.Tx, Deletion) error
-	Export func(context.Context, pgx.Tx, ExportRequest, Emit) error
+	Name string
+	// BeforeDelete may use the still-present source to retract derived data
+	// in the same transaction as root removal.
+	BeforeDelete func(context.Context, pgx.Tx, Deletion) error
+	Delete       func(context.Context, pgx.Tx, Deletion) error
+	Export       func(context.Context, pgx.Tx, ExportRequest, Emit) error
 }
 type Registry struct{ modules []Module }
 

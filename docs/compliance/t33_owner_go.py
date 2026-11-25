@@ -193,36 +193,34 @@ class GoSource:
         function: str,
         guard: str,
         calls: tuple[GoCall, ...],
+        *,
+        session_callback: bool = True,
         error_check: str = "if e != nil { return e }",
     ) -> bool:
-        """Require the guard directly after the error check around all calls."""
+        """Require the guard directly after the owning scope's error check."""
         if not calls:
             return False
-        error_tokens = GoSource(error_check).tokens
+        signature = GoSource("func(tx pgx.Tx) error").tokens
+        expected_error = GoSource(error_check).tokens
         expected = GoSource(guard).tokens
-
-        def guarded(block: int) -> bool:
+        blocks = [self._named(function).body]
+        if session_callback:
+            blocks = []
+            for session in self.calls("session", function=function, reject_indirect=False):
+                if len(session.arguments) != 2 or session.arguments[0] != ("ctx",):
+                    continue
+                _, callback = self._argument_spans(session.position + 1)
+                block = self._block_after(*callback, signature)
+                if block is not None:
+                    blocks.append(block)
+        for block in blocks:
             for before, current in pairwise(self._statements(block)):
                 if (
-                    self._code(*before) == error_tokens
+                    self._code(*before) == expected_error
                     and self._code(*current) == expected
-                    and all(current[1] <= call.position < self.ends[block] for call in calls)
+                    and all(current[0] <= call.position < self.ends[block] for call in calls)
                 ):
                     return True
-            return False
-
-        scope = self._named(function)
-        if guarded(scope.body):
-            return True
-
-        signature = GoSource("func(tx pgx.Tx) error").tokens
-        for session in self.calls("session", function=function, reject_indirect=False):
-            if len(session.arguments) != 2 or session.arguments[0] != ("ctx",):
-                continue
-            _, callback = self._argument_spans(session.position + 1)
-            block = self._block_after(*callback, signature)
-            if block is not None and guarded(block):
-                return True
         return False
 
     def _named(self, name: str) -> _Function:

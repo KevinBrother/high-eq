@@ -287,7 +287,7 @@ func TestT32BWindowBaselinePostgres(t *testing.T) {
 		f.call("DELETE", "signal-windows?channel=voice&starts_at="+url.QueryEscape(target.Format(time.RFC3339)), owner.AccessToken, nil, 200, nil)
 		f.call("GET", windowQuery(target), owner.AccessToken, nil, 404, nil)
 		f.call("GET", windowQuery(target), other.AccessToken, nil, 200, nil)
-		f.call("POST", "signal-windows", owner.AccessToken, voice(target, 5, -30), 200, nil)
+		f.call("POST", "signal-windows", owner.AccessToken, voice(target, 5, -30), 409, nil)
 		f.exec(`update entitlements set starts_at=$2 where user_id=$1`, owner.UserId, target.Add(time.Second))
 		f.call("GET", windowQuery(target), owner.AccessToken, nil, 403, nil)
 		f.exec(`update entitlements set ends_at=now() where user_id=$1`, owner.UserId)

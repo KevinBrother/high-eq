@@ -1131,6 +1131,7 @@ class BaselineSourceFactsContract(unittest.TestCase):
         http = git_show("server/internal/service/http.go")
         route_block = account_route_block(http)
         self.assertNotIn("GET /v1/me/export", route_block)
+        self.assertNotIn("GET /v1/me/data/:kind", route_block)
         self.assertNotIn("DELETE /v1/me/data/:kind/:id", route_block)
         self.assertIn('problem(c, 501, "not_implemented"', http)
         self.assertIn('if c.FullPath() != "/v1/health" && (!implemented || auth == nil)', http)
@@ -1197,11 +1198,37 @@ class BaselineSourceFactsContract(unittest.TestCase):
 
 
 class T35ReleaseCandidateContract(unittest.TestCase):
-    def test_public_export_is_wired_and_selected_record_delete_stays_501(self) -> None:
+    def test_public_rights_evidence_distinguishes_the_three_snapshots(self) -> None:
+        qa = read("docs/compliance/qa.md")
+        for name, export, delete in (
+            ("固定 T33 基线 `f60ace3`", "501 not_implemented", "501 not_implemented"),
+            ("T35 独立导出候选", "ZIP", "501 not_implemented"),
+            ("T35 当前选删后端候选", "ZIP", "本人"),
+        ):
+            with self.subTest(snapshot=name):
+                rows = re.findall(rf"^\| {re.escape(name)} \| ([^|]+)\| ([^|]+)\|$", qa, re.M)
+                self.assertEqual(len(rows), 1)
+                self.assertIn(export, rows[0][0])
+                self.assertIn(delete, rows[0][1])
+                if name == "T35 当前选删后端候选":
+                    self.assertIn("/v1/me/data/{kind}", rows[0][1])
+                    self.assertIn("/v1/me/data/{kind}/{id}", rows[0][1])
+                    self.assertNotIn("501", rows[0][1])
+
+    def test_candidate_wires_export_list_and_selected_delete_to_account_gate(self) -> None:
         http = read("server/internal/service/http.go")
         routes = account_route_block(http)
-        self.assertRegex(routes, r'"GET /v1/me/export":\s*false,')
-        self.assertNotIn("DELETE /v1/me/data/:kind/:id", routes)
+        generated = read("server/internal/api/app/routes.gen.go")
+        for method, path, handler in (
+            ("GET", "/v1/me/export", "ExportData"),
+            ("GET", "/v1/me/data/:kind", "ListDataRecords"),
+            ("DELETE", "/v1/me/data/:kind/:id", "DeleteSource"),
+            ("DELETE", "/v1/signal-windows", "DeleteWindow"),
+        ):
+            with self.subTest(method=method, path=path):
+                self.assertRegex(routes, rf'"{method} {re.escape(path)}":\s*false,')
+                self.assertIn(f'router.{method}(options.BaseURL+"{path}", wrapper.{handler})', generated)
+
         self.assertRegex(
             http,
             r'if c\.FullPath\(\) != "/v1/health" && \(!implemented \|\| auth == nil\) \{\s*'
@@ -1210,15 +1237,25 @@ class T35ReleaseCandidateContract(unittest.TestCase):
         self.assertIn("Middlewares: []app.MiddlewareFunc{gate(api.accounts)}", http)
         self.assertIn("api.data = runtime.Data", http)
 
-        generated = read("server/internal/api/app/routes.gen.go")
-        self.assertIn('router.GET(options.BaseURL+"/v1/me/export", wrapper.ExportData)', generated)
-        self.assertIn('router.DELETE(options.BaseURL+"/v1/me/data/:kind/:id", wrapper.DeleteSource)', generated)
         handler = read("server/internal/service/privacy_http.go")
         self.assertIn('func (a appAPI) ExportData(c *gin.Context)', handler)
         self.assertIn('c.Header("Content-Type", "application/zip")', handler)
         self.assertIn('a.accounts.WithSession(c.Request.Context(), p, false', handler)
         self.assertIn('a.data.ExportTx(c.Request.Context(), tx, privacy.ExportRequest{', handler)
         self.assertRegex(handler, r'UserID:\s*p\.User,')
+
+        locator = read("server/internal/service/privacy_record_list_http.go")
+        self.assertIn("a.accounts.WithSession(c.Request.Context(), p, false", locator)
+        self.assertIn("recordlocator.QueryTx(c.Request.Context(), tx, p.User,", locator)
+        deletion = read("server/internal/service/privacy_record_delete_http.go")
+        self.assertIn("a.data.DeleteAuthorized(ctx, privacy.Deletion{", deletion)
+        self.assertRegex(deletion, r"UserID:\s*p\.User,\s*SourceID:\s*id,\s*Scope:\s*string\(kind\)")
+        self.assertIn("a.accounts.ValidateSessionTx(ctx, tx, p, false)", deletion)
+        self.assertRegex(
+            deletion,
+            r'if errors\.Is\(err, privacy\.ErrNotFound\) \{\s*'
+            r'problem\(c, http\.StatusNotFound, "not_found", "[^"\n]+", false\)',
+        )
 
     def test_production_composition_requires_all_thirteen_export_modules(self) -> None:
         runtime = read("server/internal/service/runtime.go")
@@ -1231,14 +1268,38 @@ class T35ReleaseCandidateContract(unittest.TestCase):
                 "manual_marks", "membership", "payments", "profiles", "replies", "reviews", "training",
             ),
         )
-        self.assertIn("s.Data = privacy.NewCoordinator(db, s.ledger, hooks)", runtime)
+        self.assertIn(
+            "s.Data = privacy.NewCoordinator(db, s.ledger, hooks, privacy.WithWindowReplayKey(c.authMaster))",
+            runtime,
+        )
 
-    def test_api_labels_selected_record_delete_as_deferred(self) -> None:
+    def test_candidate_api_uses_owned_uuid_keys_and_a_separate_window_key(self) -> None:
         api = read("docs/api/app.yaml")
-        delete = api.split("\n  /v1/me/data/{kind}/{id}:\n", 1)[1].split("\n  /v1/entitlements:", 1)[0]
-        self.assertIn("当前候选未开放", delete)
-        self.assertIn("'501':", delete)
-        self.assertIn("code: not_implemented", delete)
+
+        def path_spec(path: str) -> str:
+            return re.split(r"\n  /", api.split(f"\n  {path}:\n", 1)[1], maxsplit=1)[0]
+
+        list_records = path_spec("/v1/me/data/{kind}")
+        delete = path_spec("/v1/me/data/{kind}/{id}")
+        uuid_kinds = ("assessments", "sessions", "reviews", "replies", "contacts", "manual_marks", "signal_events")
+        for operation, spec, kinds, statuses in (
+            ("listDataRecords", list_records, (*uuid_kinds, "signal_windows"), {"200", "400", "401", "500", "503"}),
+            ("deleteSource", delete, uuid_kinds, {"200", "400", "401", "404", "500", "503"}),
+        ):
+            with self.subTest(operation=operation):
+                self.assertIn(f"operationId: {operation}", spec)
+                self.assertCountEqual(re.findall(r"^          - ([a-z_]+)$", spec, re.M), kinds)
+                self.assertSetEqual(set(re.findall(r"^        '(\d{3})':", spec, re.M)), statuses)
+                self.assertNotIn("not_implemented", spec)
+
+        self.assertIn("#/components/schemas/DataRecordPage", list_records)
+        self.assertIn("recorded_at+channel", list_records)
+        self.assertRegex(delete, r"name: id\n        required: true\n        schema: \{type: string, format: uuid\}")
+        self.assertIn("#/components/schemas/Ack", delete)
+        self.assertIn("精确待办", delete)
+        window_delete = path_spec("/v1/signal-windows").split("\n    delete:\n", 1)[1]
+        self.assertIn("operationId: deleteWindow", window_delete)
+        self.assertCountEqual(re.findall(r"^      - name: ([a-z_]+)$", window_delete, re.M), ("starts_at", "channel"))
 
 
 class DataLineageContract(unittest.TestCase):
@@ -1784,6 +1845,15 @@ func invalidateInference(values ...any) error { return nil }
                 GoCall("checkInferenceAttempt", 17, (("owner",),)),
             ),
         )
+        returning = GoSource(
+            """func (s *Service) authorizer(callback func()) func(context.Context) error {
+    return func(context.Context) error { callback(); return nil }
+}"""
+        )
+        self.assertEqual(
+            returning.body("authorizer").strip(),
+            "return func(context.Context) error { callback(); return nil }",
+        )
         owner_scopes = GoSource(
             """func claimInference() {
     if owner := uuid.New(); owner == uuid.Nil { return }
@@ -2060,6 +2130,11 @@ func invalidateInference(values ...any) error { return nil }
             ),
             "inferenceAuthorizer must fail closed when the attempt was invalidated",
         )
+        authorizer_body = infer.body("inferenceAuthorizer")
+        self.assertIn("if err := attemptCtx.Err(); err != nil {", authorizer_body)
+        self.assertIn("controlCtx, cancel := inferenceControlContext(attemptCtx)", authorizer_body)
+        self.assertIn("e := session(controlCtx, func(tx pgx.Tx) error {", authorizer_body)
+        self.assertIn("if e == nil && changed {\n\t\t\treturn membership.ErrConflict\n\t\t}", authorizer_body)
 
         runs = tuple(infer.calls("s", ".", "AI", ".", "Run", function="Infer"))
         self.assertEqual(len(runs), 1, "Infer must dispatch one AI run")
@@ -2310,7 +2385,8 @@ func invalidateInference(values ...any) error { return nil }
                 source.guards_calls(
                     function, guard,
                     tuple(source.calls("invalidateInference", function=function)),
-                    error_check,
+                    session_callback=function == "Infer",
+                    error_check=error_check,
                 ),
                 f"{path} path must reject a superseded or expired owner directly after the error check",
             )

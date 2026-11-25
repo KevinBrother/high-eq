@@ -8,10 +8,9 @@ import (
 )
 
 const (
-	Self      = "self_fluctuation"
-	Rhythm    = "conversation_rhythm"
-	None      = "none"
-	retention = 180 * 24 * time.Hour
+	Self   = "self_fluctuation"
+	Rhythm = "conversation_rhythm"
+	None   = "none"
 )
 
 var signals = []string{"heart_rate", "speech_rate", "volume", "pitch"}

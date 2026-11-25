@@ -17,13 +17,18 @@ var (
 )
 
 type Coordinator struct {
-	db       *pgxpool.Pool
-	ledger   *Ledger
-	registry *Registry
+	db              *pgxpool.Pool
+	ledger          *Ledger
+	registry        *Registry
+	windowReplayKey []byte
 }
 
-func NewCoordinator(p *pgxpool.Pool, l *Ledger, r *Registry) *Coordinator {
-	return &Coordinator{p, l, r}
+func NewCoordinator(p *pgxpool.Pool, l *Ledger, r *Registry, options ...CoordinatorOption) *Coordinator {
+	c := &Coordinator{db: p, ledger: l, registry: r}
+	for _, option := range options {
+		option(c)
+	}
+	return c
 }
 
 type root struct {
@@ -163,6 +168,8 @@ type DeletionIntent struct {
 	rootID   uuid.UUID
 	// Only online contact requests recheck the session-bound barrier in cleanup.
 	recheckContactBarrier bool
+	// Online window cleanup revalidates authority after the journal commit.
+	validateWindowCleanup func(pgx.Tx) error
 }
 
 var removes = map[string]string{
@@ -210,7 +217,17 @@ func (c *Coordinator) DeleteOwned(ctx context.Context, d Deletion) error {
 // tombstone writes and cleanup run only after the intent commits. Online
 // contact deletion rechecks the same barrier under the cleanup lock.
 func (c *Coordinator) DeleteAuthorized(ctx context.Context, d Deletion, validate func(pgx.Tx) error) error {
-	if validate == nil || d.Scope == "account" || removes[d.Scope] == "" || d.UserID == uuid.Nil || d.SourceID == uuid.Nil || d.OperationID == uuid.Nil || len(c.registry.modules) == 0 {
+	if d.SourceID == uuid.Nil {
+		return errors.New("invalid session-bound deletion")
+	}
+	return c.deleteAuthorized(ctx, d, validate, func(tx pgx.Tx) (uuid.UUID, bool, error) {
+		var found bool
+		return c.ownedTarget(ctx, tx, d, &found)
+	})
+}
+
+func (c *Coordinator) deleteAuthorized(ctx context.Context, d Deletion, validate func(pgx.Tx) error, resolve func(pgx.Tx) (uuid.UUID, bool, error)) error {
+	if validate == nil || d.Scope == "account" || removes[d.Scope] == "" || d.UserID == uuid.Nil || d.OperationID == uuid.Nil || len(c.registry.modules) == 0 {
 		return errors.New("invalid session-bound deletion")
 	}
 	var intent DeletionIntent
@@ -222,15 +239,14 @@ func (c *Coordinator) DeleteAuthorized(ctx context.Context, d Deletion, validate
 		if err = validate(tx); err != nil {
 			return err
 		}
-		var found bool
-		id, ok, err := c.ownedTarget(ctx, tx, d, &found)
+		id, found, err := resolve(tx)
 		if err != nil {
 			return err
 		}
-		if err := c.checkAuthorizedDeletion(ctx, rr, d, id, ok && found); err != nil {
+		if err := c.checkAuthorizedDeletion(ctx, rr, d, id, found); err != nil {
 			return err
 		}
-		if !ok || !found {
+		if !found {
 			return ErrNotFound
 		}
 		intent, err = journalRootTx(ctx, tx, d, rr, id)
@@ -241,6 +257,9 @@ func (c *Coordinator) DeleteAuthorized(ctx context.Context, d Deletion, validate
 			return ErrNotFound
 		}
 		intent.recheckContactBarrier = d.Scope == "contacts"
+		if d.Scope == "signal_windows" {
+			intent.validateWindowCleanup = validate
+		}
 		return nil
 	})
 	if err != nil {
@@ -411,11 +430,16 @@ func (c *Coordinator) finishTx(ctx context.Context, tx pgx.Tx, intent DeletionIn
 	d := intent.deletion
 	target := intent.rootID
 	rr, e := roots(ctx, tx, d.UserID)
+	if e != nil && !errors.Is(e, pgx.ErrNoRows) {
+		return e
+	}
+	if validate := intent.validateWindowCleanup; validate != nil {
+		if err := validate(tx); err != nil {
+			return err
+		}
+	}
 	if errors.Is(e, pgx.ErrNoRows) {
 		return nil
-	}
-	if e != nil {
-		return e
 	}
 	var ids []uuid.UUID
 	found := false
@@ -440,8 +464,24 @@ func (c *Coordinator) finishTx(ctx context.Context, tx pgx.Tx, intent DeletionIn
 		if e := c.ledger.markCascade(ctx, other, cascade); e != nil {
 			return e
 		}
+	} else if d.Scope == "signal_windows" {
+		if intent.validateWindowCleanup != nil {
+			if e := c.checkAuthorizedDeletion(ctx, rr, d, target, true); e != nil {
+				return e
+			}
+		}
+		if e := c.markSignalWindowDeleted(ctx, tx, d); e != nil {
+			return e
+		}
 	} else if e := c.ledger.mark(ctx, ids); e != nil {
 		return e
+	}
+	for _, m := range c.registry.modules {
+		if m.BeforeDelete != nil {
+			if e := m.BeforeDelete(ctx, tx, d); e != nil {
+				return e
+			}
+		}
 	}
 	if _, e := tx.Exec(ctx, removes[d.Scope], d.UserID, target); e != nil {
 		return e

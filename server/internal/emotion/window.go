@@ -20,15 +20,17 @@ import (
 )
 
 var (
-	Invalid   = errors.New("invalid aggregate or annotation")
-	Conflict  = errors.New("conflicting signal")
-	Forbidden = errors.New("signal permission unavailable")
+	Invalid       = errors.New("invalid aggregate or annotation")
+	Conflict      = errors.New("conflicting signal")
+	Forbidden     = errors.New("signal permission unavailable")
+	WindowDeleted = errors.New("signal window deleted")
 )
 
 // SpeechRateUnitCharactersPerSecond identifies transcript-derived speaking
 // rate. Window values without this marker are legacy acoustic proxies and must
 // never be promoted to the current unit.
 const SpeechRateUnitCharactersPerSecond = "characters_per_second"
+const retention = privacy.SignalWindowRetention
 
 type Service struct {
 	Fields *fieldcrypt.Cipher
@@ -64,11 +66,20 @@ type Window struct {
 func (w *Window) UnmarshalJSON(b []byte) error {
 	type plain Window
 	*w = Window{}
+	wire := struct {
+		*plain
+		At string `json:"starts_at"`
+	}{plain: (*plain)(w)}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
-	if e := d.Decode((*plain)(w)); e != nil {
+	if e := d.Decode(&wire); e != nil {
 		return Invalid
 	}
+	at, err := ParseWindowStart(wire.At)
+	if err != nil {
+		return err
+	}
+	w.At = at
 	// Check presence as well as decoded values: null is not an omitted field,
 	// and an empty foreign-channel field is not part of either OpenAPI branch.
 	var fields map[string]json.RawMessage
@@ -185,11 +196,18 @@ func (s Service) Upload(ctx context.Context, tx pgx.Tx, u uuid.UUID, w Window, n
 		return e
 	}
 	w.At = w.At.UTC()
-	if w.At.After(now) || !w.At.After(now.Add(-retention)) {
-		return Invalid
+	if e := ValidateWindowTime(now, w.At); e != nil {
+		return e
 	}
 	if e := consent(ctx, tx, u, w.Channel, w.At); e != nil {
 		return e
+	}
+	deleted, err := s.Data.SignalWindowDeleted(ctx, u, w.Channel, w.At)
+	if err != nil {
+		return err
+	}
+	if deleted {
+		return WindowDeleted
 	}
 	id := uuid.New()
 	enc, e := s.seal(u, id, "window", w)

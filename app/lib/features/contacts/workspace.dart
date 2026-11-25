@@ -32,12 +32,14 @@ class ContactsWorkspace extends StatefulWidget {
     required this.selection,
     this.demo = false,
     this.deletion,
+    this.onSelectForDeletion,
     super.key,
   });
   final ContactsRepository repo;
   final SceneMemory selection;
   final bool demo;
   final ContactDeletion? deletion;
+  final ValueChanged<Contact>? onSelectForDeletion;
   @override
   State<ContactsWorkspace> createState() => _WorkspaceState();
 }
@@ -649,6 +651,17 @@ class _WorkspaceState extends State<ContactsWorkspace>
   Widget build(BuildContext context) {
     final b = book;
     final c = current;
+    final isDetail = view == _View.detail;
+    final feedback = message;
+    final notice = feedback == null
+        ? const SizedBox.shrink()
+        : Semantics(
+            liveRegion: true,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(feedback),
+            ),
+          );
     final title = switch (view) {
       _View.list => '关系人',
       _View.add => '添加关系人',
@@ -698,33 +711,38 @@ class _WorkspaceState extends State<ContactsWorkspace>
                           ),
                       ],
                     )
-                  : ListView(
-                      key: PageStorageKey(view),
-                      padding: const EdgeInsets.fromLTRB(24, 12, 24, 36),
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        if (widget.demo)
-                          Text(
-                            '模拟手记 · 不会发送数据',
-                            style: Theme.of(context).textTheme.labelMedium,
+                        // Detail scroll is restored when returning from import.
+                        // Keep the current result visible at that position.
+                        if (isDetail && feedback != null)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            child: notice,
                           ),
-                        busy
-                            ? const LinearProgressIndicator()
-                            : const SizedBox.shrink(),
-                        if (message != null)
-                          Semantics(
-                            liveRegion: true,
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              child: Text(message!),
-                            ),
-                          )
-                        else
-                          const SizedBox.shrink(),
-                        IgnorePointer(
-                          ignoring: busy,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: _content(context, b, c),
+                        Expanded(
+                          child: ListView(
+                            key: PageStorageKey(view),
+                            padding: const EdgeInsets.fromLTRB(24, 12, 24, 36),
+                            children: [
+                              if (widget.demo)
+                                Text(
+                                  '模拟手记 · 不会发送数据',
+                                  style: Theme.of(context).textTheme.labelMedium,
+                                ),
+                              busy
+                                  ? const LinearProgressIndicator()
+                                  : const SizedBox.shrink(),
+                              if (isDetail) const SizedBox.shrink() else notice,
+                              IgnorePointer(
+                                ignoring: busy,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: _content(context, b, c),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
@@ -762,26 +780,32 @@ class _WorkspaceState extends State<ContactsWorkspace>
       ),
       TextButton(onPressed: _back, child: const Text('暂不同意')),
     ] else if (view == _View.list) ...[
-      Text('常联系的人', style: Theme.of(context).textTheme.headlineMedium),
-      const SizedBox(height: 8),
+      if (widget.onSelectForDeletion != null)
+        const Text('打开一位关系人的手记，核对后选择要删除的人。')
+      else ...[
+        Text('常联系的人', style: Theme.of(context).textTheme.headlineMedium),
+        const SizedBox(height: 8),
+      ],
       if (_canCheckDeletion) ...[
         const Text('还有删除结果待处理。成长档案暂时无法使用离线记录。'),
         _checkDeletionButton(),
         const SizedBox(height: 12),
       ],
-      Text(
-        !b.consistent
-            ? '可用名额尚未确认。请刷新后再操作。'
-            : b.member
-            ? '可用关系人可用于练习和反馈。'
-            : '免费可用 1 位。到期后默认保留最近使用的人，也可以改选；续费后恢复。',
-      ),
-      const SizedBox(height: 12),
-      FilledButton.icon(
-        onPressed: b.canAdd ? () => _run(() => _enter(_View.add)) : null,
-        icon: const Icon(Icons.person_add_alt),
-        label: const Text('添加关系人'),
-      ),
+      if (widget.onSelectForDeletion == null) ...[
+        Text(
+          !b.consistent
+              ? '可用名额尚未确认。请刷新后再操作。'
+              : b.member
+              ? '可用关系人可用于练习和反馈。'
+              : '免费可用 1 位。到期后默认保留最近使用的人，也可以改选；续费后恢复。',
+        ),
+        const SizedBox(height: 12),
+        FilledButton.icon(
+          onPressed: b.canAdd ? () => _run(() => _enter(_View.add)) : null,
+          icon: const Icon(Icons.person_add_alt),
+          label: const Text('添加关系人'),
+        ),
+      ],
       if (b.people.isEmpty)
         const Padding(
           padding: EdgeInsets.symmetric(vertical: 24),
@@ -792,7 +816,16 @@ class _WorkspaceState extends State<ContactsWorkspace>
           key: ValueKey('contact-list-row:${p.id}'),
           contentPadding: EdgeInsets.zero,
           title: Text(p.name),
-          subtitle: Text('${p.scene.label} · ${b.usable(p) ? '可用' : '只读'}'),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('${p.scene.label} · ${b.usable(p) ? '可用' : '只读'}'),
+              ContactReference(
+                id: p.id,
+                key: ValueKey('contact-list-reference:${p.id}'),
+              ),
+            ],
+          ),
           trailing: const Icon(Icons.chevron_right),
           onTap: () {
             id = p.id;
@@ -840,34 +873,42 @@ class _WorkspaceState extends State<ContactsWorkspace>
     else if (c != null) ...[
       if (view == _View.detail) ...[
         ProfileView(c),
-        if (_inference?.contactId == c.id) _inferencePanel(context),
-        if (b.usable(c)) ...[
-          OutlinedButton(
-            onPressed: () => _run(() => _enter(_View.edit)),
-            child: const Text('编辑资料'),
-          ),
-          if (_inference == null)
+        if (widget.onSelectForDeletion case final select?)
+          FilledButton(
+            key: const Key('contact-select-for-deletion'),
+            onPressed: busy ? null : () => select(c),
+            child: const Text('选择此关系人'),
+          )
+        else ...[
+          if (_inference?.contactId == c.id) _inferencePanel(context),
+          if (b.usable(c)) ...[
             OutlinedButton(
-              onPressed: () => _run(() => _enter(_View.chat)),
-              child: const Text('导入聊天片段'),
-            )
-          else if (_inference?.contactId != c.id)
-            const Text('还有一次导入结果待处理，请先回到对应关系人完成。'),
-        ] else ...[
-          const Text('只读 · 不能用于新练习、修改资料或接收反馈。'),
-          if (b.canChoose(c))
-            OutlinedButton(
-              onPressed: () => _run(() => _enter(_View.choose)),
-              child: const Text('改选为可用关系人'),
+              onPressed: () => _run(() => _enter(_View.edit)),
+              child: const Text('编辑资料'),
             ),
+            if (_inference == null)
+              OutlinedButton(
+                onPressed: () => _run(() => _enter(_View.chat)),
+                child: const Text('导入聊天片段'),
+              )
+            else if (_inference?.contactId != c.id)
+              const Text('还有一次导入结果待处理，请先回到对应关系人完成。'),
+          ] else ...[
+            const Text('只读 · 不能用于新练习、修改资料或接收反馈。'),
+            if (b.canChoose(c))
+              OutlinedButton(
+                onPressed: () => _run(() => _enter(_View.choose)),
+                child: const Text('改选为可用关系人'),
+              ),
+          ],
+          TextButton(
+            onPressed: _needsDeletionCheck(c.id)
+                ? null
+                : () => _show(_View.remove),
+            child: const Text('删除关系人'),
+          ),
+          if (_needsDeletionCheck(c.id)) const Text('请返回关系人列表核对上次的删除结果。'),
         ],
-        TextButton(
-          onPressed: _needsDeletionCheck(c.id)
-              ? null
-              : () => _show(_View.remove),
-          child: const Text('删除关系人'),
-        ),
-        if (_needsDeletionCheck(c.id)) const Text('请返回关系人列表核对上次的删除结果。'),
       ],
       if (view == _View.choose) ...[
         Text('把唯一的可用名额改给「${c.name}」？原可用关系人会变为只读，已有记录不会删除。'),
@@ -887,6 +928,7 @@ class _WorkspaceState extends State<ContactsWorkspace>
       ],
       if (view == _View.remove) ...[
         Text('删除「${c.name}」及其画像、关联互动记录和评分副本？此操作不可撤销。'),
+        ContactReference(id: c.id),
         FilledButton(
           onPressed: () => _run(() => _remove(c)),
           child: const Text('确认删除'),
