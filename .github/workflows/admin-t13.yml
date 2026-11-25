@@ -8,6 +8,7 @@ on:
       - 'server/migrations/**'
       - 'server/go.mod'
       - 'server/go.sum'
+      - 'app/tool/t27/history_journey.py'
       - 'app/tool/t27/install_redis.sh'
       - '.github/workflows/admin-t13.yml'
   pull_request:
@@ -18,6 +19,7 @@ on:
       - 'server/migrations/**'
       - 'server/go.mod'
       - 'server/go.sum'
+      - 'app/tool/t27/history_journey.py'
       - 'app/tool/t27/install_redis.sh'
       - '.github/workflows/admin-t13.yml'
   workflow_dispatch:
