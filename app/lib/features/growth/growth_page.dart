@@ -324,7 +324,7 @@ class _GrowthHeader extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Text(
-          'WLEIS 反映你对自己的看法；训练参考分只来自完整行为记录。两者分开看，才更接近真实。',
+          'WLEIS 是你对自己的四维自评，雷达只画这四维。训练参考分由最近一次 WLEIS 自评总分与近 30 天有效整场对练、完整复盘的评分均值各占一半；单项练习不参与。',
           style: theme.textTheme.bodyLarge?.copyWith(
             color: c.onSurfaceVariant,
             height: 1.5,
@@ -526,7 +526,7 @@ class _TrainingReferenceCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '基于近 30 天 ${growth.validBehaviorCount} 次有效完整行为记录，与 WLEIS 分开计算。',
+                  '取最近一次 WLEIS 自评总分与近 30 天 ${growth.validBehaviorCount} 次有效整场对练、完整复盘的评分均值，各占一半；单项练习不参与。',
                   style: TextStyle(color: c.onSecondaryContainer, height: 1.45),
                 ),
               ],

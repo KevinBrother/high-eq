@@ -69,7 +69,58 @@ void main() {
 
     await _scrollTo(tester, find.text('72 / 100'));
     expect(find.text('训练参考分'), findsOneWidget);
-    expect(find.text('基于近 30 天 3 次有效完整行为记录，与 WLEIS 分开计算。'), findsOneWidget);
+    expect(
+      find.text('取最近一次 WLEIS 自评总分与近 30 天 3 次有效整场对练、完整复盘的评分均值，各占一半；单项练习不参与。'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('WLEIS 由早期 44 到最近 80、行为均值 24 显示 52 且说明各半', (tester) async {
+    final repository = FakeGrowthRepository(
+      snapshot: sampleSnapshot(
+        assessments: [
+          AssessmentData(
+            id: 'assessment-80',
+            completedAt: DateTime.utc(2026, 11, 8),
+            nextEligibleAt: DateTime.utc(2026, 12, 6),
+            dimensions: const {'SEA': 80, 'OEA': 80, 'UOE': 80, 'ROE': 80},
+            totalPercent: 80,
+          ),
+          AssessmentData(
+            id: 'assessment-44',
+            completedAt: DateTime.utc(2026, 9, 1),
+            nextEligibleAt: DateTime.utc(2026, 9, 29),
+            dimensions: const {'SEA': 44, 'OEA': 44, 'UOE': 44, 'ROE': 44},
+            totalPercent: 44,
+          ),
+        ],
+        trainingReference: 52,
+        validBehaviorCount: 2,
+      ),
+    );
+    await _pumpGrowth(tester, repository);
+
+    expect(
+      find.text(
+        'WLEIS 是你对自己的四维自评，雷达只画这四维。训练参考分由最近一次 WLEIS 自评总分与近 30 天有效整场对练、完整复盘的评分均值各占一半；单项练习不参与。',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('最近一次总分'), findsOneWidget);
+    expect(find.text('80 / 100'), findsOneWidget);
+    expect(find.text('更早一次'), findsWidgets);
+    expect(find.text('44 / 100'), findsOneWidget);
+    final radar = tester.widget<AssessmentRadar>(find.byType(AssessmentRadar));
+    expect(radar.percentages.keys, ['SEA', 'OEA', 'UOE', 'ROE']);
+    expect(find.textContaining('只来自完整行为记录'), findsNothing);
+
+    await _scrollTo(tester, find.text('52 / 100'));
+    expect(find.text('训练参考分'), findsOneWidget);
+    expect(
+      find.text('取最近一次 WLEIS 自评总分与近 30 天 2 次有效整场对练、完整复盘的评分均值，各占一半；单项练习不参与。'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('与 WLEIS 分开计算'), findsNothing);
   });
 
   testWidgets('历次得分区分整场和单项，并按契约顺序标记最近与更早', (tester) async {
