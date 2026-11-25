@@ -60,6 +60,11 @@ func (s *Service) Consent(ctx context.Context, p Principal, purpose, version str
 		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
 			return e
 		}
+		// Voice withdrawal also disables optional retention. If it was never
+		// granted, acknowledge the disabled state without writing consent history.
+		if !grant && out.Purpose == app.ConsentPurposeAudioRetention && errors.Is(e, pgx.ErrNoRows) {
+			return tx.QueryRow(ctx, "select clock_timestamp()").Scan(&out.UpdatedAt)
+		}
 		if e == nil && old == version && active == grant {
 			return nil
 		}

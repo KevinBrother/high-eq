@@ -187,6 +187,37 @@ func TestAccountLifecycle(t *testing.T) {
 		}
 	}
 	call("PUT", "me/consents/health", a.AccessToken, map[string]any{"version": "one"}, 400, nil)
+	// Reconcile optional retention without manufacturing a consent decision.
+	{
+		const version = "2026-11"
+		const route = "me/consents/audio_retention"
+		withdraw := map[string]any{"version": version, "granted": false}
+		for i := 0; i < 2; i++ {
+			var receipt app.Consent
+			call("PUT", route, b.AccessToken, withdraw, 200, &receipt)
+			if receipt.Purpose != app.ConsentPurposeAudioRetention || receipt.Version != version || receipt.Granted || receipt.UpdatedAt.IsZero() {
+				t.Fatalf("invalid no-op withdrawal receipt: %+v", receipt)
+			}
+		}
+		if _, exists := current(b.AccessToken)[app.ConsentPurposeAudioRetention]; exists {
+			t.Fatal("withdrawing a never-granted purpose created a decision")
+		}
+
+		call("PUT", route, b.AccessToken, map[string]any{"version": "", "granted": false}, 400, nil)
+		call("PUT", "me/consents/voice", b.AccessToken, withdraw, 400, nil)
+		call("PUT", route, b.AccessToken, map[string]any{"version": version, "granted": true}, 200, nil)
+		call("PUT", route, b.AccessToken, map[string]any{"version": "stale", "granted": false}, 400, nil)
+		if !current(b.AccessToken)[app.ConsentPurposeAudioRetention].Granted {
+			t.Fatal("a mismatched withdrawal changed an active grant")
+		}
+		var first, retry app.Consent
+		call("PUT", route, b.AccessToken, withdraw, 200, &first)
+		call("PUT", route, b.AccessToken, withdraw, 200, &retry)
+		record := current(b.AccessToken)[app.ConsentPurposeAudioRetention]
+		if first.Granted || first != retry || first != record {
+			t.Fatalf("withdrawal was not persisted idempotently: first=%+v retry=%+v current=%+v", first, retry, record)
+		}
+	}
 	exp := privacy.ExportRequest{UserID: a.UserId, OperationID: uuid.New()}
 	var buf bytes.Buffer
 	if e := s.Data.Export(ctx, exp, &buf); e != nil {
