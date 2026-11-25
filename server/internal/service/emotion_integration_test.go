@@ -252,6 +252,7 @@ func TestEmotionFeedbackIsExplicit(t *testing.T) {
 		return app.ReportSignalEventJSONBody{Id: uuid.New(), StartsAt: at, Kind: app.ReportSignalEventJSONBodyKind(k)}
 	}
 	rh := event(at, emotion.Rhythm)
+	provideRhythmMotion(f.s)[syntheticMotionKey{u, at}] = syntheticRhythmMotion(f, u, at, 80)
 	p := "signal-events"
 	f.call("POST", p, a.AccessToken, rh, 200, nil)
 	f.call("POST", p, a.AccessToken, rh, 200, nil)
@@ -259,7 +260,7 @@ func TestEmotionFeedbackIsExplicit(t *testing.T) {
 	f.call("PATCH", p+"/"+rh.Id.String(), a.AccessToken, map[string]any{"confirmation": "yes"}, 400, nil)
 	self := event(selfAt, emotion.Self)
 	f.call("POST", p, a.AccessToken, self, 403, nil)
-	f.must(f.s.Data.Access(f.ctx, u, func(tx pgx.Tx) error { return f.s.Emotion.Report(f.ctx, tx, u, self, now, true) })) // test-only released Watch input; production policy unchanged
+	f.must(f.s.Data.Access(f.ctx, u, func(tx pgx.Tx) error { return f.s.Emotion.Report(f.ctx, tx, u, self, now, true, time.Time{}) })) // test-only released Watch input; production policy unchanged
 	delivered := 0
 	var first events.Feedback
 	f.s.Bus.ProfileFeedback.Subscribe(func(ctx context.Context, tx pgx.Tx, v events.Feedback) error {

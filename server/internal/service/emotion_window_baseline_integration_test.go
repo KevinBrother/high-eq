@@ -55,6 +55,7 @@ func setupWindowBaselineSignals(t *testing.T) *signalFixture {
 // Run against the isolated development integration services or host Unix sockets.
 func TestT32BWindowBaselinePostgres(t *testing.T) {
 	fixture := setupWindowBaselineSignals(t)
+	motion := provideRhythmMotion(fixture.s)
 	now := time.Now().UTC()
 	target := now.Truncate(24 * time.Hour).Add(-16*time.Hour + 30*time.Second)
 	windowQuery := func(at time.Time) string {
@@ -88,6 +89,7 @@ func TestT32BWindowBaselinePostgres(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := signalsFor(t, fixture.s, fixture.ctx)
 			user := newUser(f)
+			motion[syntheticMotionKey{user.UserId, target}] = syntheticRhythmMotion(f, user.UserId, target, 80)
 			f.must(f.s.Data.Access(f.ctx, user.UserId, func(tx pgx.Tx) error {
 				for d := 6; d >= 0; d-- {
 					n := 60
@@ -165,6 +167,7 @@ func TestT32BWindowBaselinePostgres(t *testing.T) {
 			}
 			if tc.name == "same_slot_after_commit" {
 				motionAt := target.Add(11 * time.Minute)
+				motion[syntheticMotionKey{user.UserId, motionAt}] = syntheticRhythmMotion(f, user.UserId, motionAt, 80)
 				health := synthetic(motionAt, "health", false)
 				exercise := true
 				health.Exercise = &exercise

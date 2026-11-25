@@ -125,12 +125,19 @@ func (s *Service) accessAt(ctx context.Context, tx pgx.Tx, user uuid.UUID, now t
 	a := access{tier: s.policy.Free, at: now}
 	var zone string
 	var period pgtype.Range[time.Time]
-	// Merge adjoining verified periods so expires_at is the end of continuous access, not the next billing boundary.
+	// Include naturally expired, verified periods when tracing continuous access
+	// back from now. Only a paid period can cover now because expired periods must
+	// already have ended and the bounds are half-open.
 	e := tx.QueryRow(ctx, `select timezone, (
         select r from unnest((
             select range_agg(tstzrange(starts_at, ends_at, '[)'))
             from entitlements e join orders o on o.id=e.order_id
-            where e.user_id=u.id and o.state='paid'
+            where e.user_id=u.id and (
+                o.state='paid' or (o.state='expired' and e.ends_at <= $2 and exists (
+                    select 1 from payment_facts f where f.order_id=o.id and f.user_id=e.user_id
+                    and f.paid_at is not null and f.refunded_at is null
+                ))
+            )
         )) r where r @> $2::timestamptz
     ) from users u where id=$1 and closure_requested_at is null`, user, a.at).Scan(&zone, &period)
 	if e != nil {

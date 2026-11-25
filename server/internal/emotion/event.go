@@ -64,7 +64,7 @@ func (s Service) walkEvents(ctx context.Context, tx pgx.Tx, u uuid.UUID, from, t
 	}
 	return rows.Err()
 }
-func (s Service) Report(ctx context.Context, tx pgx.Tx, u uuid.UUID, in app.ReportSignalEventJSONBody, now time.Time, watch bool) error {
+func (s Service) Report(ctx context.Context, tx pgx.Tx, u uuid.UUID, in app.ReportSignalEventJSONBody, now time.Time, watch bool, collectionFrom time.Time) error {
 	at := in.StartsAt.UTC()
 	kind := string(in.Kind)
 	if in.Id == uuid.Nil || !aligned(at) || at.After(now) || !at.After(now.Add(-retention)) || (kind != Self && kind != Rhythm) {
@@ -99,17 +99,20 @@ func (s Service) Report(ctx context.Context, tx pgx.Tx, u uuid.UUID, in app.Repo
 	if cooling {
 		return Conflict
 	}
+	var motion RhythmMotionEvidence
+	if kind == Rhythm {
+		motion, e = s.rhythmMotion(ctx, tx, u, at, now, collectionFrom)
+		if e != nil {
+			return e
+		}
+	}
 	_, frame, e := s.baseline(ctx, tx, u, now, at, true)
 	if e != nil {
 		return e
 	}
-	if watch && kind == Rhythm {
-		e := consent(ctx, tx, u, "health", at)
-		if errors.Is(e, Forbidden) {
-			watch = false
-		} else if e != nil {
-			return e
-		}
+	if kind == Rhythm {
+		frame.Exercise = frame.Exercise || *motion.Exercise
+		frame.Cadence = *motion.CadencePerMinute
 	}
 	frame.WatchReleased = watch
 	d := Decide(frame)

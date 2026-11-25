@@ -33,10 +33,11 @@ const SpeechRateUnitCharactersPerSecond = "characters_per_second"
 const retention = privacy.SignalWindowRetention
 
 type Service struct {
-	Fields *fieldcrypt.Cipher
-	Data   *privacy.Coordinator
-	DB     *pgxpool.Pool
-	Bus    *events.Bus
+	Fields           *fieldcrypt.Cipher
+	Data             *privacy.Coordinator
+	DB               *pgxpool.Pool
+	Bus              *events.Bus
+	ReadRhythmMotion RhythmMotionReader
 }
 type Stat struct {
 	Mean    *float64 `json:"mean"`

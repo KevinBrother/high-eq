@@ -111,14 +111,19 @@ func (a appAPI) ReportSignalEvent(c *gin.Context) {
 		if in.StartsAt.IsZero() {
 			return emotion.Invalid
 		}
-		if e := a.membership.RequireCollectionFrom(ctx, tx, u, in.StartsAt); e != nil {
-			return e
+		now := time.Now()
+		collectionFrom, err := a.membership.CollectionStart(ctx, tx, u, now)
+		if err != nil {
+			return err
 		}
-		err := a.membership.Require(ctx, tx, u, membership.WatchAlert)
+		if in.StartsAt.Before(collectionFrom) {
+			return membership.ErrForbidden
+		}
+		err = a.membership.Require(ctx, tx, u, membership.WatchAlert)
 		if err != nil && !errors.Is(err, membership.ErrForbidden) {
 			return err
 		}
-		return a.signals.Report(ctx, tx, u, in, time.Now(), err == nil)
+		return a.signals.Report(ctx, tx, u, in, now, err == nil, collectionFrom)
 	})
 	signalReply(c, ack, e)
 }
