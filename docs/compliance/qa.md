@@ -23,16 +23,16 @@
 | QA-01 | 官方法规/平台入口是否取得一手正文、版本和日期 | `docs/compliance/official-source-register.md` | 已读取 PIPL、生成式 AI 办法、Apple 审核指南、Android Health Connect 和 MIIT 同文政策库的部分官方正文；已登记 URL 与两份正文哈希。其他来源、版本日期和业务适用性仍待补 | `部分通过` | 运营/律师补齐正文、抓取日期、证据编号和适用性意见 |
 | QA-02 | 是否虚构公司名称、地址、联系方式、投诉渠道 | `docs/compliance/privacy-policy-draft.md`、`terms-of-service-draft.md` | 全部保留 `[待运营填写]`，未发现虚构主体或联系方式 | `通过（静态）` | 运营提供营业执照、地址、负责人和可达渠道 |
 | QA-03 | 是否虚构商户、模型条款、授权函、备案或批准 | `docs/compliance/sdk-model-review-checklist.md`、`filings-and-authorizations.md` | 供应商、合同、WLEIS 授权、备案号和批准均未填写；只记录“待提供” | `通过（静态）` | 运营归档合同、授权函、后台回执和审批单；律师复核范围 |
-| QA-04 | 数据清单是否覆盖 schema 的源记录、数值副本、关联元数据和导出/删除 | `docs/compliance/data-inventory.md`、`docs/schema.md`、`server/migrations/`、`verified-pg17-inventory.jsonl` | 依据主会话 PG17 空库全量迁移后的清单，D01–D45 已登记；其中 D01–D36 中除 D11/D12/D14/D23 外的基线条目逐名覆盖 `f60ace3` 的 42/42 public 表/视图，D32–D36 单列后台缺口。D37 为设备交接，D38 为 T19 工作状态，D14/D39/D40 对应 T25 新表，D41/D42 对应 T21 回复防重放键和最小回执，D43 对应 T26 单项复习调度投影，D44 对应 T29 本机语音队列、录音索引和 PCM，D45 对应 T28 本机健康历史待发状态与撤回意图，D37–D45 均不计入 PG17 42 项；视图不另存个人数据，后台口令/会话摘要、平台配置和内部令牌不进入 App 用户导出 | `通过（静态）` | T35 按同一清单跑导出→删除→再导出，并另验 D37 领取/过期清理；真实数据库完整测试由主会话执行 |
+| QA-04 | 数据清单是否覆盖 schema 的源记录、数值副本、关联元数据和导出/删除 | `docs/compliance/data-inventory.md`、`docs/schema.md`、`server/migrations/`、`verified-pg17-inventory.jsonl` | 依据主会话 PG17 空库全量迁移后的清单，D01–D45 已登记；其中 D01–D36 中除 D11/D12/D14/D23 外的基线条目逐名覆盖 `f60ace3` 的 42/42 public 表/视图，D32–D36 单列后台缺口。D37 为设备交接，D38 为 T19 工作状态，D14/D39/D40 对应 T25 新表，D41 对应 T21 回复防重放键并并入 T35 对练删除重放键，D42 对应最小回执，D43 对应 T26 单项复习调度投影，D44 对应 T29 本机语音队列、录音索引和 PCM，D45 对应 T28 本机健康历史待发状态与撤回意图，D37–D45 均不计入 PG17 42 项；视图不另存个人数据，后台口令/会话摘要、平台配置和内部令牌不进入 App 用户导出 | `通过（静态）` | T35 按同一清单跑导出→删除→再导出，并另验 D37 领取/过期清理；真实数据库完整测试由主会话执行 |
 | QA-05 | 加密字段是否与迁移和 `fieldcrypt` 对齐 | `docs/compliance/data-inventory.md` 第 3 节、`server/internal/fieldcrypt/cipher.go` | 已列出 `*_enc` AES-GCM 字段；HMAC/摘要未误写为密文 | `通过（静态）` | 代码变更时重新扫描；密钥管理和备份由 T34 复核 |
-| QA-06 | 同意 purpose 是否与 API/服务端枚举一致 | `docs/compliance/separate-consents.md`、`server/internal/accounts/consents.go`、`server/internal/api/app/routes.gen.go` | `privacy`、`terms`、`assessment`、`health`、`voice`、`audio_retention`、`practice`、`review`、`contacts`、`chat_import`、`manual_mark` 已对表 | `通过（静态）` | 正式版本和页面文案仍需运营/律师确认 |
+| QA-06 | 同意 purpose 是否与 API/服务端枚举一致 | `docs/compliance/separate-consents.md`、`server/internal/accounts/consents.go`、`server/internal/api/app/routes.gen.go` | `privacy`、`terms`、`assessment`、`health`、`voice`、`audio_retention`、`practice`、`review`、`contacts`、`chat_import`、`reply_chat_import`、`manual_mark` 已对表 | `通过（静态）` | 正式版本和页面文案仍需运营/律师确认 |
 | QA-07 | `privacy`/`terms` 是否强制开发占位版本 | `server/internal/accounts/accounts.go`、`app/lib/features/onboarding/repository.dart` | 服务端要求 `PolicyVersion=2026-11`；客户端 onboarding 写入同版本 | `通过（静态）` | 发布前替换正式版本、生效日期和通知流程 |
-| QA-08 | 各敏感用途是否校验当前同意版本 | `server/internal/accounts/consents.go`、`separate-consents.md` 第 4 节 | `Granted` 只检查未撤回；除 `privacy`/`terms` 外版本非空即可 | `未通过` | 修复版本闭环并补端到端测试；产品/后端负责人 |
+| QA-08 | 各敏感用途是否校验当前同意版本 | `server/internal/accounts/consents.go`、`server/internal/profile/inference_request.go`、`separate-consents.md` 第 4 节 | `Granted` 只检查未撤回；通用 PUT 要求版本非空、首尾无空白且不超过 100 字节，撤回通常须匹配既有决定的版本，并有同状态幂等和从未授予录音留存的专门分支；`privacy`/`terms` 在注册和授予时强制 `PolicyVersion`，`reply_chat_import` 在写入、撤回及新绑定/未完成请求处理时强制 `2026-11-reply`；关系人推断按 `contacts`/`chat_import` 两笔 `2026-11` 决定复核，关联关系人的回复只在新绑定及未完成请求继续处理/保存前校验 `contacts` / `2026-11`，同账号同请求键同输入的已完成回放直接返回 200，不重验当前授权；撤回 `reply_chat_import` 仍须匹配 `2026-11-reply`。其他用途仍无固定版本校验，整体未做版本闭环 | `未通过` | 修复其余用途版本闭环并补端到端测试；产品/后端负责人 |
 | QA-09 | 对练前是否写入 `practice` 单独同意 | `app/lib/features/practice/lobby.dart`、`server/internal/training/store.go` | T20 在启动、恢复创建及重练前读服务端状态；无授权须明确确认后写入并复读，旧本地告知无效。Widget 验证确认/拒绝；`app/tool/t20/live.sh` 使用无预授权合成账号验证服务端授权读写及无权创建返回 403 | `通过（隔离客户端与后端）` | 当前用途版本匹配、真机首用和撤回仍待验（见 QA-30） |
 | QA-10 | 手动标记客户端是否核对同意版本 | `app/lib/features/marks/book.dart`、`server/internal/marks/store.go` | 客户端设置 `v1` 但只检查 `granted == true`；服务端接受非空版本 | `部分通过` | 补版本校验和撤回后停写测试 |
-| QA-11 | 聊天原文 24 小时删除是否闭环 | `server/migrations/20261121000200_training.up.sql`、`docs/schema.md`、`app/lib/features/replies/page.dart` | `chat_imports.original_enc`/`received_at` 仍存在；未找到自动清理函数、24 小时读取过滤、失败重试或导出排除完整证据 | `未通过` | 实现并验收读取过滤、物理清理、重试、告警和导出排除 |
-| QA-12 | 回复原文不落库、关系人推断和 T21 回复增量是否可写成基线事实 | `server/internal/training/`、`server/internal/profile/`、`server/internal/replies/`、`server/migrations/2026112300002{1,2,3}_*.sql` | `f60ace3` 的 42 项盘点不含 T19/T25/T21 增量。T19/T25 保持本批后端事实：反馈观察写入 `profile_observations.fact_enc`，T25 推断链路不持久化聊天原文。T21 已接线 `POST /v1/replies` 与 `POST /v1/replies/:id/feedback`，服务端不持久化源文本与目的；结果与反馈使用 AES-GCM，输入指纹为 32 字节带密钥 HMAC，另存授权及请求关联元数据；`reply_import_guard` 阻止回复路径写 `chat_imports`。效果反馈正文加密保存，另有仅用于非画像消费的最小回执，只有显式 `self_report` 进入本人画像观察；删除后 `reply_request_keys.activity_id` 为 `ON DELETE SET NULL`，保留 HMAC 防重放。以上均不计入固定 42 项 | `通过（静态）` | 真实厂商、日志、备份、生产发布和删除签收仍待证据；T35 公共导出/删除未接线 |
-| QA-13 | 聊天原文 24 小时删除文案是否有实现证据 | `app/lib/features/replies/page.dart`、数据清单 D13 | 页面目标存在，但自动清理、读取过滤和供应商证据未闭环 | `未通过` | 在实现和供应商证据齐全前删除或降级文案 |
+| QA-11 | 聊天原文 24 小时删除是否闭环 | `server/migrations/20261121000200_training.up.sql`、`server/internal/training/chat_imports.go`、`server/internal/service/runtime_maintenance.go`、`docs/schema.md`、`app/lib/features/replies/page.dart` | 固定基线 `chat_imports.original_enc`/`received_at` 只有存储结构；当前候选 `PurgeChatImports` 只处理历史导入行并删除 `received_at <= now−24h` 的源行，启动一次并由每分钟维护重试，活动幂等根保留。历史导入导出只返回本人未到期行的 `activity_id`、`received_at` 与 `content_unavailable: true`；即使未到期也从不导出源正文，到期筛选独立于清扫。当前关系人推断与回复助手的新提交均不写该表。宿主实库、失败告警、供应商与备份/WAL 证据仍未闭环 | `部分通过（静态）` | 宿主实库验收清扫与重试、告警、供应商留存和备份/WAL 证据；D13 正式 QA-13 签认仍未通过 |
+| QA-12 | 回复原文不落库、关系人推断和 T21 回复增量是否可写成基线事实 | `server/internal/training/`、`server/internal/profile/`、`server/internal/replies/`、`server/migrations/2026112300002{1,2,3}_*.sql` | `f60ace3` 的 42 项盘点不含 T19/T25/T21 增量。T19/T25 保持本批后端事实：反馈观察写入 `profile_observations.fact_enc`，T25 推断链路不持久化聊天原文。T21 已接线 `POST /v1/replies` 与 `POST /v1/replies/:id/feedback`，服务端不持久化源文本与目的；结果与反馈使用 AES-GCM，输入指纹为 32 字节带密钥 HMAC，另存授权及请求关联元数据；`reply_import_guard` 阻止回复路径写 `chat_imports`。效果反馈正文加密保存，另有仅用于非画像消费的最小回执，只有显式 `self_report` 进入本人画像观察；删除后 `reply_request_keys.activity_id` 为 `ON DELETE SET NULL`，保留 HMAC 防重放。隐私页已有 `chat_import` 与 `reply_chat_import` 两个独立撤回/重授入口。以上均不计入固定 42 项 | `通过（静态）` | 真实厂商、日志、备份、生产发布和删除签收仍待证据；T35 公共导出/删除当前候选已接线，发布待验 |
+| QA-13 | 聊天原文 24 小时删除文案是否有实现证据 | `app/lib/features/replies/page.dart`、`app/lib/features/contacts/forms.dart`、`server/internal/training/chat_imports.go`、数据清单 D13 | 关系人推断表单告知新提交只用于本次推断、不另存原文；`chat_imports` 只保留历史导入行。当前候选已有静态到期行清扫、导出过滤和维护重试，到期筛选独立于清扫；宿主实库、供应商、备份/WAL 与物理介质证据未闭环，不能写成全链路物理删除 | `部分通过（静态）` | 宿主与供应商证据齐全前保持降级文案，不得写成“已自动删除”；D13 正式 QA-13 签认仍未通过 |
 | QA-14 | 设备健康权限是否被误写成基线已声明 | `app/android/app/src/main/AndroidManifest.xml`、`app/ios/Runner/Info.plist`、`Runner.entitlements` | 固定基线 Android Manifest 仅声明 `INTERNET`，iOS 没有 HealthKit entitlement 或 `NSHealthShareUsageDescription`。当前 T28 归档静态实现另有 Android `ACTIVITY_RECOGNITION`、`health.READ_HEART_RATE`、`health.READ_HEART_RATE_VARIABILITY`、`health.READ_STEPS`、`health.READ_EXERCISE`（无健康写入）及 iOS `NSHealthShareUsageDescription`、HealthKit entitlement（无更新用途）；T28 归档未合入固定基线 | `通过（静态）` | 以 `f60ace3` 为基线不混淆；T28 合入后按 Manifest/Info.plist/entitlements、真机和平台审批重新验收 |
 | QA-15 | 健康窗口删除、读取过滤和 180 天清理是否有静态证据 | `server/internal/emotion/privacy.go`、`window.go`、`reference.go` | 健康窗口专用删除按账号、渠道和 30 秒起点定位；180 天读取过滤与物理清理有测试覆盖 | `通过（静态）` | T35/T34 继续验收导出、恢复后重删和真机采集 |
 | QA-16 | 注销冻结、撤销注销和清理协调器是否保留 | `server/internal/accounts/`、`server/internal/privacy/`、`docs/schema.md` | 冻结 15 天、撤销注销、按根清理和删除协调器均有静态路径 | `通过（静态）` | T35/T34 做端到端注销、恢复和重放测试 |
@@ -84,7 +84,7 @@ T29 归档已有静态实现，但未合入固定基线、真机待验。不得�
 
 候选的 `manifest.json` 为首条，后接 13 个 JSON 分区：`accounts`、`ai_calls`、`assessments`、`chat_imports`、`emotion`、`growth`、`manual_marks`、`membership`、`payments`、`profiles`、`replies`、`reviews`、`training`。源代码与回归核对的排除项包括其他账号记录、密钥和会话凭据、HMAC/防重放键、平台收据原文、聊天原文与设备录音，以及训练工作令牌、请求键和成长计划的 `review_activity_id`。保留关系人、标记与窗口专用删除以及注销各自的证据。
 
-截至评审对照点 `7332045`，此前主线的通用导出仍未实现。独立导出切片在一次性 PG17、普通 Redis 和独立登记 Redis 环境中记录了 8 个顶级集成用例、2 个对练子例及 5 个提交/HTTP 中断用例的通过回执。该切片保留 `TestPrivacyRightsHTTP/selected_record_delete_stays_unimplemented`，断言匿名 `401`、有效会话 `501 not_implemented` 且 `retryable: false`，并核对标记仍在本人 ZIP 中且与另一账号隔离。该子例待用[独立导出候选的代码](../tasks/T35-export-ios-handoff.md#独立导出后端复验)单列回执。
+截至评审对照点 `7332045`，此前主线的通用导出仍未实现。独立导出切片在一次性 PG17、普通 Redis 和独立登记 Redis 环境中记录了 8 个顶级集成用例、2 个对练子例及 5 个提交/HTTP 中断用例的通过回执。该切片保留 `TestPrivacyRightsHTTP/selected_record_delete_stays_unimplemented`，断言匿名 `401`、有效会话 `501 not_implemented` 且 `retryable: false`，并核对标记仍在本人 ZIP 中且与另一账号隔离。该子例待用[独立导出候选的代码](../tasks/T35-export-ios-handoff.md#宿主已验)单列回执。
 
 当前选删候选的列表只提供静态标签、时间与公开删除键，活动类记录返回活动 ID，内部清理源由服务端解析。删除在账号锁内复核会话、归属和种类，写入清理意图和独立账本。删除屏障生效时，本人的有效会话只能重试精确待办。匿名或失效会话被拒绝，越权、种类不符与未知记录均返回 `404`。
 
@@ -94,10 +94,10 @@ T29 归档已有静态实现，但未合入固定基线、真机待验。不得�
 
 ### 完整用户权利验收
 
-1. 设置页逐项展示并撤回 `health`、`voice`、`audio_retention`、`practice`、`review`、`contacts`、`chat_import`、`manual_mark`，撤回后立即停采。`[待 T35 对表]`
+1. 设置页逐项展示并撤回 `health`、`voice`、`audio_retention`、`practice`、`review`、`contacts`、`chat_import`、`reply_chat_import`、`manual_mark`，撤回后立即停采。`[待 T35 对表]`
 2. 查阅、复制/导出、更正、删除和注销的实际入口及错误处理。当前后端候选继续做目标环境交付验收，并补齐 Flutter 定位、选择、确认、删除后读回的全链路回执。`[待 T35 对表]`
 3. 从源消息、带引用评分追到数值副本、画像、计划和可关联日志；导出包含用户仍有的数据，排除密钥、HMAC、他人数据和平台收据原文。`[待 T35 对表]`
-4. 删除后重算、不可回填、不可再导出；防重放记录只保留不含身份信息的源 ID 并覆盖规定期限。`[待 T35 对表]`
+4. 删除后重算、不可回填、不可再导出；评分事件和独立删除登记的防重放记录只保留不含正文的身份或源键。回复/对练防重放键另按 D41 保留账号 UUID 与摘要，均无自动到期字段，不能套用“不含身份信息”或有限 TTL 的统一规则。`[待 T35 对表]`
 5. 注销冻结 15 天、撤销注销、按根清理、订单脱敏、支付明细/通知清理及清理证明。`[待 T35 对表]`
 6. 撤回健康/语音同意后的设备读取、未发窗口、缓存和联网补传行为。`[待 T35 对表]` `[待真机复核]`
 7. 换账号、离线撤回、杀进程、重开和过期录音场景的隔离证据。`[待 T35 对表]` `[待真机复核]`
@@ -106,7 +106,7 @@ T29 归档已有静态实现，但未合入固定基线、真机待验。不得�
 ## 5. 本轮静态检查命令
 
 ```sh
-rg -n "privacy|terms|assessment|health|voice|audio_retention|practice|review|contacts|chat_import|manual_mark" server/internal/accounts app/lib
+rg -n "privacy|terms|assessment|health|voice|audio_retention|practice|review|contacts|chat_import|reply_chat_import|manual_mark" server/internal/accounts app/lib
 rg -n "chat_imports|original_enc|received_at|24 小时" server/migrations server/internal app/lib docs/schema.md
 rg -n "provider_admissions|processing_country|storage_country|cross_border|max_retention_days|deletion_method|terms_evidence" server/migrations server/internal
 rg -n "RECORD_AUDIO|NSMicrophoneUsageDescription|ACTIVITY_RECOGNITION|READ_HEART|READ_STEPS|READ_EXERCISE|NSHealth|NSHealthUpdate" app/android app/ios
