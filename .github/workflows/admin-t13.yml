@@ -1,15 +1,31 @@
 name: Admin web
 on:
   push:
-    paths: ['admin/**', 'docs/api/admin.yaml', '.github/workflows/admin-t13.yml']
+    paths:
+      - 'admin/**'
+      - 'docs/api/admin.yaml'
+      - 'server/internal/**'
+      - 'server/migrations/**'
+      - 'server/go.mod'
+      - 'server/go.sum'
+      - 'app/tool/t27/install_redis.sh'
+      - '.github/workflows/admin-t13.yml'
   pull_request:
-    paths: ['admin/**', 'docs/api/admin.yaml', '.github/workflows/admin-t13.yml']
+    paths:
+      - 'admin/**'
+      - 'docs/api/admin.yaml'
+      - 'server/internal/**'
+      - 'server/migrations/**'
+      - 'server/go.mod'
+      - 'server/go.sum'
+      - 'app/tool/t27/install_redis.sh'
+      - '.github/workflows/admin-t13.yml'
   workflow_dispatch:
 permissions: {contents: read}
 jobs:
   web:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with: {persist-credentials: false}
@@ -22,3 +38,26 @@ jobs:
           flutter analyze
           flutter test
           flutter build web --release --no-web-resources-cdn
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Install disposable PostgreSQL 17 and Redis binaries
+        run: |
+          sudo apt-get update
+          if ! apt-cache show postgresql-17 >/dev/null 2>&1; then
+            sudo install -d -m 0755 /usr/share/postgresql-common/pgdg
+            sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+              -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+            echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' \
+              | sudo tee /etc/apt/sources.list.d/t14-pgdg.list >/dev/null
+            sudo apt-get update
+          fi
+          sudo apt-get install -y --no-install-recommends postgresql-17 build-essential redis-tools
+          bash app/tool/t27/install_redis.sh "$RUNNER_TEMP/t14-redis"
+      - name: Verify /models save, one audit and the next App call
+        env:
+          T14_DISPOSABLE: yes
+        run: |
+          export PATH="/usr/lib/postgresql/17/bin:$RUNNER_TEMP/t14-redis:$PATH"
+          bash admin/tool/t14/verify.sh
