@@ -55,33 +55,16 @@ def run_delete_test(go, env, log):
                 or not isinstance(event.get("Output"), str)):
             continue
         match = MARKER.fullmatch(event["Output"].strip())
-        if match and match[2] in PHASES:
+        if match and (match[2] in PHASES or match.groups() == ("BEGIN", "page.startup")):
             stage = match[2]
             if match[1] == "PASS":
                 passed.append(stage)
 
     receipt_dir = env.get("T35_RECORD_EXPORT_RECEIPT_DIR")
-    if status != 0 or not verdict.accepted or tuple(passed) != PHASES:
-        if receipt_dir:
-            failure_log = Path(receipt_dir) / "go.test.log"
-            shutil.copyfile(log, failure_log)
-            for line in lines:
-                try:
-                    event = json.loads(line)
-                except ValueError:
-                    continue
-                output = event.get("Output") if isinstance(event, dict) else None
-                if isinstance(output, str) and (
-                    "FAIL(" in output or "Fatal" in output or "selected-record" in output
-                ):
-                    print(output.rstrip(), file=sys.stderr)
-            raise native.Failed(
-                f"exact Go result and ordered phase receipts required, see {failure_log}",
-                stage=stage,
-            )
-        raise native.Failed("exact Go result and ordered phase receipts required", stage=stage)
     if receipt_dir:
         shutil.copyfile(log, Path(receipt_dir) / "go.test.log")
+    if status != 0 or not verdict.accepted or tuple(passed) != PHASES:
+        raise native.Failed("exact Go result and ordered phase receipts required", stage=stage)
     for phase in passed:
         print(f"PASS({phase})", flush=True)
 
@@ -92,7 +75,10 @@ def main():
     parser.add_argument("--redis", type=Path, required=True)
     parser.add_argument("--go", default=shutil.which("go"))
     parser.add_argument("--flutter", default=shutil.which("flutter"))
-    parser.add_argument("--receipt-dir", type=Path)
+    parser.add_argument(
+        "--receipt-dir", type=Path,
+        help="keep raw synthetic receipts in this local directory; defaults to temporary storage",
+    )
     args = parser.parse_args()
 
     def interrupt(_signum, _frame):
@@ -104,10 +90,9 @@ def main():
         state = Path(temp).resolve()
         env = native.isolated_environment(state)
         env.update(HOME=str(state), PAYMENT_MODE="disabled", T35_RECORD_DISPOSABLE="yes")
-        if args.receipt_dir is not None:
-            receipt_dir = args.receipt_dir.expanduser().resolve()
-            receipt_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-            env["T35_RECORD_EXPORT_RECEIPT_DIR"] = str(receipt_dir)
+        receipt_dir = (args.receipt_dir or state / "receipts").expanduser().resolve()
+        receipt_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        env["T35_RECORD_EXPORT_RECEIPT_DIR"] = str(receipt_dir)
         native.run_services(args, state, state, env, run_journey=run_delete_test)
     print("T35_RECORD_RESULT=PASS", flush=True)
 

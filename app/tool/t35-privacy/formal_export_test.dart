@@ -201,6 +201,10 @@ void main() {
         expect(account, isNotEmpty);
         expect(ticketKey, isNotEmpty);
         final privacy = currentPage<PrivacyPage>('/privacy');
+        final owner = within(privacy, find.text('账号 $account'));
+        // The record list entry is below the account card and export controls.
+        await frames.show(owner, within: privacy, scrollBack: true);
+        expect(owner, findsOneWidget);
         final export = within(privacy, find.byKey(const Key('privacy-export')));
         final waiting = within(privacy, find.text(_presenting));
         final completed = within(privacy, find.text(_completed));
@@ -305,8 +309,6 @@ void main() {
       });
 
       await phase('account-a.after', () async {
-        final privacy = currentPage<PrivacyPage>('/privacy');
-        expect(within(privacy, find.text('账号 $a')), findsOneWidget);
         await exportExport('a-after', 'A', a, namespaceA);
       });
 
