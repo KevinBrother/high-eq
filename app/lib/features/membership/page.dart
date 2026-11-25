@@ -214,6 +214,7 @@ class _MemberState extends State<MemberPage> with WidgetsBindingObserver {
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.insights_outlined),
             title: const Text('查看本人情绪汇总'),
+            subtitle: const Text('包含已授权的信号基线进度'),
             trailing: const Icon(Icons.chevron_right),
             onTap: openEmotion,
           ),

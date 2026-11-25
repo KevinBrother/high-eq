@@ -210,6 +210,7 @@ class AppApi {
           if (record['purpose'] != 'health' || record['granted'] != false) {
             throw const FormatException('健康授权撤回未确认');
           }
+          sessions.noteConsentWithdrawn(round.scope, 'health');
           return;
         }
         if (row['granted'] != false) {

@@ -90,6 +90,7 @@ class ApiVoiceAccess implements VoiceAccess {
     CollectionPurpose purpose,
     bool granted,
   ) async {
+    final version = api.sessions.consentVersion(wirePurpose(purpose));
     final receipt = await api.json(
       AppOp.setConsent,
       scope: scope,
@@ -99,6 +100,19 @@ class ApiVoiceAccess implements VoiceAccess {
     if (receipt['purpose'] != wirePurpose(purpose) ||
         receipt['granted'] != granted) {
       throw const FormatException('授权回执不匹配');
+    }
+    if (purpose == CollectionPurpose.voice) {
+      granted
+          ? api.sessions.noteConsentGranted(
+              scope,
+              'voice',
+              expectedVersion: version,
+            )
+          : api.sessions.noteConsentWithdrawn(
+              scope,
+              'voice',
+              expectedVersion: version,
+            );
     }
   }
 }

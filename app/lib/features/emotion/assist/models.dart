@@ -1,3 +1,5 @@
+import '../progress.dart';
+
 const _scenes = {'work', 'partner', 'family', 'friends', 'social'};
 
 class AssistAccess {
@@ -77,6 +79,87 @@ List<EmotionGroup> emotionSummaryFromJson(Map<String, dynamic> json) {
       );
     }),
   );
+}
+
+/// A missing signal here means its account consent is absent or withdrawn.
+class BaselineProgress {
+  const BaselineProgress({
+    this.heartRate,
+    this.speechRate,
+    this.volume,
+    this.pitch,
+    this.hrv,
+  });
+
+  final DurationProgress? heartRate;
+  final DurationProgress? speechRate;
+  final DurationProgress? volume;
+  final DurationProgress? pitch;
+  final HrvTrend? hrv;
+
+  factory BaselineProgress.fromJson(
+    Map<String, dynamic> json, {
+    required bool healthGranted,
+    required bool voiceGranted,
+  }) {
+    DurationProgress duration(String key) {
+      final row = _object(json[key], '$key 进度');
+      final ready = row['ready'];
+      if (ready is! bool) throw FormatException('无效的$key 就绪状态');
+      final baseline = _nullableFiniteNumber(row, 'baseline');
+      final threshold = _nullableFiniteNumber(row, 'threshold');
+      // T30 uses dB for volume. Both values can legitimately be negative.
+      if (ready != (baseline != null) || ready != (threshold != null)) {
+        throw FormatException('无效的$key 基线与阈值');
+      }
+      return DurationProgress(
+        validDays: _nonNegativeInt(row['valid_days'], '$key.valid_days'),
+        todayValidSeconds: _nonNegativeInt(
+          row['today_valid_seconds'],
+          '$key.today_valid_seconds',
+        ),
+        ready: ready,
+        reason: _progressReason(row, key),
+        baseline: baseline,
+        threshold: threshold,
+      );
+    }
+
+    HrvTrend trend() {
+      final row = _object(json['hrv'], 'HRV 趋势');
+      if (row['ready_for_alert'] != false) {
+        throw const FormatException('无效的 HRV 趋势状态');
+      }
+      return HrvTrend(
+        readings: _nonNegativeInt(row['readings'], 'hrv.readings'),
+        samplingDays: _nonNegativeInt(
+          row['sampling_days'],
+          'hrv.sampling_days',
+        ),
+        readyForAlert: false,
+        reason: _progressReason(row, 'HRV'),
+      );
+    }
+
+    return BaselineProgress(
+      heartRate: healthGranted ? duration('heart_rate') : null,
+      speechRate: voiceGranted ? duration('speech_rate') : null,
+      volume: voiceGranted ? duration('volume') : null,
+      pitch: voiceGranted ? duration('pitch') : null,
+      hrv: healthGranted ? trend() : null,
+    );
+  }
+}
+
+String _progressReason(Map<String, dynamic> row, String key) =>
+    _nullableText(row['reason'], '$key.reason', nonEmpty: true) ??
+    (throw FormatException('缺少$key 进度说明'));
+
+double? _nullableFiniteNumber(Map<String, dynamic> row, String key) {
+  final value = row[key];
+  if (value == null && row.containsKey(key)) return null;
+  if (value is num && value.isFinite) return value.toDouble();
+  throw FormatException('无效的$key');
 }
 
 Map<String, dynamic> _object(Object? value, String name) {

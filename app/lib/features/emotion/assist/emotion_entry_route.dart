@@ -8,8 +8,7 @@ import 'summary_only_page.dart';
 
 enum EmotionEntryOrigin { summary, membership, voice }
 
-/// The formal account route uses the summary-only composition until its
-/// live sources and paired replay are approved.
+/// The formal account route uses the read-only membership composition.
 class EmotionEntryRoute extends StatefulWidget {
   const EmotionEntryRoute({
     super.key,
@@ -36,7 +35,7 @@ class _EmotionEntryRouteState extends State<EmotionEntryRoute> {
       return;
     }
     await navigator.pushNamed(route, arguments: EmotionEntryOrigin.summary);
-    if (mounted && destination == EmotionEntryOrigin.membership) {
+    if (mounted) {
       setState(() => _entitlementRevision++);
     }
   }

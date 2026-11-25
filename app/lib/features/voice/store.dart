@@ -182,7 +182,10 @@ class VoiceWindowStore {
         await _recordings(now: now);
       });
 
-  Future<void> setVoiceRevoked(bool value) => _setFlag(voiceRevokedId, value);
+  Future<void> setVoiceRevoked(bool value) async {
+    await _setFlag(voiceRevokedId, value);
+    sessions.noteVoiceRevoked(scope, value);
+  }
 
   Future<bool> voiceRevoked() => _readFlag(voiceRevokedId);
 

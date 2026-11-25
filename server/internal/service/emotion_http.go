@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"high-eq/server/internal/accounts"
 	"high-eq/server/internal/api/app"
 	"high-eq/server/internal/emotion"
 	"high-eq/server/internal/membership"
@@ -79,7 +80,19 @@ func (a appAPI) GetBaselines(c *gin.Context, p app.GetBaselinesParams) {
 				return e
 			}
 			b, e = a.signals.Baselines(ctx, tx, u, time.Now())
-			return e
+			if e != nil {
+				return e
+			}
+			health, e := accounts.Granted(ctx, tx, u, "health")
+			if e != nil {
+				return e
+			}
+			voice, e := accounts.Granted(ctx, tx, u, "voice")
+			if e != nil {
+				return e
+			}
+			b.Restrict(health, voice)
+			return nil
 		}
 		now := time.Now()
 		start, e := a.membership.CollectionStart(ctx, tx, u, now)

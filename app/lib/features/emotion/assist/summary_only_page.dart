@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../../core/api.dart';
 import '../../../core/session.dart';
+import '../../voice/store.dart';
+import 'baseline_progress_section.dart';
 import 'models.dart';
 import 'presentation.dart';
 import 'repository.dart';
@@ -13,7 +15,7 @@ import 'summary_section.dart';
 /// Membership-scoped summary view that never depends on the live voice
 /// composition.
 ///
-/// This page reads only entitlements and the authorized aggregate endpoint. It
+/// This page reads entitlements, consent records, and authorized aggregates. It
 /// has no frame source, replay source, recorder, uploader, or decision runtime,
 /// so a free or expired member and a member without voice consent both fail
 /// closed for every sensor-backed capability.
@@ -59,6 +61,12 @@ class _SummaryOnlyPageState extends State<SummaryOnlyPage>
   late AssistRepository _repository;
   AssistAccess? _access;
   List<EmotionGroup> _groups = const [];
+  BaselineProgress? _baselineProgress;
+  // Decision versions captured when the displayed baseline request started.
+  // A purpose whose version moved during that request stays hidden until a
+  // fresh read adopts a response begun after the newer decision.
+  Map<String, int>? _baselineVersions;
+  String? _baselineError;
   Map<String, String> _contactNames = const {};
   bool _loading = true;
   bool _reloading = false;
@@ -77,6 +85,12 @@ class _SummaryOnlyPageState extends State<SummaryOnlyPage>
         lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
     WidgetsBinding.instance.addObserver(this);
     widget.api.sessions.identity.addListener(_identityChanged);
+    widget.api.sessions.consentWithdrawals.addListener(_consentWithdrawalsChanged);
+    widget.api.sessions.withdrawalIntentRevision.addListener(
+      _consentWithdrawalsChanged,
+    );
+    widget.api.sessions.voiceRevocation.addListener(_consentWithdrawalsChanged);
+    unawaited(_hydrateVoiceRevocation());
     _repository = _createRepository();
     _requestFence = SummaryRequestFence(
       now: _nowUtc,
@@ -112,6 +126,25 @@ class _SummaryOnlyPageState extends State<SummaryOnlyPage>
       if (apiChanged || scopeChanged) {
         oldWidget.api.sessions.identity.removeListener(_identityChanged);
         widget.api.sessions.identity.addListener(_identityChanged);
+        oldWidget.api.sessions.consentWithdrawals.removeListener(
+          _consentWithdrawalsChanged,
+        );
+        widget.api.sessions.consentWithdrawals.addListener(
+          _consentWithdrawalsChanged,
+        );
+        oldWidget.api.sessions.withdrawalIntentRevision.removeListener(
+          _consentWithdrawalsChanged,
+        );
+        widget.api.sessions.withdrawalIntentRevision.addListener(
+          _consentWithdrawalsChanged,
+        );
+        oldWidget.api.sessions.voiceRevocation.removeListener(
+          _consentWithdrawalsChanged,
+        );
+        widget.api.sessions.voiceRevocation.addListener(
+          _consentWithdrawalsChanged,
+        );
+        unawaited(_hydrateVoiceRevocation());
       }
       _repository = _createRepository();
       _hideRestricted(
@@ -167,6 +200,15 @@ class _SummaryOnlyPageState extends State<SummaryOnlyPage>
     _requestFence.invalidateRequest();
     _cancelExpiryTimer();
     widget.api.sessions.identity.removeListener(_identityChanged);
+    widget.api.sessions.consentWithdrawals.removeListener(
+      _consentWithdrawalsChanged,
+    );
+    widget.api.sessions.withdrawalIntentRevision.removeListener(
+      _consentWithdrawalsChanged,
+    );
+    widget.api.sessions.voiceRevocation.removeListener(
+      _consentWithdrawalsChanged,
+    );
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -182,6 +224,9 @@ class _SummaryOnlyPageState extends State<SummaryOnlyPage>
     if (!keepData) _cancelExpiryTimer();
     setState(() {
       _error = null;
+      _baselineProgress = null;
+      _baselineVersions = null;
+      _baselineError = null;
       _loading = !keepData;
       _reloading = keepData;
       if (!keepData) {
@@ -229,13 +274,13 @@ class _SummaryOnlyPageState extends State<SummaryOnlyPage>
         // same refresh round has produced a summary.
         _access = access;
         _groups = List.unmodifiable(groups);
-        // This screen deliberately does not fetch the contacts directory: its
-        // only network dependency is the membership aggregate endpoint.
+        // Use neutral labels without requesting the contacts directory.
         _contactNames = const {};
         _loading = false;
         _reloading = false;
       });
       _scheduleBoundaryExpiry();
+      unawaited(_loadBaselineProgress(requestEpoch));
     } on SummaryRequestCancelled {
       if (!_isCurrent(requestEpoch)) return;
       final boundaryAccess = _requestFence.boundaryAccess;
@@ -248,6 +293,101 @@ class _SummaryOnlyPageState extends State<SummaryOnlyPage>
       if (!_isCurrent(requestEpoch)) return;
       _hideRestricted(error: _fixedLoadError(error));
     }
+  }
+
+  Future<void> _loadBaselineProgress(int requestEpoch) async {
+    final versions = widget.api.sessions.consentVersions();
+    try {
+      final progress = await _repository.baselineProgress(
+        canSend: () => _canSend(requestEpoch),
+      );
+      if (!_canSend(requestEpoch)) return;
+      setState(() {
+        _baselineVersions = versions;
+        _baselineProgress = _maskKnownWithdrawals(progress, versions);
+      });
+    } on Object catch (error) {
+      if (!_canSend(requestEpoch)) return;
+      if (error is ApiFailure && error.status == 403) {
+        // The baseline read also re-checks collection entitlement. A 403 means
+        // this refresh round no longer holds it, so the summary adopted earlier
+        // in the same round cannot stay on screen.
+        _hideRestricted(error: _fixedLoadError(error));
+        return;
+      }
+      setState(() {
+        _baselineError = '暂时无法读取基线进度，请重试。';
+      });
+    }
+  }
+
+  /// A withdrawal confirmed in this process hides only the affected signals.
+  /// The mask is applied again when an in-flight response is adopted, so a
+  /// stale 200 cannot restore a dimension the user already withdrew.
+  void _consentWithdrawalsChanged() {
+    if (!mounted) return;
+    final progress = _baselineProgress;
+    if (progress == null) return;
+    final masked = _maskKnownWithdrawals(progress, _baselineVersions);
+    if (identical(masked, progress)) return;
+    setState(() => _baselineProgress = masked);
+  }
+
+  /// Picks up a voice revocation persisted before this page opened. The live
+  /// notifier covers revocations that happen while the page is mounted.
+  Future<void> _hydrateVoiceRevocation() async {
+    final scope = widget.scope;
+    try {
+      final revoked = await VoiceWindowStore(
+        widget.api.sessions,
+        scope,
+      ).voiceRevoked();
+      if (!mounted || !identical(widget.scope, scope)) return;
+      if (revoked) widget.api.sessions.noteVoiceRevoked(scope, true);
+    } on Object {
+      // An unreadable local marker must not block the summary; the consent
+      // decision path still fails closed on its own.
+    }
+  }
+
+  BaselineProgress _maskKnownWithdrawals(
+    BaselineProgress progress, [
+    Map<String, int>? versions,
+  ]) {
+    final withdrawn = widget.api.sessions.consentWithdrawals.value;
+    final atRead = versions ?? const <String, int>{};
+    bool fenced(String purpose) =>
+        withdrawn.contains(purpose) ||
+        widget.api.sessions.consentVersion(purpose) != (atRead[purpose] ?? 0);
+    // An offline HealthSync withdrawal stores a durable local intent before the
+    // server sees it. Treat it as known withdrawal immediately.
+    final health =
+        fenced('health') ||
+        widget.api.sessions.hasWithdrawalIntent(widget.scope);
+    // A failed voice revocation sync keeps its durable local marker; the
+    // summary must not show voice rows until a successful grant clears it.
+    final voice =
+        fenced('voice') || widget.api.sessions.voiceRevocation.value;
+    if (!health && !voice) return progress;
+    final heartRate = health ? null : progress.heartRate;
+    final hrv = health ? null : progress.hrv;
+    final speechRate = voice ? null : progress.speechRate;
+    final volume = voice ? null : progress.volume;
+    final pitch = voice ? null : progress.pitch;
+    if (identical(heartRate, progress.heartRate) &&
+        identical(hrv, progress.hrv) &&
+        identical(speechRate, progress.speechRate) &&
+        identical(volume, progress.volume) &&
+        identical(pitch, progress.pitch)) {
+      return progress;
+    }
+    return BaselineProgress(
+      heartRate: heartRate,
+      speechRate: speechRate,
+      volume: volume,
+      pitch: pitch,
+      hrv: hrv,
+    );
   }
 
   String _fixedLoadError(Object error) {
@@ -271,6 +411,9 @@ class _SummaryOnlyPageState extends State<SummaryOnlyPage>
     setState(() {
       _access = null;
       _groups = const [];
+      _baselineProgress = null;
+      _baselineVersions = null;
+      _baselineError = null;
       _contactNames = const {};
       _loading = false;
       _reloading = false;
@@ -337,6 +480,9 @@ class _SummaryOnlyPageState extends State<SummaryOnlyPage>
     setState(() {
       _access = access;
       _groups = const [];
+      _baselineProgress = null;
+      _baselineVersions = null;
+      _baselineError = null;
       _contactNames = const {};
       _loading = false;
       _reloading = false;
@@ -361,7 +507,15 @@ class _SummaryOnlyPageState extends State<SummaryOnlyPage>
   }
 
   void _openVoice() {
-    if (widget.onOpenVoice case final callback?) callback();
+    if (widget.onOpenVoice case final callback?) {
+      _requestFence.invalidateRequest();
+      setState(() {
+        _baselineProgress = null;
+        _baselineVersions = null;
+        _baselineError = null;
+      });
+      callback();
+    }
   }
 
   @override
@@ -431,12 +585,18 @@ class _SummaryOnlyPageState extends State<SummaryOnlyPage>
                     child: Text('会员汇总仍可查看', style: theme.textTheme.titleLarge),
                   ),
                   const SizedBox(height: 8),
-                  const Text('这里只展示已有授权汇总；实时分析、录音、上传与回放保持关闭。'),
+                  const Text('可查看已授权的历史汇总和分项基线进度。'),
                   const SizedBox(height: 18),
                   SummarySection(
                     groups: _groups,
                     contactNames: _contactNames,
                     reloading: _reloading,
+                    onReload: () => _load(preserveData: true),
+                  ),
+                  const SizedBox(height: 24),
+                  BaselineProgressSection(
+                    progress: _baselineProgress,
+                    error: _baselineError,
                     onReload: () => _load(preserveData: true),
                   ),
                 ],

@@ -213,6 +213,43 @@ func TestEmotionErasureAndExpiry(t *testing.T) {
 	check(a.UserId, 0)
 }
 
+func TestCurrentBaselineMinimizesWithdrawnPurposes(t *testing.T) {
+	f := setupSignals(t)
+	a := f.user()
+	f.member(a)
+	f.consents(a.UserId)
+	at := time.Now().UTC().Truncate(30 * time.Second)
+	healthWindow := synthetic(at, "health", false)
+	hrv := 48.0
+	healthWindow.HRV = &emotion.Stat{Mean: &hrv, Maximum: &hrv, Count: 2}
+	f.call("POST", "signal-windows", a.AccessToken, healthWindow, 200, nil)
+	f.call("POST", "signal-windows", a.AccessToken, synthetic(at, "voice", false), 200, nil)
+
+	var full, healthOff, allOff emotion.Baselines
+	f.call("GET", "signal-baselines", a.AccessToken, nil, 200, &full)
+	if full.Heart.Today != 30 || full.Speech.Today != 30 || full.Volume.Today != 30 || full.HRV.Readings != 2 {
+		t.Fatalf("fixture baseline not ready: %+v", full)
+	}
+
+	f.exec(`update consents set withdrawn_at=now() where user_id=$1 and purpose='health'`, a.UserId)
+	f.call("GET", "signal-baselines", a.AccessToken, nil, 200, &healthOff)
+	if healthOff.Heart.Today != 0 || healthOff.Heart.Days != 0 || healthOff.Heart.Ready ||
+		healthOff.Heart.Baseline != nil || healthOff.Heart.Reason != emotion.HealthOffReason ||
+		healthOff.HRV.Readings != 0 || healthOff.HRV.Reason != emotion.HealthOffReason {
+		t.Fatalf("health withdrawal retained data: %+v", healthOff)
+	}
+	if healthOff.Speech.Today != 30 || healthOff.Volume.Today != 30 {
+		t.Fatalf("health withdrawal removed voice data: %+v", healthOff)
+	}
+
+	f.exec(`update consents set withdrawn_at=now() where user_id=$1 and purpose='voice'`, a.UserId)
+	f.call("GET", "signal-baselines", a.AccessToken, nil, 200, &allOff)
+	if allOff.Speech.Today != 0 || allOff.Volume.Ready || allOff.Pitch.Reason != emotion.VoiceOffReason ||
+		allOff.Heart.Reason != emotion.HealthOffReason {
+		t.Fatalf("voice withdrawal retained data: %+v", allOff)
+	}
+}
+
 func TestEmotionFeedbackIsExplicit(t *testing.T) {
 	f := setupSignals(t)
 	a := f.user()

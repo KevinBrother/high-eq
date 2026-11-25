@@ -86,6 +86,27 @@ type Baselines struct {
 	Pitch  Progress `json:"pitch"`
 	HRV    Trend    `json:"hrv"`
 }
+
+const (
+	HealthOffReason = "健康授权已关闭"
+	VoiceOffReason  = "语音授权已关闭"
+)
+
+// Restrict removes every statistic derived from a collection purpose whose
+// consent is not currently granted. Heart rate and HRV are health-derived;
+// speech rate, volume and pitch are voice-derived. The response keeps its
+// required shape, but unauthorized dimensions carry no counts or baselines.
+func (b *Baselines) Restrict(health, voice bool) {
+	if !health {
+		b.Heart = Progress{Reason: HealthOffReason}
+		b.HRV = Trend{Reason: HealthOffReason}
+	}
+	if !voice {
+		b.Speech = Progress{Reason: VoiceOffReason}
+		b.Volume = Progress{Reason: VoiceOffReason}
+		b.Pitch = Progress{Reason: VoiceOffReason}
+	}
+}
 type totals struct {
 	seconds  int
 	weighted float64

@@ -56,7 +56,18 @@ class HealthSync {
   final int Function() clock;
   static const key = AppApi.healthQueueKey;
   static const _disabled = {'mode': 'off'};
+  static const _consentVersion = '2026-11';
   static const _sources = {'apple_history', 'health_connect', 'huawei_history'};
+
+  /// One contract for a health record that proves the regrant this setting
+  /// accepted: OpenAPI's `Consent.version` is required, and [updatedAt] ties
+  /// the consent list back to the exact receipt when one is supplied.
+  static bool _isAcceptedHealthGrant(Map record, {Object? updatedAt}) =>
+      record['purpose'] == 'health' &&
+      record['version'] == _consentVersion &&
+      record['granted'] == true &&
+      record['updated_at'] is String &&
+      (updatedAt == null || record['updated_at'] == updatedAt);
   static const _withdrawal = 'withdrawal';
   static const _explicitWithdrawal = 'explicit';
   int _epoch = 0;
@@ -247,14 +258,26 @@ class HealthSync {
             false);
   }
 
-  Future<Json> _consent(bool yes) => _wire.setConsent(
-    scope: scope,
-    purpose: 'health',
-    body: {'granted': yes, 'version': '2026-11'},
-  );
+  Future<Json> _consent(bool yes, int gen) async {
+    final record = await _wire.setConsent(
+      scope: scope,
+      purpose: 'health',
+      body: {'granted': yes, 'version': _consentVersion},
+    );
+    // Only validate here. The local decision is published by the caller after
+    // every business gate has accepted this grant, so a later refusal cannot
+    // leave the account with a decision the server never accepted.
+    _check(gen);
+    final accepted = yes
+        ? _isAcceptedHealthGrant(record)
+        : record['purpose'] == 'health' && record['granted'] == false;
+    if (!accepted) throw const FormatException();
+    return record;
+  }
   // A grant request may have failed before it reached T05. Absence already
   // satisfies withdrawal; otherwise revoke the actual current policy version.
   Future<void> _syncWithdrawal(int gen) async {
+    final version = api.sessions.consentVersion('health');
     String? cursor;
     final seen = <String>{};
     do {
@@ -274,6 +297,11 @@ class HealthSync {
         } else if (row['granted'] != false) {
           throw const FormatException();
         }
+        api.sessions.noteConsentWithdrawn(
+          scope,
+          'health',
+          expectedVersion: version,
+        );
         return;
       }
       cursor = page['next_cursor'] as String?;
@@ -325,14 +353,10 @@ class HealthSync {
       // server withdrawal unless an explicit withdrawal intent already exists.
       await _save({'mode': 'withdraw'});
       _check(gen);
-      final record = await _consent(true);
+      final consentVersion = api.sessions.consentVersion('health');
+      final record = await _consent(true, gen);
       _check(gen);
-      final stamp = record['updated_at'];
-      if (record['purpose'] != 'health' ||
-          record['granted'] != true ||
-          stamp is! String) {
-        throw const FormatException();
-      }
+      final stamp = record['updated_at'] as String;
       Future<bool>? prompt;
       DateTime? paidUntil;
       await gate.readIfAllowed(
@@ -340,7 +364,7 @@ class HealthSync {
         CollectionPurpose.health,
         systemGranted: () async => true,
         acceptsGrant: (r) =>
-            r['version'] == '2026-11' && r['updated_at'] == stamp,
+            _isAcceptedHealthGrant(r, updatedAt: stamp),
         onExpiry: (expiry) => paidUntil = expiry,
         beginRead: () {
           _check(gen);
@@ -377,6 +401,7 @@ class HealthSync {
           'mode': 'pending',
           'paid_until': paidUntil!.millisecondsSinceEpoch,
           'grant': stamp,
+          'grant_version': consentVersion,
           'source': source,
         });
         _check(gen);
@@ -395,8 +420,19 @@ class HealthSync {
         'cursor': collectionFrom,
       });
       _check(gen);
+      _publishAcceptedGrant(consentVersion);
       _restored = true;
     });
+  }
+
+  /// Publishes the local health grant only after the setting has durably
+  /// accepted it. A stale round is fenced like every other consent receipt.
+  void _publishAcceptedGrant(int expectedVersion) {
+    api.sessions.noteConsentGranted(
+      scope,
+      'health',
+      expectedVersion: expectedVersion,
+    );
   }
 
   void _halt() {
@@ -542,7 +578,7 @@ class HealthSync {
           CollectionPurpose.health,
           systemGranted: port.queryable,
           acceptsGrant: (r) =>
-              r['version'] == '2026-11' && r['updated_at'] == s['grant'],
+              _isAcceptedHealthGrant(r, updatedAt: s['grant']),
           onDenied: () => denied = true,
           onExpiry: (expires) => _trackExpiry(gen, s, expires),
           beginRead: () {
@@ -723,6 +759,7 @@ class HealthSync {
   Future<void> _activatePending(int gen, Json s) async {
     final paidUntil = s['paid_until'];
     final grant = s['grant'];
+    final grantVersion = s['grant_version'];
     final storedSource = s['source'];
     if (paidUntil is! int ||
         paidUntil <= clock() ||
@@ -765,7 +802,7 @@ class HealthSync {
       CollectionPurpose.health,
       systemGranted: port.queryable,
       acceptsGrant: (r) =>
-          r['version'] == '2026-11' && r['updated_at'] == grant,
+          _isAcceptedHealthGrant(r, updatedAt: grant),
       onDenied: () => denied = true,
       onExpiry: (value) {
         expires = value;
@@ -794,9 +831,13 @@ class HealthSync {
     s['paid_until'] = expires!.millisecondsSinceEpoch;
     s['collection_from'] = boundary;
     s.remove('pending_end');
+    s.remove('grant_version');
     s['cursor'] = boundary;
     await _save(s);
     _check(gen);
+    // The pending round has now become a durable `on` setting; only here is
+    // the receipt's local grant decision published.
+    if (grantVersion is int) _publishAcceptedGrant(grantVersion);
     _restored = true;
   }
 

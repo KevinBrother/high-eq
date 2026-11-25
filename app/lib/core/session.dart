@@ -96,6 +96,97 @@ class Sessions {
   final Map<AccountScope, Map<String, Future<void>>> _exclusiveTails = {};
   final _identity = ValueNotifier<AccountScope?>(null);
   ValueListenable<AccountScope?> get identity => _identity;
+  // In-process consent decisions for the active account. Only explicit write
+  // receipts advance a purpose version, so a stale deny observation cannot
+  // invalidate a later successful receipt. Account transitions reset this state.
+  final _consentWithdrawals = ValueNotifier<Set<String>>(const {});
+  ValueListenable<Set<String>> get consentWithdrawals => _consentWithdrawals;
+  final Map<String, int> _consentDecisionVersion = {};
+  final Set<String> _consentWithdrawn = {};
+  // Local voice cleanup marker, mirrored synchronously for the summary page.
+  // It survives failed consent syncs and clears only after a successful grant
+  // or a fully synced revocation.
+  final _voiceRevoked = ValueNotifier<bool>(false);
+  ValueListenable<bool> get voiceRevocation => _voiceRevoked;
+  final _withdrawalIntentRevision = ValueNotifier<int>(0);
+  ValueListenable<int> get withdrawalIntentRevision =>
+      _withdrawalIntentRevision;
+
+  /// Snapshot used to fence a baseline request against later decisions.
+  Map<String, int> consentVersions() =>
+      {..._consentDecisionVersion};
+
+  int consentVersion(String purpose) => _consentDecisionVersion[purpose] ?? 0;
+
+  bool _isActiveScope(AccountScope scope) => identical(_active, scope);
+
+  void _publishConsent() {
+    _consentWithdrawals.value = Set.unmodifiable(_consentWithdrawn);
+  }
+
+  void _recordConsentDecision(String purpose, {required bool withdrawn}) {
+    if (purpose != 'health' && purpose != 'voice') return;
+    _consentDecisionVersion[purpose] =
+        (_consentDecisionVersion[purpose] ?? 0) + 1;
+    if (withdrawn) {
+      _consentWithdrawn.add(purpose);
+    } else {
+      _consentWithdrawn.remove(purpose);
+    }
+    _publishConsent();
+  }
+
+  /// A withdrawal decided in this process for [scope]. A receipt captured
+  /// before a newer decision carries [expectedVersion] and is dropped.
+  void noteConsentWithdrawn(
+    AccountScope scope,
+    String purpose, {
+    int? expectedVersion,
+  }) {
+    if (!_isActiveScope(scope)) return;
+    if (expectedVersion != null && expectedVersion != consentVersion(purpose)) {
+      return;
+    }
+    _recordConsentDecision(purpose, withdrawn: true);
+  }
+
+  /// Only an explicit grant clears a local withdrawal mask. Consent reads never
+  /// clear it: a stale 200 must not override a confirmed write.
+  void noteConsentGranted(
+    AccountScope scope,
+    String purpose, {
+    int? expectedVersion,
+  }) {
+    if (!_isActiveScope(scope)) return;
+    if (expectedVersion != null && expectedVersion != consentVersion(purpose)) {
+      return;
+    }
+    _recordConsentDecision(purpose, withdrawn: false);
+  }
+
+  /// Applies a consent-list observation only when no explicit decision has
+  /// happened since that read started. Observations never advance the version:
+  /// a receipt sent before the observation must still win when it is the newer
+  /// explicit user decision.
+  void noteObservedWithdrawal(
+    AccountScope scope,
+    String purpose,
+    int expectedVersion,
+  ) {
+    if (!_isActiveScope(scope)) return;
+    if (expectedVersion != consentVersion(purpose)) return;
+    if (purpose != 'health' && purpose != 'voice') return;
+    if (!_consentWithdrawn.add(purpose)) return;
+    _publishConsent();
+  }
+
+  /// Mirrors the account's durable local voice revocation marker. A failed
+  /// consent sync keeps this true so the summary cannot show voice rows.
+  void noteVoiceRevoked(AccountScope scope, bool value) {
+    if (!_isActiveScope(scope)) return;
+    if (_voiceRevoked.value == value) return;
+    _voiceRevoked.value = value;
+  }
   AccountScope? get _active => _identity.value;
   SecretKey? _key;
   Tokens? _tokens;
@@ -202,6 +293,11 @@ class Sessions {
     _unauthorizedScope = unauthorizedScope;
     _tokens = null;
     _key = null;
+    _consentDecisionVersion.clear();
+    _consentWithdrawn.clear();
+    _consentWithdrawals.value = const {};
+    _voiceRevoked.value = false;
+    _withdrawalIntentRevision.value++;
     _growthInvalidatedAccount = null;
     _growthRevision = 0;
     // Enqueue before notifying listeners, which may synchronously start the
@@ -874,6 +970,7 @@ class Sessions {
         !_persistedUnknownWithdrawals.contains(scope.account)) {
       return;
     }
+    if (added) _withdrawalIntentRevision.value++;
     await _persistCurrent();
   });
 
@@ -964,10 +1061,14 @@ class Sessions {
     final previousUnknownKey = _unknownWithdrawalsKey;
     if (_withdrawals.isEmpty) _withdrawalsKey = null;
     if (_unknownWithdrawals.isEmpty) _unknownWithdrawalsKey = null;
+    if (removedWithdrawal) _withdrawalIntentRevision.value++;
     try {
       await _persistCurrent();
     } on Object {
-      if (removedWithdrawal) _withdrawals.add(scope.account);
+      if (removedWithdrawal) {
+        _withdrawals.add(scope.account);
+        _withdrawalIntentRevision.value++;
+      }
       if (removedUnknown) _unknownWithdrawals.add(scope.account);
       _withdrawalsKey = previousWithdrawalsKey;
       _unknownWithdrawalsKey = previousUnknownKey;
