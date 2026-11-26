@@ -207,7 +207,7 @@ class _MemberState extends State<MemberPage> with WidgetsBindingObserver {
         const Divider(height: 32),
         Text('会员包含什么', style: Theme.of(context).textTheme.titleLarge),
         const Text(
-          '不限次对练、回复助手和文字复盘，更多关系人、个性化计划、录音与心率对齐回放，以及按对象和场景汇总的情绪画像。使用传感器前另行征求同意。',
+          '不限次对练、回复助手和文字复盘，更多关系人、个性化计划，以及按对象和场景汇总的情绪画像。使用传感器前另行征求同意。',
         ),
         if (widget.onOpenEmotion case final openEmotion?)
           ListTile(

@@ -31,6 +31,13 @@ class _Rights extends MemberStore {
       throw const ApiFailure(409, 'conflict', '不属于当前账号', false);
 }
 
+class _SnapshotRights extends MemberStore {
+  _SnapshotRights(super.api, super.scope, this.snapshot);
+  final Json snapshot;
+  @override
+  Future<Json> rights() async => snapshot;
+}
+
 class _DeferredRights extends MemberStore {
   _DeferredRights(super.api, super.scope);
   final requests = <Completer<Json>>[];
@@ -141,6 +148,36 @@ void main() {
       expect(find.textContaining('权益不会转移'), findsOneWidget);
       expect(find.text('退出并验证原账号'), findsOneWidget);
       expect(session.active, a);
+    });
+  }
+
+  // 默认构建不含回放源，会员页的套餐介绍不得把对齐回放说成当前可用。
+  for (final member in [false, true]) {
+    testWidgets('会员权益文案不承诺未开放的对齐回放 (${member ? '有效会员' : '免费用户'})', (
+      t,
+    ) async {
+      await t.pumpWidget(
+        MaterialApp(
+          home: MemberPage(
+            _SnapshotRights(
+              AppApi(Uri.https('example.invalid'), ExampleTransport(), session),
+              a,
+              _quota(member ? null : 0),
+            ),
+          ),
+        ),
+      );
+      await t.pumpAndSettle();
+      expect(
+        find.text(member ? '对练 · 不限次' : '对练 · 剩余 0 次'),
+        findsOneWidget,
+      );
+      expect(find.text('会员包含什么'), findsOneWidget);
+      expect(find.textContaining('不限次对练、回复助手和文字复盘'), findsOneWidget);
+      expect(find.textContaining('个性化计划'), findsOneWidget);
+      expect(find.textContaining('情绪画像'), findsOneWidget);
+      expect(find.textContaining('使用传感器前另行征求同意'), findsOneWidget);
+      expect(find.textContaining('对齐回放'), findsNothing);
     });
   }
 }
