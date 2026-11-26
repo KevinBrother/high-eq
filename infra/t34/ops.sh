@@ -104,33 +104,41 @@ alert() {
     return 1
   }
   if ! curl --fail --silent --show-error --max-time 10 --retry 2 --retry-delay 1 \
-    -H 'Content-Type: application/json' \
+    --output /dev/null -H 'Content-Type: application/json' \
     --data "{\"source\":\"t34-cost-monitor\",\"status\":\"$status\"}" \
-    "$ALERT_WEBHOOK"; then
-    printf 'alert_delivery_failed status=%s webhook=%s\n' "$status" "$ALERT_WEBHOOK" >&2
+    "$ALERT_WEBHOOK" 2>/dev/null; then
+    printf 'alert_delivery_failed status=%s\n' "$status" >&2
     return 1
   fi
 }
 
 monitor_once() {
   if raw=$(psql -XqAt -v ON_ERROR_STOP=1 -f /ops/cost.sql 2>/dev/null); then
-    statuses=$(printf '%s\n' "$raw" | tr ',' '\n' | awk 'NF')
+    statuses=$(printf '%s\n' "$raw" | tr ',' '\n' | awk 'length($0) > 0')
   else
     statuses=monitor_unavailable
   fi
   [ -n "$statuses" ] || statuses=normal
-  failed=0
-  for status in $statuses; do
-    case "$status" in
-      normal) ;;
-      cost_anomaly|unpriced|monitor_unavailable)
-        if ! alert "$status"; then failed=1; fi
-        ;;
-      *) printf 'monitor_invalid_status\n' >&2; failed=1 ;;
-    esac
-  done
-  printf 'ai_cost=%s sink=webhook\n' "$(printf '%s\n' "$statuses" | paste -sd, -)"
-  [ "$failed" -eq 0 ]
+  printf '%s\n' "$statuses" | {
+    failed=0
+    summary=
+    while IFS= read -r status; do
+      case "$status" in
+        normal) ;;
+        cost_anomaly|unpriced|monitor_unavailable)
+          if ! alert "$status"; then failed=1; fi
+          ;;
+        *)
+          printf 'monitor_invalid_status\n' >&2
+          failed=1
+          status=monitor_invalid_status
+          ;;
+      esac
+      summary=${summary}${summary:+,}$status
+    done
+    printf 'ai_cost=%s sink=webhook\n' "$summary"
+    [ "$failed" -eq 0 ]
+  }
 }
 
 # One-shot staging readiness check, separate from the periodic cost alerts.

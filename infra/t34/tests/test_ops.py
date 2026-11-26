@@ -55,6 +55,87 @@ class OpsContract(unittest.TestCase):
         self.assertEqual(len(calls.splitlines()), 2,
                          'one failed delivery must not suppress the other independent alert')
 
+    def test_monitor_emits_only_status(self):
+        allowed_status = {'normal', 'cost_anomaly', 'unpriced', 'monitor_unavailable',
+                          'monitor_invalid_status'}
+        for curl_code in (0, 22):
+            with self.subTest(curl_code=curl_code), tempfile.TemporaryDirectory() as tmp:
+                bin_dir = Path(tmp) / 'bin'
+                bin_dir.mkdir()
+                self.fake(bin_dir, 'psql', 'printf "cost_anomaly,unpriced\\n"\n')
+                self.fake(bin_dir, 'curl',
+                          'case " $* " in *" --output /dev/null "*) ;; '
+                          '*) printf "synthetic-response-body\\n" ;; esac\n'
+                          'printf "synthetic-curl-diagnostic %s\\n" "$*" >&2\n'
+                          'exit "$CURL_CODE"\n')
+                env = os.environ | {
+                    'PATH': f'{bin_dir}:{os.environ["PATH"]}',
+                    'ALERT_WEBHOOK': 'http://alert-sink:8080/alerts',
+                    'CURL_CODE': str(curl_code),
+                }
+                result = subprocess.run(['sh', str(OPS), 'monitor-once'], env=env, text=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                for line in result.stdout.splitlines():
+                    if line.startswith('ai_cost='):
+                        self.assertTrue(line.endswith(' sink=webhook'), line)
+                        statuses = line[len('ai_cost='):-len(' sink=webhook')]
+                        self.assertLessEqual(set(statuses.split(',')), allowed_status, line)
+                    else:
+                        self.assertRegex(line, r'^alert_(delivery_failed|webhook_missing) status=[a-z_]+$')
+                self.assertNotIn('http://alert-sink:8080/alerts', result.stdout)
+                self.assertNotIn('synthetic-response-body', result.stdout)
+                self.assertNotIn('synthetic-curl-diagnostic', result.stdout)
+                if curl_code:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('alert_delivery_failed status=', result.stdout)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stdout)
+        normal, _ = self.monitor('normal')
+        self.assertEqual(normal.returncode, 0, normal.stdout)
+        self.assertEqual(normal.stdout, 'ai_cost=normal sink=webhook\n')
+        empty, _ = self.monitor('')
+        self.assertEqual(empty.returncode, 0, empty.stdout)
+        self.assertEqual(empty.stdout, 'ai_cost=normal sink=webhook\n')
+        for blank in (' ', '\t'):
+            with self.subTest(blank=blank):
+                result, _ = self.monitor(blank)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(result.stdout,
+                                 'monitor_invalid_status\n'
+                                 'ai_cost=monitor_invalid_status sink=webhook\n')
+        failed, _ = self.monitor('cost_anomaly,unpriced', curl_code=22)
+        self.assertEqual(failed.stdout,
+                         'alert_delivery_failed status=cost_anomaly\n'
+                         'alert_delivery_failed status=unpriced\n'
+                         'ai_cost=cost_anomaly,unpriced sink=webhook\n')
+        for unknown in ('synthetic_unknown', 'bad status', 'bad\tstatus', 'normal unpriced',
+                        ' ', '\t'):
+            with self.subTest(unknown=unknown), tempfile.TemporaryDirectory() as tmp:
+                bin_dir = Path(tmp) / 'bin'
+                bin_dir.mkdir()
+                log = Path(tmp) / 'curl.log'
+                self.fake(bin_dir, 'psql', 'printf "%s\\n" "$FAKE_STATUS"\n')
+                self.fake(bin_dir, 'curl', 'printf "%s\\n" "$*" >> "$CURL_LOG"\n')
+                env = os.environ | {
+                    'PATH': f'{bin_dir}:{os.environ["PATH"]}',
+                    'ALERT_WEBHOOK': 'http://alert-sink:8080/alerts',
+                    'FAKE_STATUS': f'cost_anomaly,{unknown},unpriced',
+                    'CURL_LOG': str(log),
+                }
+                mixed = subprocess.run(['sh', str(OPS), 'monitor-once'], env=env, text=True,
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                self.assertNotEqual(mixed.returncode, 0, mixed.stdout)
+                if unknown.strip():
+                    self.assertNotIn(unknown, mixed.stdout)
+                self.assertEqual(mixed.stdout,
+                                 'monitor_invalid_status\n'
+                                 'ai_cost=cost_anomaly,monitor_invalid_status,unpriced sink=webhook\n')
+                calls = log.read_text()
+                self.assertEqual(len(calls.splitlines()), 2,
+                                 'unknown status must not suppress the flanking valid alerts')
+                self.assertIn('cost_anomaly', calls)
+                self.assertIn('unpriced', calls)
+
     def test_consumer_readiness_proves_delivery_even_when_psql_is_normal(self):
         for curl_code, http_status, received in ((22, '000', False), (0, '200', False),
                                                   (0, '202', False), (0, '202', True)):

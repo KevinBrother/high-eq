@@ -138,7 +138,7 @@ D13 只删除 `chat_imports.received_at <= now−24h` 的行，事务客户端�
 
 | 对象 | 取证/周期 | 留存与边界 |
 |---|---|---|
-| AI 成本 | `monitor` 每 300 秒只读 `ai_calls.started_at,cost_cny`，按上海自然日比较今日和之前七个完整日：`7 × 今日 > 2 × 前七日总和`。已知成本异常和未知价分别输出，互不遮蔽；离线用例锁定真实 7 条状态顺序 `normal, cost_anomaly, cost_anomaly, unpriced, normal, cost_anomaly, unpriced` | 每个非 `normal` 状态独立尝试 POST 到 `ALERT_WEBHOOK`，前一次失败不跳过同轮其他状态；任一次投递失败都令进程非零并打印 `alert_delivery_failed`。合成验收只用 internal 网络中的无日志 sink 计数，不使用真实值班路由。 |
+| AI 成本 | `monitor` 每 300 秒只读 `ai_calls.started_at,cost_cny`，按上海自然日比较今日和之前七个完整日：`7 × 今日 > 2 × 前七日总和`。已知成本异常和未知价分别输出，互不遮蔽；离线用例锁定真实 7 条状态顺序 `normal, cost_anomaly, cost_anomaly, unpriced, normal, cost_anomaly, unpriced` | 每个非 `normal` 状态独立尝试 POST 到 `ALERT_WEBHOOK`，前一次失败不跳过同轮其他状态；任一次投递失败都令进程非零并打印 `alert_delivery_failed`。监控 stdout/stderr 只输出状态与固定失败标志，不透出目标地址、响应体或 curl 诊断。合成验收只用 internal 网络中的无日志 sink 计数，不使用真实值班路由。 |
 | 本地告警 sink | `/alerts` 丢弃正文并计数，`/health` 返回计数；健康检查与验收读取均不记录 payload | 只用于自动化证明“发生了独立投递”。生产值班系统、接收人、重试策略、静默和升级时限均未配置、未验证。 |
 | API/容器日志 | T04 字段白名单；Nginx 不记访问日志；DB、登记、drill、permit 关闭容器日志 | 有界 `1 MiB × 2`，禁止采集正文、URL 参数、token 或散发原始 dump、登记和 ZIP。 |
 | PG17 业务库 | `backup` 每 24h 执行 `pg_dump -Fc`，临时目录校验后原子改名；健康检查要求最新快照开始时间不超过 26h | 绝对期限 45×24h，从 dump 开始计算；日扫提前一天清理，恢复入口再次拒绝到期包。`restart: unless-stopped` 使 dump 失败后的 supervisor 可被 healthcheck 识别。RPO 目标 24h，只在连续成功时成立。 |
