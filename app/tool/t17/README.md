@@ -44,4 +44,28 @@ go test -count=1 -v -tags integration,t17resume \
   -run '^TestT17FirstAssessmentResumeJourney$' ./internal/service
 ```
 
+## 维护者一键复验
+
+不掌握作者工位的维护者可从干净检出单独跑这一项，不需要 Docker、已启动的服务、`.env` 或任何真实凭据；不触发安卓和其他卡的工作流。以下步骤都从仓库根目录开始。
+
+复验前先准备（这一步允许联网安装依赖；真正的旅程本身不需要联网，以 `GOPROXY=off` 运行）：
+
+1. `python3`：入口和 T27 装配都由它直接执行，缺少时立即退出。
+2. Go 1.26 与模块缓存：准备阶段在 `server/` 执行 `go mod download`。复验固定 `GOPROXY=off`，只读继承的 `GOMODCACHE`（未设置时为 `~/go/pkg/mod`）；预下载时须使用同一 `GOMODCACHE`，否则具名用例会在依赖解析阶段失败。
+3. Flutter 3.38.10 SDK 的工具缓存与 app 锁定依赖：先准备安装好的 SDK（含 `bin/cache`），再在 `app/` 执行 `flutter pub get --enforce-lockfile`，生成 `app/.dart_tool/package_config.json` 和 `package_graph.json`。离线复验不会替空缓存补齐这些文件。
+4. PostgreSQL 17 与支持 `WAITAOF` 的 Redis 二进制（CI 用 `app/tool/t27/install_redis.sh` 构建 8.2.0）。
+5. 可用的非 root 账号：能对 PG17 执行 `initdb`、能监听回环端口，且 `TMPDIR` 与工作目录可写。
+
+已有环境可直接复用上述缓存和二进制，无需重复下载。
+
+```sh
+bash app/tool/t17/verify_resume.sh \
+  --pg-bin /path/to/postgresql-17/bin \
+  --redis /path/to/redis-server
+```
+
+入口只接受 `--pg-bin` 与 `--redis`，拒绝 `--ledger-only` 等通用预检参数。它复用 T27 `history_journey.py` 的随机回环 PG17、普通缓存 Redis、独立 AOF 账本 Redis、`WAITAOF` 预检和退出清理，只把 Go 用例换成 `TestT17FirstAssessmentResumeJourney`（`integration,t17resume`，显式 `T17_DISPOSABLE=yes`）；`flutter` 和 `go` 从 `PATH` 解析。退出 `0` 必须同时有第一进程 `entered count=0`、第二进程 `entered count=1 status=200`、结果页总分与四轴、具名 Go `--- PASS:`；skip、用例未运行或只有部分 Flutter 阶段都不会变绿。运行日志在 `build/t27-history/run-*/journey.log`，临时状态随进程退出删除。
+
+CI 入口 `.github/workflows/t17-resume.yml` 仅 `workflow_dispatch` 手动触发、只读权限，并在准备阶段按同一依赖预下载与安装。本地通过不等于云端已运行，须以实际运行回执为准。上述冷环境前置是按入口与 T27 装配的实际依赖静态核对补齐的，尚未在全新联网环境实测。
+
 Go 入口为两个 Flutter 子进程单独开一个真实 HTTP 监听，只统计 `POST /v1/assessments` 的次数和响应状态：第一次中断前必须为 0，第二次一次点击后必须为 1 且状态 200。计数在请求进入处理器时按当前阶段归属，响应状态单独记录，因此跨阶段的慢请求不会换桶。种子和提交后的 Go 回读不经过该监听，不计入。第二次进程还会从结果页读出总分和四轴的实际显示数字，交给 Go 与同一次提交的题库评分对账；日志只含数字/状态，不含题目正文或票据。

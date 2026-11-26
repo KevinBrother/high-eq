@@ -1,0 +1,87 @@
+name: T17 first-assessment resume
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with: {persist-credentials: false}
+      - name: Require T17 resume sources
+        run: |
+          missing=()
+          for file in \
+            server/internal/service/t17_first_resume_journey_integration_test.go \
+            app/tool/t17/resume_journey_test.dart \
+            app/tool/t17/verify_resume.sh \
+            app/tool/t26/transport.dart; do
+            [[ -f "$file" ]] || missing+=("$file")
+          done
+          if (( ${#missing[@]} )); then
+            {
+              echo '## T17 resume verification blocked'
+              echo
+              echo 'Required first-assessment resume source is missing; this run is not a fixture pass.'
+              printf -- '- `%s`\n' "${missing[@]}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with: {flutter-version: '3.38.10', cache: true}
+      - name: Install locked Flutter dependencies
+        id: flutter_deps
+        working-directory: app
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter precache --linux
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Prepare Go modules for offline journey
+        id: go_modules
+        working-directory: server
+        run: go mod download
+      - name: Install native PostgreSQL 17 and Redis binaries
+        id: native_stack
+        run: |
+          sudo apt-get update
+          if ! apt-cache show postgresql-17 >/dev/null 2>&1; then
+            sudo install -d -m 0755 /usr/share/postgresql-common/pgdg
+            sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+              -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+            echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' \
+              | sudo tee /etc/apt/sources.list.d/t17-pgdg.list >/dev/null
+            sudo apt-get update
+          fi
+          sudo apt-get install -y --no-install-recommends postgresql-17 build-essential
+          bash app/tool/t27/install_redis.sh "$RUNNER_TEMP/t17-redis"
+      - name: First-assessment resume journey
+        id: resume
+        if: ${{ !cancelled() && steps.flutter_deps.outcome == 'success' && steps.go_modules.outcome == 'success' && steps.native_stack.outcome == 'success' }}
+        run: |
+          bash app/tool/t17/verify_resume.sh \
+            --pg-bin /usr/lib/postgresql/17/bin \
+            --redis "$RUNNER_TEMP/t17-redis/redis-server"
+      - name: T17 verification summary
+        if: ${{ always() }}
+        env:
+          RESUME_OUTCOME: ${{ steps.resume.outcome }}
+        run: |
+          case "$RESUME_OUTCOME" in
+            success) status=PASS ;;
+            failure) status=FAIL ;;
+            cancelled) status=CANCELLED ;;
+            *) status='NOT RUN' ;;
+          esac
+          {
+            echo '## T17 verification'
+            echo
+            echo '| Check | Status |'
+            echo '| --- | --- |'
+            printf '| `TestT17FirstAssessmentResumeJourney` | %s |\n' "$status"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [[ "$RESUME_OUTCOME" == success ]]
