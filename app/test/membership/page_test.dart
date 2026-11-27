@@ -153,9 +153,7 @@ void main() {
 
   // 默认构建不含回放源，会员页的套餐介绍不得把对齐回放说成当前可用。
   for (final member in [false, true]) {
-    testWidgets('会员权益文案不承诺未开放的对齐回放 (${member ? '有效会员' : '免费用户'})', (
-      t,
-    ) async {
+    testWidgets('会员权益文案不承诺未开放的对齐回放 (${member ? '有效会员' : '免费用户'})', (t) async {
       await t.pumpWidget(
         MaterialApp(
           home: MemberPage(
@@ -168,10 +166,7 @@ void main() {
         ),
       );
       await t.pumpAndSettle();
-      expect(
-        find.text(member ? '对练 · 不限次' : '对练 · 剩余 0 次'),
-        findsOneWidget,
-      );
+      expect(find.text(member ? '对练 · 不限次' : '对练 · 剩余 0 次'), findsOneWidget);
       expect(find.text('会员包含什么'), findsOneWidget);
       expect(find.textContaining('不限次对练、回复助手和文字复盘'), findsOneWidget);
       expect(find.textContaining('个性化计划'), findsOneWidget);

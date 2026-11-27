@@ -274,6 +274,7 @@ class HealthSync {
     if (!accepted) throw const FormatException();
     return record;
   }
+
   // A grant request may have failed before it reached T05. Absence already
   // satisfies withdrawal; otherwise revoke the actual current policy version.
   Future<void> _syncWithdrawal(int gen) async {
@@ -363,8 +364,7 @@ class HealthSync {
         scope,
         CollectionPurpose.health,
         systemGranted: () async => true,
-        acceptsGrant: (r) =>
-            _isAcceptedHealthGrant(r, updatedAt: stamp),
+        acceptsGrant: (r) => _isAcceptedHealthGrant(r, updatedAt: stamp),
         onExpiry: (expiry) => paidUntil = expiry,
         beginRead: () {
           _check(gen);
@@ -577,8 +577,7 @@ class HealthSync {
           scope,
           CollectionPurpose.health,
           systemGranted: port.queryable,
-          acceptsGrant: (r) =>
-              _isAcceptedHealthGrant(r, updatedAt: s['grant']),
+          acceptsGrant: (r) => _isAcceptedHealthGrant(r, updatedAt: s['grant']),
           onDenied: () => denied = true,
           onExpiry: (expires) => _trackExpiry(gen, s, expires),
           beginRead: () {
@@ -801,8 +800,7 @@ class HealthSync {
       scope,
       CollectionPurpose.health,
       systemGranted: port.queryable,
-      acceptsGrant: (r) =>
-          _isAcceptedHealthGrant(r, updatedAt: grant),
+      acceptsGrant: (r) => _isAcceptedHealthGrant(r, updatedAt: grant),
       onDenied: () => denied = true,
       onExpiry: (value) {
         expires = value;

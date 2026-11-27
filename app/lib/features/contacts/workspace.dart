@@ -729,7 +729,9 @@ class _WorkspaceState extends State<ContactsWorkspace>
                               if (widget.demo)
                                 Text(
                                   '模拟手记 · 不会发送数据',
-                                  style: Theme.of(context).textTheme.labelMedium,
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.labelMedium,
                                 ),
                               busy
                                   ? const LinearProgressIndicator()
@@ -738,7 +740,8 @@ class _WorkspaceState extends State<ContactsWorkspace>
                               IgnorePointer(
                                 ignoring: busy,
                                 child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
                                   children: _content(context, b, c),
                                 ),
                               ),

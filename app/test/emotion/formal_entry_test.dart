@@ -658,7 +658,8 @@ void main() {
     await pumpUntilCondition(
       tester,
       () => find.text('健康数据授权已关闭。').evaluate().length == 2,
-      reason: 'a withdrawal committed after the consent read must hide heart rate and HRV',
+      reason:
+          'a withdrawal committed after the consent read must hide heart rate and HRV',
     );
     expect(heart210, findsNothing);
     expect(find.text('9 次读数 · 3 个采样日'), findsNothing);
@@ -683,9 +684,10 @@ void main() {
           {'purpose': 'voice', 'granted': false},
         ],
       }),
-      AppOp.getBaselines => baselineStatus == 200
-          ? response(_baselineFixture(210))
-          : response({'code': 'forbidden'}, baselineStatus),
+      AppOp.getBaselines =>
+        baselineStatus == 200
+            ? response(_baselineFixture(210))
+            : response({'code': 'forbidden'}, baselineStatus),
       _ => ordinary(op, req),
     };
     await mount(tester);
@@ -830,100 +832,102 @@ void main() {
     },
   );
 
-  testOnPhone(
-    'T32B offline voice revocation masks formal voice rows at once',
-    (tester) async {
-      serve = (op, req) async {
-        if (op == AppOp.listConsents) {
-          return response({
-            'items': [
-              {'purpose': 'health', 'granted': true},
-              {'purpose': 'voice', 'granted': true},
-            ],
-          });
-        }
-        if (op == AppOp.setConsent) {
-          return response({'code': 'unavailable'}, 503);
-        }
-        if (op == AppOp.getBaselines) return response(_baselineFixture(210));
-        return ordinary(op, req);
-      };
-      await mount(tester);
-      await navigate(tester, '/me');
-      await openMemberSummary(tester);
-      await reveal(tester, summaryPage, baselineTitle);
-      await pumpUntil(tester, heart210);
-      expect(find.text('今日 1875 / 1800 秒'), findsOneWidget);
-      expect(find.text('今日 35 / 1800 秒'), findsOneWidget);
+  testOnPhone('T32B offline voice revocation masks formal voice rows at once', (
+    tester,
+  ) async {
+    serve = (op, req) async {
+      if (op == AppOp.listConsents) {
+        return response({
+          'items': [
+            {'purpose': 'health', 'granted': true},
+            {'purpose': 'voice', 'granted': true},
+          ],
+        });
+      }
+      if (op == AppOp.setConsent) {
+        return response({'code': 'unavailable'}, 503);
+      }
+      if (op == AppOp.getBaselines) return response(_baselineFixture(210));
+      return ordinary(op, req);
+    };
+    await mount(tester);
+    await navigate(tester, '/me');
+    await openMemberSummary(tester);
+    await reveal(tester, summaryPage, baselineTitle);
+    await pumpUntil(tester, heart210);
+    expect(find.text('今日 1875 / 1800 秒'), findsOneWidget);
+    expect(find.text('今日 35 / 1800 秒'), findsOneWidget);
 
-      // Same entry as the voice page's confirmation button, with consent
-      // writes offline.
-      final controller = VoiceController(
-        sessions: sessions,
-        scope: scope,
-        access: ApiVoiceAccess(api),
-        uploader: ApiVoiceUploader(api),
-        platform: MethodChannelVoiceCapture(),
-        store: VoiceWindowStore(sessions, scope),
-      );
-      addTearDown(controller.dispose);
-      bool? complete;
-      Object? failure;
-      await tester.runAsync(() async {
-        unawaited(
-          controller.revokeVoice().then((value) {
+    // Same entry as the voice page's confirmation button, with consent
+    // writes offline.
+    final controller = VoiceController(
+      sessions: sessions,
+      scope: scope,
+      access: ApiVoiceAccess(api),
+      uploader: ApiVoiceUploader(api),
+      platform: MethodChannelVoiceCapture(),
+      store: VoiceWindowStore(sessions, scope),
+    );
+    addTearDown(controller.dispose);
+    bool? complete;
+    Object? failure;
+    await tester.runAsync(() async {
+      unawaited(
+        controller.revokeVoice().then(
+          (value) {
             complete = value;
-          }, onError: (Object error) {
+          },
+          onError: (Object error) {
             failure = error;
-          }),
-        );
-      });
-      await pumpUntilCondition(
-        tester,
-        () => sessions.voiceRevocation.value,
-        reason: 'the durable local marker must be published at once',
+          },
+        ),
       );
-      await pumpUntilCondition(
-        tester,
-        () => complete != null || failure != null,
-        reason: 'the offline revocation attempt must settle',
-      );
-      expect(failure, isNull);
-      expect(complete, isFalse);
-      await tester.pump();
+    });
+    await pumpUntilCondition(
+      tester,
+      () => sessions.voiceRevocation.value,
+      reason: 'the durable local marker must be published at once',
+    );
+    await pumpUntilCondition(
+      tester,
+      () => complete != null || failure != null,
+      reason: 'the offline revocation attempt must settle',
+    );
+    expect(failure, isNull);
+    expect(complete, isFalse);
+    await tester.pump();
 
-      // The durable local marker is known immediately; no baseline GET is
-      // needed to hide the three voice rows, and health stays visible.
-      expect(sessions.voiceRevocation.value, isTrue);
-      expect(controller.voiceRevocationPending, isTrue);
-      expect(find.text('语音特征授权已关闭。'), findsNWidgets(3));
-      expect(find.text('今日 1875 / 1800 秒'), findsNothing);
-      expect(find.text('今日 35 / 1800 秒'), findsNothing);
-      expect(heart210, findsOneWidget);
-      expect(find.text('9 次读数 · 3 个采样日'), findsOneWidget);
-      expect(calls.where((op) => op == AppOp.getBaselines), hasLength(1));
-      expect(calls.where((op) => op == AppOp.setConsent), hasLength(2));
+    // The durable local marker is known immediately; no baseline GET is
+    // needed to hide the three voice rows, and health stays visible.
+    expect(sessions.voiceRevocation.value, isTrue);
+    expect(controller.voiceRevocationPending, isTrue);
+    expect(find.text('语音特征授权已关闭。'), findsNWidgets(3));
+    expect(find.text('今日 1875 / 1800 秒'), findsNothing);
+    expect(find.text('今日 35 / 1800 秒'), findsNothing);
+    expect(heart210, findsOneWidget);
+    expect(find.text('9 次读数 · 3 个采样日'), findsOneWidget);
+    expect(calls.where((op) => op == AppOp.getBaselines), hasLength(1));
+    expect(calls.where((op) => op == AppOp.setConsent), hasLength(2));
 
-      // A manual re-read while the server still reports granted voice must not
-      // restore the rows: the local marker outlives the failed sync.
-      await tapIn(tester, summaryPage, baselineRetry);
-      await pumpUntilCondition(
-        tester,
-        () =>
-            calls.where((op) => op == AppOp.getBaselines).length == 2 &&
-            find.text('语音特征授权已关闭。').evaluate().length == 3 &&
-            heart210.evaluate().isNotEmpty,
-        reason: 'the manual re-read completed but must stay masked',
-      );
-      await tester.pump();
-      expect(find.text('语音特征授权已关闭。'), findsNWidgets(3));
-      expect(find.text('今日 1875 / 1800 秒'), findsNothing);
-      expect(find.text('今日 35 / 1800 秒'), findsNothing);
-      expect(heart210, findsOneWidget);
-      expect(find.text('9 次读数 · 3 个采样日'), findsOneWidget);
-      expect(calls.where((op) => op == AppOp.setConsent), hasLength(2));
-    },
-  );
+    // A manual re-read while the server still reports granted voice must not
+    // restore the rows: the local marker outlives the failed sync.
+    await tapIn(tester, summaryPage, baselineRetry);
+    await pumpUntilCondition(
+      tester,
+      () =>
+          calls.where((op) => op == AppOp.getBaselines).length == 2 &&
+          find.text('语音特征授权已关闭。').evaluate().length == 3 &&
+          heart210.evaluate().isNotEmpty,
+      reason: 'the manual re-read completed but must stay masked',
+    );
+    await tester.pump();
+    expect(find.text('语音特征授权已关闭。'), findsNWidgets(3));
+    expect(find.text('今日 1875 / 1800 秒'), findsNothing);
+    expect(find.text('今日 35 / 1800 秒'), findsNothing);
+    expect(heart210, findsOneWidget);
+    expect(find.text('9 次读数 · 3 个采样日'), findsOneWidget);
+    expect(calls.where((op) => op == AppOp.setConsent), hasLength(2));
+  });
 
   testOnPhone(
     'T32B old false consent read cannot veto a later held regrant receipt',
@@ -1150,21 +1154,20 @@ void main() {
     }
   }
 
-  for (final (label, receipt, acceptsOnServer) in <
-    (String, Map<String, Object?>, bool)
-  >[
-    (
-      'missing version',
-      {'purpose': 'health', 'granted': true, 'updated_at': healthStamp},
-      false,
-    ),
-    (
-      'missing updated_at',
-      {'purpose': 'health', 'version': '2026-11', 'granted': true},
-      false,
-    ),
-    ('server keeps the withdrawal', {...healthRow(true)}, false),
-  ]) {
+  for (final (label, receipt, acceptsOnServer)
+      in <(String, Map<String, Object?>, bool)>[
+        (
+          'missing version',
+          {'purpose': 'health', 'granted': true, 'updated_at': healthStamp},
+          false,
+        ),
+        (
+          'missing updated_at',
+          {'purpose': 'health', 'version': '2026-11', 'granted': true},
+          false,
+        ),
+        ('server keeps the withdrawal', {...healthRow(true)}, false),
+      ]) {
     testOnPhone(
       'T32B rejected health regrant ($label) preserves the local decision',
       (tester) async {
@@ -1507,54 +1510,53 @@ void main() {
     },
   );
 
-  testOnPhone(
-    'T32B late A consent receipt cannot clear B health baseline',
-    (tester) async {
-      serve = (op, req) async {
-        if (op == AppOp.listConsents) {
-          return response({
-            'items': [
-              {'purpose': 'health', 'granted': true},
-              {'purpose': 'voice', 'granted': true},
-            ],
-          });
-        }
-        if (op == AppOp.getBaselines) return response(_baselineFixture(210));
-        return ordinary(op, req);
-      };
-      await mount(tester);
-      final oldScope = scope;
-      AccountScope? next;
-      unawaited(
-        sessions
-            .activate(tokens('synthetic-B', 'access-B'))
-            .then((value) => next = value),
-      );
-      await pumpUntilCondition(
-        tester,
-        () => next != null,
-        reason: 'B must become authoritative before the late receipt',
-      );
-      expect(sessions.active, same(next));
-      await pumpUntil(tester, find.text('暂不测评'));
-      await openMeFromPractice(tester);
-      await openMemberSummary(tester);
-      await pumpUntil(tester, heart210);
-      expect(find.text('9 次读数 · 3 个采样日'), findsOneWidget);
+  testOnPhone('T32B late A consent receipt cannot clear B health baseline', (
+    tester,
+  ) async {
+    serve = (op, req) async {
+      if (op == AppOp.listConsents) {
+        return response({
+          'items': [
+            {'purpose': 'health', 'granted': true},
+            {'purpose': 'voice', 'granted': true},
+          ],
+        });
+      }
+      if (op == AppOp.getBaselines) return response(_baselineFixture(210));
+      return ordinary(op, req);
+    };
+    await mount(tester);
+    final oldScope = scope;
+    AccountScope? next;
+    unawaited(
+      sessions
+          .activate(tokens('synthetic-B', 'access-B'))
+          .then((value) => next = value),
+    );
+    await pumpUntilCondition(
+      tester,
+      () => next != null,
+      reason: 'B must become authoritative before the late receipt',
+    );
+    expect(sessions.active, same(next));
+    await pumpUntil(tester, find.text('暂不测评'));
+    await openMeFromPractice(tester);
+    await openMemberSummary(tester);
+    await pumpUntil(tester, heart210);
+    expect(find.text('9 次读数 · 3 个采样日'), findsOneWidget);
 
-      // A withdrawal receipt captured for the retired A session arrives only
-      // after B is authoritative. It must not mask B's own grant.
-      sessions.noteConsentWithdrawn(oldScope, 'health');
-      await tester.pump();
+    // A withdrawal receipt captured for the retired A session arrives only
+    // after B is authoritative. It must not mask B's own grant.
+    sessions.noteConsentWithdrawn(oldScope, 'health');
+    await tester.pump();
 
-      expect(sessions.active, same(next));
-      expect(sessions.consentWithdrawals.value, isNot(contains('health')));
-      expect(sessions.consentWithdrawals.value, isNot(contains('voice')));
-      expect(heart210, findsOneWidget);
-      expect(find.text('9 次读数 · 3 个采样日'), findsOneWidget);
-      expect(find.text('健康数据授权已关闭。'), findsNothing);
-    },
-  );
+    expect(sessions.active, same(next));
+    expect(sessions.consentWithdrawals.value, isNot(contains('health')));
+    expect(sessions.consentWithdrawals.value, isNot(contains('voice')));
+    expect(heart210, findsOneWidget);
+    expect(find.text('9 次读数 · 3 个采样日'), findsOneWidget);
+    expect(find.text('健康数据授权已关闭。'), findsNothing);
+  });
 
   for (final expired in [false, true]) {
     testOnPhone(

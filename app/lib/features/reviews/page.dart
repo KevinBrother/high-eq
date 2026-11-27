@@ -364,7 +364,8 @@ class _ReviewPageState extends State<ReviewPage> {
       final quota = failure.status == 429;
       setState(() {
         attempt = null;
-        canRetry = !quota &&
+        canRetry =
+            !quota &&
             (moderation ||
                 (failure.retryable ?? false) ||
                 failure.status == 500);
@@ -375,8 +376,7 @@ class _ReviewPageState extends State<ReviewPage> {
                 503 when moderation => '服务暂不可用，可重试',
                 403 => '复盘授权或关系人权限已变更，请检查后重试。',
                 409 => '这次请求与已提交内容不一致，请修改后再试。',
-                500 =>
-                  '暂时无法确认本次结果，可能已生成并计次。请用原请求查看结果。',
+                500 => '暂时无法确认本次结果，可能已生成并计次。请用原请求查看结果。',
                 _ => '连接未完成，可用原请求重试。',
               };
       });

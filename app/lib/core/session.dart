@@ -113,8 +113,7 @@ class Sessions {
       _withdrawalIntentRevision;
 
   /// Snapshot used to fence a baseline request against later decisions.
-  Map<String, int> consentVersions() =>
-      {..._consentDecisionVersion};
+  Map<String, int> consentVersions() => {..._consentDecisionVersion};
 
   int consentVersion(String purpose) => _consentDecisionVersion[purpose] ?? 0;
 
@@ -187,6 +186,7 @@ class Sessions {
     if (_voiceRevoked.value == value) return;
     _voiceRevoked.value = value;
   }
+
   AccountScope? get _active => _identity.value;
   SecretKey? _key;
   Tokens? _tokens;

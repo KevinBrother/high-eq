@@ -83,10 +83,8 @@ Future<void> _pump(WidgetTester tester, _QuotaReviews repo) async {
     MaterialApp(
       home: ReviewPage(key: ValueKey(repo), repo),
       routes: {
-        '/membership': (_) => Scaffold(
-          appBar: AppBar(),
-          body: const Text('会员页占位'),
-        ),
+        '/membership': (_) =>
+            Scaffold(appBar: AppBar(), body: const Text('会员页占位')),
       },
     ),
   );

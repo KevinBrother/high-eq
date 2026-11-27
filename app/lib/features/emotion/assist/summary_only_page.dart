@@ -85,7 +85,9 @@ class _SummaryOnlyPageState extends State<SummaryOnlyPage>
         lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
     WidgetsBinding.instance.addObserver(this);
     widget.api.sessions.identity.addListener(_identityChanged);
-    widget.api.sessions.consentWithdrawals.addListener(_consentWithdrawalsChanged);
+    widget.api.sessions.consentWithdrawals.addListener(
+      _consentWithdrawalsChanged,
+    );
     widget.api.sessions.withdrawalIntentRevision.addListener(
       _consentWithdrawalsChanged,
     );
@@ -366,8 +368,7 @@ class _SummaryOnlyPageState extends State<SummaryOnlyPage>
         widget.api.sessions.hasWithdrawalIntent(widget.scope);
     // A failed voice revocation sync keeps its durable local marker; the
     // summary must not show voice rows until a successful grant clears it.
-    final voice =
-        fenced('voice') || widget.api.sessions.voiceRevocation.value;
+    final voice = fenced('voice') || widget.api.sessions.voiceRevocation.value;
     if (!health && !voice) return progress;
     final heartRate = health ? null : progress.heartRate;
     final hrv = health ? null : progress.hrv;

@@ -111,9 +111,7 @@ void main() {
         final sessions = _MemorySessions(directory);
         await tester.runAsync(() => sessions.activate(tokens(_account)));
         final fixtures =
-            jsonDecode(
-                  File('assets/contract_examples.json').readAsStringSync(),
-                )
+            jsonDecode(File('assets/contract_examples.json').readAsStringSync())
                 as Json;
         final firstDue = DateTime.utc(2026, 11, 21, 8);
         final secondDue = firstDue.add(const Duration(minutes: 1));
