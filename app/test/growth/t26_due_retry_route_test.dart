@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -332,14 +333,14 @@ void main() {
           await settle();
           expect(planRequestTimes.sublist(before), [next]);
           verifyPlan(count);
-          print(
+          debugPrintSynchronously(
             'REFRESH ${next.toIso8601String()} retry_rows=$count ordinary_unchanged=true',
           );
         }
 
         expect(planRequestTimes, [replayTime]);
         verifyPlan(0);
-        print(
+        debugPrintSynchronously(
           'OPEN ${replayTime.toIso8601String()} retry_rows=0 ordinary_unchanged=true',
         );
         await refresh(firstDue, 1);
@@ -358,7 +359,7 @@ void main() {
         await settle();
         expect(secondRow.hitTestable(), findsOneWidget);
         expect(tester.getSemantics(secondRow).label, contains(_secondName));
-        print(
+        debugPrintSynchronously(
           'PRE-TAP NAMES firstName=${jsonEncode(_firstName)} secondName=${jsonEncode(_secondName)}',
         );
 
@@ -378,7 +379,9 @@ void main() {
           expect(find.byType(PracticeChat), findsOneWidget);
           expect(find.text(heading), findsOneWidget);
           expect(creates.last['level_id'], expected);
-          print('CREATE POST /v1/sessions level=$expected chat=$heading');
+          debugPrintSynchronously(
+            'CREATE POST /v1/sessions level=$expected chat=$heading',
+          );
         }
 
         Future<void> backToPlan() async {
@@ -393,7 +396,9 @@ void main() {
           verifyPlan(2);
           expect(rowNamed(_firstName), findsOneWidget);
           expect(rowNamed(_secondName), findsOneWidget);
-          print('BACK GET /v1/plans/today reloaded both names selectable');
+          debugPrintSynchronously(
+            'BACK GET /v1/plans/today reloaded both names selectable',
+          );
         }
 
         await open(firstRow, _firstLevel, '观察练习');

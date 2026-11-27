@@ -88,7 +88,7 @@ Future<void> _waitForRouteSettled(WidgetTester tester, Finder page) async {
       final animation = route?.animation;
       return route != null && (animation == null || animation.isCompleted);
     },
-    label: '${page.description} route transition',
+    label: '${page.describeMatch(Plurality.many)} route transition',
   );
 }
 
