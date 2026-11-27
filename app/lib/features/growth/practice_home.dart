@@ -221,7 +221,9 @@ class _PracticeHomePageState extends State<PracticeHomePage> {
           for (final row in await catalog.levels(scene, null)) {
             final id = row['id'];
             final title = row['title'];
-            if (ids.contains(id) && title is String && title.trim().isNotEmpty) {
+            if (ids.contains(id) &&
+                title is String &&
+                title.trim().isNotEmpty) {
               names[id] = title;
             }
           }
@@ -392,9 +394,10 @@ class _PracticeHomePageState extends State<PracticeHomePage> {
                     message: '可以先完成一项小练习，新的卡片会出现在这里。',
                   )
                 else
-                  for (final card in _cardsExpanded
-                      ? snapshot.cards
-                      : snapshot.cards.take(2)) ...[
+                  for (final card
+                      in _cardsExpanded
+                          ? snapshot.cards
+                          : snapshot.cards.take(2)) ...[
                     _KnowledgeCardTile(
                       card: card,
                       onTap: () => _openCard(card),

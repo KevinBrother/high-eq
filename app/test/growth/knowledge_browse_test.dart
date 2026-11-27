@@ -64,8 +64,9 @@ void main() {
     await _pumpPracticeRoute(tester, repository);
 
     expect(
-      repository.snapshot.plan.items
-          .where((item) => item.contentId == _thirdCard.id),
+      repository.snapshot.plan.items.where(
+        (item) => item.contentId == _thirdCard.id,
+      ),
       isEmpty,
       reason: '第三张卡不应是今日计划项',
     );
@@ -116,9 +117,7 @@ void main() {
 
       await _scrollTo(
         tester,
-        count == 0
-            ? find.text('今天暂无知识卡')
-            : find.text('一张卡只练一个沟通动作，读完就能用。'),
+        count == 0 ? find.text('今天暂无知识卡') : find.text('一张卡只练一个沟通动作，读完就能用。'),
       );
       expect(find.text('查看全部'), findsNothing, reason: '$count 张时不应有多余操作');
       expect(find.text('收起'), findsNothing, reason: '$count 张时不应有多余操作');
@@ -200,8 +199,10 @@ Future<void> _closeCardSheet(WidgetTester tester) async {
   expect(find.byType(CardSheet), findsNothing);
 }
 
-double _scrollPosition(WidgetTester tester) =>
-    tester.state<ScrollableState>(find.byType(Scrollable).first).position.pixels;
+double _scrollPosition(WidgetTester tester) => tester
+    .state<ScrollableState>(find.byType(Scrollable).first)
+    .position
+    .pixels;
 
 Future<void> _scrollTo(WidgetTester tester, Finder target) async {
   await tester.scrollUntilVisible(
