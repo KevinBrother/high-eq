@@ -58,6 +58,7 @@ class _PracticeHomePageState extends State<PracticeHomePage> {
   int _generation = 0;
   int _nameGeneration = 0;
   Map<String, String> _levelNames = const {};
+  bool _cardsExpanded = false;
   ValueListenable<int>? _invalidations;
   bool _suppressInvalidationReload = false;
 
@@ -82,6 +83,7 @@ class _PracticeHomePageState extends State<PracticeHomePage> {
     _generation++;
     _nameGeneration++;
     _levelNames = const {};
+    _cardsExpanded = false;
     _snapshot = null;
     _error = null;
     _loading = true;
@@ -376,8 +378,9 @@ class _PracticeHomePageState extends State<PracticeHomePage> {
                   subtitle: '一张卡只练一个沟通动作，读完就能用。',
                   trailing: snapshot.cards.length > 2
                       ? TextButton(
-                          onPressed: () => _go('/growth'),
-                          child: const Text('看成长'),
+                          onPressed: () =>
+                              setState(() => _cardsExpanded = !_cardsExpanded),
+                          child: Text(_cardsExpanded ? '收起' : '查看全部'),
                         )
                       : null,
                 ),
@@ -389,7 +392,9 @@ class _PracticeHomePageState extends State<PracticeHomePage> {
                     message: '可以先完成一项小练习，新的卡片会出现在这里。',
                   )
                 else
-                  for (final card in snapshot.cards.take(2)) ...[
+                  for (final card in _cardsExpanded
+                      ? snapshot.cards
+                      : snapshot.cards.take(2)) ...[
                     _KnowledgeCardTile(
                       card: card,
                       onTap: () => _openCard(card),
