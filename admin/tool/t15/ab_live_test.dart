@@ -129,7 +129,7 @@ void main() {
     await tester.pump();
     await _until(
       tester,
-      find.text('实验流量 ${percent}%'),
+      find.text('实验流量 $percent%'),
       'experiment split slider',
     );
 
