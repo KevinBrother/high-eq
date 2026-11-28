@@ -15,5 +15,5 @@
 | [工程约定](CONVENTIONS.md) · [变更队列](CHANGES.md) | 技术栈、命名、接口与任务交接 |
 | [数据库模型](schema.md) | 迁移、表职责、生命周期与清理协议 |
 | [T01 交接](tasks/T01.md) · [T02 交接](tasks/T02.md) | 当前工程与数据层的交付及验证边界 |
-| [App OpenAPI](api/app.yaml) · [后台 OpenAPI](api/admin.yaml) · [内部事件目录](api/events.md) | 唯一对外契约、SSE 和内部数据交接；验证步骤见 [T03 交接](tasks/T03.md) |
+| [App OpenAPI](api/app.yaml) · [后台 OpenAPI](api/admin.yaml) · [内部事件目录](api/events.md) | App 与后台的对外契约及 App SSE 以上述两份 YAML 源文件为准；模块间内部事件交接以[事件目录](api/events.md)为准；T03 首版验证记录见 [T03 首版验证记录](tasks/T03.md#t03-first-version-verification) |
 | [本地工具链](local-development.md) | 不覆盖系统 SDK 的 Flutter、Go 和数据库验证入口 |

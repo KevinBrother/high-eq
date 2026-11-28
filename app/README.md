@@ -19,4 +19,4 @@ flutter run -d <设备ID> --dart-define=APP_ENDPOINT=https://api.example.org
 2. 单独同意后逐题作答，点「稍后续答」可暂时离开；从首页的「本次自评与续答」继续。第 16 题之后选场景，提交后可看四轴结果与复测时间。跳过自评不影响其他页面。
 3. 「我的」可查看会员权益、恢复购买或退出。示例模式不会扣款、授予会员或代表平台审核通过。真实服务和商户条件见 [T17 验证与交接](../docs/tasks/T17.md)。
 
-[脚手架、网络与存储入口](../docs/tasks/T16.md) · [App 契约](../docs/api/app.yaml)
+[现行网络与存储调用指引](../docs/tasks/T16.md#t16-current-integration) · [App 契约](../docs/api/app.yaml)
