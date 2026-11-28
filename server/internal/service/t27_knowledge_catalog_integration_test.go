@@ -28,15 +28,29 @@ import (
 // the WLEIS result.
 var t27KnowledgeAnswers = []int{1, 1, 1, 1, 2, 2, 2, 2, 6, 6, 6, 6, 7, 7, 7, 7}
 
-// Formal seed values for the last catalog card (server/content/t26.yaml).
-// They are an independent expectation: the catalog and single-card endpoints
-// must both match these exact strings, so shared summary truncation cannot
-// pass by comparing two responses to each other.
-const (
-	t27KnowledgeLastCard  = "26000000-0000-4000-8000-000000000120"
-	t27KnowledgeLastTitle = "公共场景：发出请求"
-	t27KnowledgeLastBody  = "请求要短、具体、可执行，并给对方一个容易回应的选项。"
-)
+// t27KnowledgeLastSeed reads the last card's id, title and full body from the
+// checked-out formal seed (server/content/t26.yaml) through the same Go YAML
+// loader the scheduler uses. It is an independent expectation: the catalog and
+// single-card endpoints must both match these exact strings, so shared summary
+// truncation cannot pass by comparing two responses to each other, and editing
+// the seed changes the expectation without touching this test.
+func t27KnowledgeLastSeed(t *testing.T) growth.Card {
+	t.Helper()
+	content, err := growth.LoadContent()
+	if err != nil {
+		t.Fatalf("formal content seed is invalid: %v", err)
+	}
+	var last growth.Card
+	for _, card := range content.Cards {
+		if last.ID == uuid.Nil || card.ID.String() > last.ID.String() {
+			last = card
+		}
+	}
+	if last.ID == uuid.Nil || last.Title == "" || last.Body == "" {
+		t.Fatal("formal content seed has no complete last card")
+	}
+	return last
+}
 
 // TestT27KnowledgeCatalogJourney proves that a normal free account can read
 // the real twenty-card catalog from the practice home, including the last
@@ -127,6 +141,7 @@ func TestT27KnowledgeCatalogJourney(t *testing.T) {
 		t.Fatal("today plan card item is missing its identifiers")
 	}
 
+	seed := t27KnowledgeLastSeed(t)
 	var catalog t27KnowledgeCardPage
 	h.json(token, "GET", "cards?limit=20", nil, 200, &catalog)
 	if len(catalog.Items) != 20 {
@@ -151,11 +166,11 @@ func TestT27KnowledgeCatalogJourney(t *testing.T) {
 		}
 	}
 	last := catalog.Items[len(catalog.Items)-1]
-	if last.ID.String() != t27KnowledgeLastCard {
-		t.Fatalf("catalog last card is %s, want the formal seed's 120", last.ID)
+	if last.ID != seed.ID {
+		t.Fatalf("catalog last card is %s, want the formal seed's %s", last.ID, seed.ID)
 	}
-	if last.Title != t27KnowledgeLastTitle || last.Body != t27KnowledgeLastBody {
-		t.Fatal("catalog entry for 120 does not match the formal seed's title and full body")
+	if last.Title != seed.Title || last.Body != seed.Body {
+		t.Fatal("catalog last entry does not match the formal seed's title and full body")
 	}
 	if planned[last.ID] {
 		t.Fatal("the last catalog card is in today's plan; the journey needs a planned-external card")
@@ -165,8 +180,8 @@ func TestT27KnowledgeCatalogJourney(t *testing.T) {
 	}
 	var detail app.GetCardResult
 	h.json(token, "GET", "cards/"+last.ID.String(), nil, 200, &detail)
-	if uuid.UUID(detail.Id) != last.ID || detail.Title != t27KnowledgeLastTitle || detail.Body != t27KnowledgeLastBody {
-		t.Fatal("single-card response does not match the formal seed's 120 title and full body")
+	if uuid.UUID(detail.Id) != seed.ID || detail.Title != seed.Title || detail.Body != seed.Body {
+		t.Fatal("single-card response does not match the formal seed's last title and full body")
 	}
 	t.Log("PASS(service.catalog)")
 
@@ -178,7 +193,7 @@ func TestT27KnowledgeCatalogJourney(t *testing.T) {
 
 	proof := uuid.NewString()
 	h.must(h.s.cache.Set(h.ctx, "dev:ticket:apple:"+proof, subject, 10*time.Minute).Err())
-	t27KnowledgeRunFlutter(t, flutter, appDir, journey, h.api.URL, proof)
+	t27KnowledgeRunFlutter(t, flutter, appDir, journey, h.api.URL, proof, seed)
 
 	var after t27KnowledgeGrowth
 	h.json(token, "GET", "growth", nil, 200, &after)
@@ -260,7 +275,10 @@ func t27KnowledgeFailureKind(err error) string {
 	}
 }
 
-func t27KnowledgeRunFlutter(t *testing.T, flutter, appDir, journey, origin, proof string) {
+// t27KnowledgeRunFlutter passes the seed-derived expectation through the
+// process environment, not through any response or screen, so the Flutter
+// journey checks the full seed text independently. Nothing here logs it.
+func t27KnowledgeRunFlutter(t *testing.T, flutter, appDir, journey, origin, proof string, seed growth.Card) {
 	t.Helper()
 	scratch := t.TempDir()
 	timeout := 7 * time.Minute
@@ -279,6 +297,9 @@ func t27KnowledgeRunFlutter(t *testing.T, flutter, appDir, journey, origin, proo
 		"DART_SUPPRESS_ANALYTICS=true",
 		"T27_ORIGIN=" + origin,
 		"T27_LOGIN_PROOF=" + proof,
+		"T27_EXPECT_LAST_CARD=" + seed.ID.String(),
+		"T27_EXPECT_LAST_TITLE=" + seed.Title,
+		"T27_EXPECT_LAST_BODY=" + seed.Body,
 	}
 	for _, key := range []string{"PUB_CACHE", "FLUTTER_ROOT", "LANG", "LC_ALL"} {
 		if value, present := os.LookupEnv(key); present {

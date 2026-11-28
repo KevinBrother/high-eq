@@ -24,10 +24,6 @@ import '../t26/transport.dart';
 
 const _waitLimit = Duration(seconds: 30);
 const _frame = Duration(milliseconds: 20);
-const _lastCardId = '26000000-0000-4000-8000-000000000120';
-// Formal seed values for the last card, independent of any response body.
-const _lastCardTitle = '公共场景：发出请求';
-const _lastCardBody = '请求要短、具体、可执行，并给对方一个容易回应的选项。';
 
 class _T27LiveBinding extends LiveTestWidgetsFlutterBinding {
   @override
@@ -383,8 +379,33 @@ void main() {
       final environment = Platform.environment;
       final rawOrigin = environment['T27_ORIGIN'];
       final proof = environment['T27_LOGIN_PROOF'];
+      // The Go journey parses these from the checked-out formal seed
+      // (server/content/t26.yaml) and passes the exact last card id, title and
+      // full body through the environment. They never come from a response,
+      // serializer or the screen, so an edited seed changes the expectation.
+      final expectedCardId = environment['T27_EXPECT_LAST_CARD'];
+      final expectedCardTitle = environment['T27_EXPECT_LAST_TITLE'];
+      final expectedCardBody = environment['T27_EXPECT_LAST_BODY'];
       expect(rawOrigin, isNotNull, reason: 'T27_ORIGIN is required');
       expect(proof, isNotNull, reason: 'T27_LOGIN_PROOF is required');
+      expect(
+        expectedCardId,
+        isNotNull,
+        reason: 'T27_EXPECT_LAST_CARD is required',
+      );
+      expect(
+        expectedCardTitle,
+        isNotNull,
+        reason: 'T27_EXPECT_LAST_TITLE is required',
+      );
+      expect(
+        expectedCardBody,
+        isNotNull,
+        reason: 'T27_EXPECT_LAST_BODY is required',
+      );
+      final lastCardId = expectedCardId!;
+      final lastCardTitle = expectedCardTitle!;
+      final lastCardBody = expectedCardBody!;
 
       final origin = Uri.parse(rawOrigin!);
       expect(origin.scheme, 'http');
@@ -431,10 +452,10 @@ void main() {
       final ids = [for (final card in capture.cards) card['id'] as String];
       expect(ids.toSet(), hasLength(20), reason: 'catalog ids must be unique');
       expect(ids, orderedEquals([...ids]..sort()), reason: 'strict ascending order');
-      expect(ids.last, _lastCardId);
-      expect(capture.cards.last['title'], _lastCardTitle);
+      expect(ids.last, lastCardId);
+      expect(capture.cards.last['title'], lastCardTitle);
       expect(
-        capture.cards.last['body'] == _lastCardBody,
+        capture.cards.last['body'] == lastCardBody,
         isTrue,
         reason: 'catalog last card body does not match the formal seed',
       );
@@ -447,7 +468,7 @@ void main() {
           .cast<Map<String, dynamic>>();
       final planCard = planItems.singleWhere((item) => item['kind'] == 'card');
       expect(
-        planItems.any((item) => item['content_id'] == _lastCardId),
+        planItems.any((item) => item['content_id'] == lastCardId),
         isFalse,
         reason: 'the last catalog card must be outside today plan',
       );
@@ -469,10 +490,10 @@ void main() {
       await _openCatalogCard(
         tester,
         capture,
-        id: _lastCardId,
-        title: _lastCardTitle,
-        expectedTitle: _lastCardTitle,
-        expectedBody: _lastCardBody,
+        id: lastCardId,
+        title: lastCardTitle,
+        expectedTitle: lastCardTitle,
+        expectedBody: lastCardBody,
         requireDrag: true,
       );
       expect(capture.completes, isEmpty, reason: 'reading must not complete a plan item');
@@ -529,7 +550,7 @@ void main() {
       );
       expect(capture.completes, hasLength(1));
       expect(capture.completes.single, '/v1/plans/items/${planCard['id']}/complete');
-      expect(capture.completes.single.contains(_lastCardId), isFalse);
+      expect(capture.completes.single.contains(lastCardId), isFalse);
 
       final finalGrowth = await wire.getGrowth(scope: scope);
       final finalPlan = await wire.getTodayPlan(scope: scope);
