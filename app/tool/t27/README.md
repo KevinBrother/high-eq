@@ -41,9 +41,51 @@ flutter test --no-pub -r expanded test/contacts/repository_test.dart \
   --plain-name '提交后丢回执，列表即使已空仍可只读核对并重建离线成长'
 ```
 
+## 知识卡目录读取与完成旅程
+
+从仓库根目录运行。入口是 Bash 加 Python 3（内部 `exec python3`），并从 PATH 解析 `go` 与 `flutter`。需要：
+
+- Go 1.26.x（`server/go.mod` 为 `1.26.0`）。
+- Flutter 3.38.10（Dart 3.10.9），按 [本地工具链](../../../docs/local-development.md) 准备。宿主 widget 用例由该 SDK 的 `flutter test` 执行；首次运行前按宿主平台预缓存工具工件（CI 在 Linux 执行 `flutter precache --linux`，macOS 可用 `flutter precache --macos`）。
+- 本机 PostgreSQL 17，`--pg-bin` 目录含 `postgres` 与 `initdb`，二者须以普通用户启动（入口不降权）。
+- 支持 `WAITAOF` 的 Redis（CI 用固定的 8.2.0 源码构建，供应命令见下文）。
+
+干净检出先准备锁定依赖。冷缓存首次准备需要网络；`--offline` 只在对应缓存已齐时使用。
+
+```sh
+(cd app && flutter pub get --enforce-lockfile)   # 生成 app/.dart_tool/package_config.json 与 package_graph.json
+(cd server && go mod download)                   # 填充 Go 模块缓存
+(cd app && flutter pub get --enforce-lockfile --offline)  # 仅缓存齐全时
+```
+
+`go mod download` 和旅程必须使用同一个模块缓存：默认 `GOMODCACHE`，自定义时在准备和运行两端设同一个 `GOMODCACHE`。旅程运行时关闭模块代理（`GOPROXY=off`），只使用缓存中已有的模块；冷缓存下的完整 `go mod download` 可以联网补齐。可选核对用 `(cd server && GOPROXY=off go list -mod=readonly -tags=integration,t27knowledge -deps -test ./internal/service)`，在与旅程相同的缓存下执行，只验证该具名用例的离线模块依赖，不要求缓存具备全部模块，也不替代首次 `go mod download`；缺少该用例所需模块时，Go 会在旅程启动阶段停在 `go.startup`（退出 2）。
+
+完整旅程模式只使用 `--pg-bin` 与 `--redis`，复用 `history_journey.py` 的一次性 PG17、缓存 Redis 和 AOF 账本 Redis 启动、账本预检与清理，只替换 Go 用例：
+
+```sh
+bash app/tool/t27/verify_knowledge_catalog.sh \
+  --pg-bin /path/to/postgresql-17/bin \
+  --redis /path/to/redis-server
+```
+
+完整旅程的退出 `0` 要求旅程完成、`--- PASS: TestT27KnowledgeCatalogJourney` 与八个具名回执 `service.catalog`、`page.browse-last-card`、`page.read-no-complete`、`page.plan-card-complete`、`page.growth-tab`、`page.growth-home`、`service.after`、`journey` 全部取得。状态对应：`1 → FAIL(stage)` 表示已进入旅程的断言失败、超时或缺少成功回执；`2 → NOT RUN(stage)` 表示前置不足或 Go 未进入用例，阶段属于启动边界（如 `workspace`、`postgres.binary`、`redis.binary`、`go.binary`、`flutter.binary`、`flutter.sdk-cache`、`postgres.version`、`go.version`、`flutter.dependencies`、`loopback.reserve`、`postgres.initdb`、`postgres.startup`、`redis.cache-startup`、`redis.ledger-startup`、`redis.ledger-durability`、`go.startup`）；`3 → SKIPPED(go.startup)` 表示 Go 明确跳过。三者都打印对应的 `STATUS(stage)` 行和 `T27_HISTORY_STAGE=stage`。
+
+离线日志分类是独立子模式，不启动服务或旅程，也不需要 `--pg-bin`／`--redis`：
+
+```sh
+bash app/tool/t27/verify_knowledge_catalog.sh \
+  --classify-log /path/to/journey.log --status 1
+```
+
+它只按给定日志和退出码归类：`FAIL(stage)` → `1`，Go 未进入用例 → `2`，Go 明确跳过 → `3`，未发现失败或跳过 → `0`。这里的退出 `0` 只表示“按给定日志与 `--status` 没有可识别的失败或跳过”，不是完整旅程回执：空白日志加 `--status 0` 也会输出 `RESULT: PASS` 并退出 `0`。分类结果不能替代完整旅程的八个回执和具名 Go PASS。
+
+本地工位已有本入口的实际运行证据（完整旅程与离线归类），保存在任务归档而不入仓。仓库 CI 目前只完成手动运行接线，尚未在云端实际执行过；云上首次手动运行的运行回执为准。
+
 ## GitHub Actions
 
 `T27 growth and practice` 保留旧的成长 HTTP 旅程与 Flutter 回归，新增关系人核对入口、旅程组件辅助回归，以及独立 PG17、缓存 Redis 和 AOF Redis 上的正式历史旅程。推送、拉取请求和手动运行均可触发。运行摘要逐项给出 `PASS`、`FAIL`、`NOT RUN`、`SKIPPED` 或 `CANCELLED`。三项均须有成功回执。摘要和检查步骤只输出固定结果，原始测试日志保留在运行环境中或随临时文件清理。
+
+手动运行还额外执行知识卡目录读取与完成旅程，复用同一作业已安装的 PG17、Redis 和 Flutter/Go。该步骤只在 `workflow_dispatch` 时执行；执行失败或前置不足会使本次运行失败，推送和拉取请求不会执行它，也不把它记为通过。该步骤不写入上面的运行摘要。
 
 Ubuntu 24.04 运行器从 Redis 官方发行源下载固定的 8.2.0 源码，使用 `redis/redis-hashes` 发布的 SHA-256 核验后编译，再检查构建产物的版本。正式历史旅程显式使用该原生二进制。若随后在 `page.contact-deleted` 失败，CI 摘要会给出固定的 HTTP 观测值。`acknowledged` 表示对目标的 DELETE 已收到 `200` 且 `ok=true`，页面成功提示与列表状态仍各有断言。`http-403`、`http-500` 和 `http-503` 表示观测到对应 HTTP 状态。`unacknowledged` 包含已收到 `200` 但正文无法解码为 JSON 对象的情况，解析错误仍会使旅程失败。`unobserved` 表示没有目标 DELETE 回执，`multiple` 表示观测到多条回执。
 

@@ -140,6 +140,12 @@ jobs:
           bash app/tool/t27/verify_reassessment.sh \
             --pg-bin /usr/lib/postgresql/17/bin \
             --redis "$RUNNER_TEMP/t27-redis/redis-server"
+      - name: Knowledge catalog read and completion journey
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.flutter_deps.outcome == 'success' && steps.go_modules.outcome == 'success' && steps.native_stack.outcome == 'success' }}
+        run: |
+          bash app/tool/t27/verify_knowledge_catalog.sh \
+            --pg-bin /usr/lib/postgresql/17/bin \
+            --redis "$RUNNER_TEMP/t27-redis/redis-server"
       - name: T27 verification summary
         if: ${{ always() }}
         env:
