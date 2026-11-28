@@ -1,0 +1,49 @@
+name: T34 iOS package
+on:
+  workflow_dispatch:
+    inputs:
+      endpoint:
+        description: >-
+          APP_ENDPOINT compile-time value: "mock" for the labelled offline
+          sample, or an https origin without path, query, fragment or
+          credentials.
+        required: false
+        default: mock
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with: {persist-credentials: false, fetch-depth: 1}
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with: {flutter-version: '3.38.10', cache: true}
+      - name: Package a fresh unsigned iOS Release candidate
+        id: package
+        env:
+          T34_IOS_APP_ENDPOINT: ${{ inputs.endpoint }}
+          T34_IOS_OUTPUT: ${{ runner.temp }}/t34-ios-package-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          python3 infra/t34/ios/package.py --output-dir "$T34_IOS_OUTPUT" \
+            --expect-commit "$GITHUB_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Verify the artifact against this checkout and pubspec
+        env:
+          T34_IOS_OUTPUT: ${{ runner.temp }}/t34-ios-package-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          python3 infra/t34/ios/package.py --verify "$T34_IOS_OUTPUT" \
+            --expect-commit "$GITHUB_SHA" \
+            --expect-version "${{ steps.package.outputs.version }}" \
+            --expect-build "${{ steps.package.outputs.build_number }}" \
+            --expect-sha256 "${{ steps.package.outputs.sha256 }}"
+      - name: Upload only the archive and its receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: t34-ios-unsigned-candidate-${{ steps.package.outputs.endpoint_type }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/t34-ios-package-${{ github.run_id }}-${{ github.run_attempt }}/Runner.app.zip
+            ${{ runner.temp }}/t34-ios-package-${{ github.run_id }}-${{ github.run_attempt }}/receipt.json
+          if-no-files-found: error
+          retention-days: 14
